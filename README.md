@@ -43,6 +43,7 @@ FractalityProject/
 ├── docs/          # Project cores & architecture  
 ├── tests/         # Unit and integration tests  
 └── README.md      # You are here!  
+
 📜 Project Cores
 The philosophical and technical foundations:
 
@@ -65,4 +66,4 @@ Discord: PEACE Initiative Server (Link coming!)
 X/Twitter: @GraziTheMan
 
 "We are not just mapping minds—we are weaving constellations of thought."
-Raises glass—onward, cosmic cartographers! ✨
+*Raises glass*—onward, cosmic cartographers! ✨
