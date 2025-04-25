@@ -6,7 +6,7 @@ import frontmatter
 class SemanticResonance:
     def __init__(self, root_dir="mindmaps"):
         self.root = Path(root_dir)
-        self.model = SentenceTransformer('all-MiniLM-L6-v2')
+        self.model = SentenceTransformer('all-MiniLM-L6-v2').to('cuda')  # If NVIDIA GPU available
         self.embeddings = []
         self.node_paths = []
         self._prepare_embeddings()
