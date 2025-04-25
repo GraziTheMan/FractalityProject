@@ -25,6 +25,12 @@ python -m core.cli.fractality_cli  # Launch the mind-mapping interface
 > link_nodes 1 2  
 > publish_map  
 
+       ✨Origin  
+      /        \  
+💥Catalyst   🔮Oracle  
+     \         /  
+     🌱Sprout  
+
 🌠 About the Project
 The Fractality is a tool for:
 
