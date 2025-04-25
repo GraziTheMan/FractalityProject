@@ -6,6 +6,7 @@ from rich.console import Console
 import json
 import os
 from pathlib import Path
+from similarity_engine.tfidf_resonance import TfidfResonance
 
 # ---------------------------
 # Node + MindMap Definitions
@@ -135,6 +136,14 @@ def run_interactive(mindmap):
             elif cmd == "view":
                 mindmap.show_tree()
 
+            elif cmd == "find":
+    query = " ".join(parts[1:])
+    engine = TfidfResonance(args.file)
+    results = engine.find_similar(query)
+    console.print("\n🔍 TF-IDF Resonance Results:")
+    for i, res in enumerate(results, 1):
+        console.print(f"{i}. [bold]{res['node']}[/] (score: {res['score']})")
+            
             else:
                 console.print("[red]! Unknown command[/]")
 
