@@ -18,11 +18,13 @@
 
 bash
 python -m core.cli.fractality_cli  # Launch the mind-mapping interface  
+
 3. **Try it**:
 
 > create_node "First Thought"  
 > link_nodes 1 2  
 > publish_map  
+
 🌠 About the Project
 The Fractality is a tool for:
 
