@@ -1,46 +1,39 @@
-import numpy as np  
-from sentence_transformers import SentenceTransformer  
-from sklearn.metrics.pairwise import cosine_similarity  
-import json  
-from pathlib import Path  
-import hashlib  
+import numpy as np
+from pathlib import Path
+from sentence_transformers import SentenceTransformer
+import frontmatter
 
-class SemanticResonance:  
-    def __init__(self, mindmap_file="mindmap.json"):  
-        self.mindmap_file = Path(mindmap_file)  
-        self.model = SentenceTransformer('all-MiniLM-L6-v2')  
-        self.embeddings = None  
-        self.node_names = []  
-        self._prepare_embeddings()  
+class SemanticResonance:
+    def __init__(self, root_dir="mindmaps"):
+        self.root = Path(root_dir)
+        self.model = SentenceTransformer('all-MiniLM-L6-v2')
+        self.embeddings = []
+        self.node_paths = []
+        self._prepare_embeddings()
 
-    def _prepare_embeddings(self):  
-        """Convert node texts to semantic embeddings"""  
-        if not self.mindmap_file.exists():  
-            self.embeddings = np.zeros((0, 0))  
-            return  
+    def _prepare_embeddings(self):
+        """Convert markdown content to semantic vectors"""
+        node_texts = []
+        self.node_paths = []
+        
+        for md_file in self.root.rglob("*.md"):
+            post = frontmatter.load(md_file)
+            node_texts.append(post.content)
+            self.node_paths.append(md_file)
+        
+        if node_texts:
+            self.embeddings = self.model.encode(node_texts)
 
-        with open(self.mindmap_file, 'r') as f:  
-            data = json.load(f)  
-
-        self.node_names = list(data.keys())  
-        node_texts = [node_data['text'] for node_data in data.values()]  
-        self.embeddings = self.model.encode(node_texts)  
-
-    def find_similar(self, query_text, top_n=3):  
-        """Find semantically similar nodes"""  
-        if self.embeddings.shape[0] == 0:  
-            return []  
-
-        query_embedding = self.model.encode([query_text])  
-        similarities = cosine_similarity(query_embedding, self.embeddings)  
-        sorted_indices = np.argsort(similarities[0])[::-1]  
-
-        return [{  
-            "node": self.node_names[idx],  
-            "score": round(float(similarities[0][idx]), 3)  
-        } for idx in sorted_indices[:top_n]]  
-
-    def cache_embeddings(self):  
-        """Optional: Save embeddings for faster reloads"""  
-        cache_file = self.mindmap_file.with_suffix('.emb')  
-        np.save(cache_file, self.embeddings)  
+    def find_similar(self, query_text, top_n=3):
+        """Find semantically similar nodes"""
+        if not self.embeddings:
+            return []
+            
+        query_embedding = self.model.encode([query_text])
+        similarities = np.inner(query_embedding, self.embeddings)[0]
+        sorted_indices = np.argsort(similarities)[::-1][:top_n]
+        
+        return [{
+            "path": self.node_paths[idx],
+            "score": float(similarities[idx])
+        } for idx in sorted_indices]
