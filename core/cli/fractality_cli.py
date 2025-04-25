@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 from similarity_engine.tfidf_resonance import TfidfResonance
+from similarity_engine.engine import ResonanceEngine
 
 # ---------------------------
 # Node + MindMap Definitions
@@ -136,19 +137,27 @@ def run_interactive(mindmap):
             elif cmd == "view":
                 mindmap.show_tree()
 
-            elif cmd == "find":
-    query = " ".join(parts[1:])
-    engine = TfidfResonance(args.file)
-    results = engine.find_similar(query)
-    console.print("\n🔍 TF-IDF Resonance Results:")
-    for i, res in enumerate(results, 1):
-        console.print(f"{i}. [bold]{res['node']}[/] (score: {res['score']})")
-            
-            else:
-                console.print("[red]! Unknown command[/]")
+            elif cmd == "find":  
+    if len(parts) < 2:  
+        console.print("[red]! Please provide a search query[/]")  
+        continue  
 
-        except Exception as e:
-            console.print(f"[red]! Error: {str(e)}[/]")
+    query = " ".join(parts[1:])  
+    try:  
+        engine = ResonanceEngine(args.file)  
+        results = engine.hybrid_search(query)  
+
+        console.print(f"\n🌐 [bold]Hybrid Resonance for '{query}':[/]")  
+        for i, res in enumerate(results[:5], 1):  
+            node = mindmap.nodes.get(res['node'])  
+            archetype = node.archetype if node else "❓Unknown"  
+            console.print(  
+                f"{i}. {archetype} [bold cyan]{res['node']}[/]\n"  
+                f"   Hybrid: [yellow]{res['score']:.2f}[/] "  
+                f"(TF-IDF: {res['tfidf']:.2f}, Semantic: {res['semantic']:.2f})"  
+            )  
+    except Exception as e:  
+        console.print(f"[red]! Search error: {str(e)}[/]")
 
 def main():
     parser = argparse.ArgumentParser(
