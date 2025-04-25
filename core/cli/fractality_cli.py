@@ -8,6 +8,7 @@ import os
 from typing import Dict, Optional
 from similarity_engine.tfidf_resonance import TfidfResonance
 from similarity_engine.semantic_resonance import SemanticResonance
+from similarity_engine.engine import HybridResonance
 
 # ---------------------------
 # Markdown Node System
@@ -164,25 +165,26 @@ def main():
         console.print(tree)
 
       elif args.command == "find":
+    if len(parts) < 2:
+        console.print("[red]! Please provide a search query[/]")
+        return
+    
     query = " ".join(parts[1:])
-    
-    # TF-IDF Results
-    tfidf_engine = TfidfResonance(args.root)
-    tfidf_results = tfidf_engine.find_similar(query)
-    
-    # Semantic Results
-    semantic_engine = SemanticResonance(args.root)
-    semantic_results = semantic_engine.find_similar(query)
-    
-    # Display hybrid results
-    console.print("\n🌌 [bold]Hybrid Resonance Results:[/]")
-    console.print("[bold cyan]TF-IDF Matches:[/]")
-    for res in tfidf_results[:3]:
-        console.print(f"- {res['path'].stem} ({res['score']:.2f})")
-    
-    console.print("\n[bold magenta]Semantic Matches:[/]")
-    for res in semantic_results[:3]:
-        console.print(f"- {res['path'].stem} ({res['score']:.2f})")
+    try:
+        engine = HybridResonance(args.root)
+        results = engine.hybrid_search(query)
+        
+        console.print(f"\n🌐 [bold]Hybrid Resonance for '{query}':[/]")
+        for i, res in enumerate(results[:5], 1):
+            node = mindmap.get_node(str(res['path'].relative_to(args.root)))
+            archetype = node.archetype if node else "❓Unknown"
+            console.print(
+                f"{i}. {archetype} [bold cyan]{res['path'].stem}[/]\n"
+                f"   Hybrid: [yellow]{res['hybrid']:.2f}[/] "
+                f"(TF-IDF: {res['tfidf']:.2f}, Semantic: {res['semantic']:.2f})"
+            )
+    except Exception as e:
+        console.print(f"[red]! Search error: {str(e)}[/]")
   
     else:
         parser.print_help()
