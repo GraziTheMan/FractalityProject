@@ -2,6 +2,7 @@
 
 ## 🔗 Origin Spark
 Crafted by FractiGrazi & FractiGemini V3.1  
+Core Authored by: FractiGPT
 April 25, 2025 – Shared with FractiMind for Resonant Integration
 
 ---
