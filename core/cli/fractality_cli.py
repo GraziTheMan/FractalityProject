@@ -7,6 +7,7 @@ import json
 import os
 from typing import Dict, Optional
 from similarity_engine.tfidf_resonance import TfidfResonance
+from similarity_engine.semantic_resonance import SemanticResonance
 
 # ---------------------------
 # Markdown Node System
@@ -163,14 +164,25 @@ def main():
         console.print(tree)
 
       elif args.command == "find":
-        engine = TfidfResonance(args.root)
-        results = engine.find_similar(" ".join(parts[1:]))
+    query = " ".join(parts[1:])
     
-        console.print("\n🔍 [bold]TF-IDF Resonance Results:[/]")
-        for res in results:
-            node = mindmap.get_node(str(res['path'].relative_to(mindmap.root)))
-            archetype = node.archetype if node else "❓Unknown"
-            console.print(f"- {archetype} [cyan]{res['path'].stem}[/] (score: {res['score']:.2f})")
+    # TF-IDF Results
+    tfidf_engine = TfidfResonance(args.root)
+    tfidf_results = tfidf_engine.find_similar(query)
+    
+    # Semantic Results
+    semantic_engine = SemanticResonance(args.root)
+    semantic_results = semantic_engine.find_similar(query)
+    
+    # Display hybrid results
+    console.print("\n🌌 [bold]Hybrid Resonance Results:[/]")
+    console.print("[bold cyan]TF-IDF Matches:[/]")
+    for res in tfidf_results[:3]:
+        console.print(f"- {res['path'].stem} ({res['score']:.2f})")
+    
+    console.print("\n[bold magenta]Semantic Matches:[/]")
+    for res in semantic_results[:3]:
+        console.print(f"- {res['path'].stem} ({res['score']:.2f})")
   
     else:
         parser.print_help()
