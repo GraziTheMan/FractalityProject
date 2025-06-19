@@ -11,7 +11,7 @@ A collaborative vision made real - an interactive fractal universe explorer buil
 - **Flexible Data Loading**: Support for JSON files, URLs, and test patterns
 
 ## 🚀 Quick Start
-
+ 
 ### Option 1: Direct Browser (No Build Step)
 
 1. Clone the repository
