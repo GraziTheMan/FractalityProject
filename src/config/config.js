@@ -315,4 +315,4 @@ export function saveConfig() {
     } catch (error) {
         console.warn('Failed to save config:', error);
     }
-}
+} 
