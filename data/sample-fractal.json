@@ -1,0 +1,173 @@
+{
+  "version": "0.2.2",
+  "metadata": {
+    "title": "Sample Fractal Universe",
+    "description": "A small example fractal structure for testing",
+    "created": "2024-01-20T10:00:00Z",
+    "author": "Fractality Team"
+  },
+  "stats": {
+    "totalNodes": 13,
+    "maxDepth": 3,
+    "averageChildren": 2.5
+  },
+  "nodes": [
+    {
+      "id": "universe",
+      "depth": 0,
+      "parentId": null,
+      "childIds": ["galaxy-1", "galaxy-2", "galaxy-3"],
+      "metadata": {
+        "label": "The Universe",
+        "type": "root",
+        "tags": ["origin", "infinite"],
+        "description": "The root of all existence"
+      }
+    },
+    {
+      "id": "galaxy-1",
+      "depth": 1,
+      "parentId": "universe",
+      "childIds": ["star-1", "star-2"],
+      "metadata": {
+        "label": "Milky Way",
+        "type": "galaxy",
+        "tags": ["spiral", "home"],
+        "mass": 1.5e12,
+        "diameter": 100000
+      }
+    },
+    {
+      "id": "galaxy-2",
+      "depth": 1,
+      "parentId": "universe",
+      "childIds": ["star-3", "star-4"],
+      "metadata": {
+        "label": "Andromeda",
+        "type": "galaxy",
+        "tags": ["spiral", "neighbor"],
+        "mass": 1.2e12,
+        "diameter": 220000
+      }
+    },
+    {
+      "id": "galaxy-3",
+      "depth": 1,
+      "parentId": "universe",
+      "childIds": ["star-5"],
+      "metadata": {
+        "label": "Triangulum",
+        "type": "galaxy",
+        "tags": ["spiral", "small"],
+        "mass": 5e10,
+        "diameter": 60000
+      }
+    },
+    {
+      "id": "star-1",
+      "depth": 2,
+      "parentId": "galaxy-1",
+      "childIds": ["planet-1", "planet-2"],
+      "metadata": {
+        "label": "Sol",
+        "type": "star",
+        "tags": ["yellow-dwarf", "home-star"],
+        "temperature": 5778,
+        "luminosity": 1.0
+      }
+    },
+    {
+      "id": "star-2",
+      "depth": 2,
+      "parentId": "galaxy-1",
+      "childIds": ["planet-3"],
+      "metadata": {
+        "label": "Alpha Centauri",
+        "type": "star",
+        "tags": ["binary", "nearby"],
+        "temperature": 5790,
+        "luminosity": 1.5
+      }
+    },
+    {
+      "id": "star-3",
+      "depth": 2,
+      "parentId": "galaxy-2",
+      "childIds": [],
+      "metadata": {
+        "label": "Alpheratz",
+        "type": "star",
+        "tags": ["blue-white", "bright"],
+        "temperature": 13000,
+        "luminosity": 200
+      }
+    },
+    {
+      "id": "star-4",
+      "depth": 2,
+      "parentId": "galaxy-2",
+      "childIds": [],
+      "metadata": {
+        "label": "Mirach",
+        "type": "star",
+        "tags": ["red-giant"],
+        "temperature": 3800,
+        "luminosity": 1995
+      }
+    },
+    {
+      "id": "star-5",
+      "depth": 2,
+      "parentId": "galaxy-3",
+      "childIds": [],
+      "metadata": {
+        "label": "Beta Trianguli",
+        "type": "star",
+        "tags": ["giant"],
+        "temperature": 4700,
+        "luminosity": 75
+      }
+    },
+    {
+      "id": "planet-1",
+      "depth": 3,
+      "parentId": "star-1",
+      "childIds": [],
+      "metadata": {
+        "label": "Earth",
+        "type": "planet",
+        "tags": ["terrestrial", "habitable", "home"],
+        "mass": 5.972e24,
+        "radius": 6371,
+        "moons": 1
+      }
+    },
+    {
+      "id": "planet-2",
+      "depth": 3,
+      "parentId": "star-1",
+      "childIds": [],
+      "metadata": {
+        "label": "Mars",
+        "type": "planet",
+        "tags": ["terrestrial", "red"],
+        "mass": 6.39e23,
+        "radius": 3389,
+        "moons": 2
+      }
+    },
+    {
+      "id": "planet-3",
+      "depth": 3,
+      "parentId": "star-2",
+      "childIds": [],
+      "metadata": {
+        "label": "Proxima b",
+        "type": "planet",
+        "tags": ["exoplanet", "potentially-habitable"],
+        "mass": 7.6e24,
+        "orbitalPeriod": 11.2
+      }
+    }
+  ]
+}
