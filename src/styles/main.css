@@ -1,0 +1,364 @@
+/* src/styles/main.css */
+
+/* Reset and Base Styles */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #000;
+    color: #fff;
+    overflow: hidden;
+    user-select: none;
+}
+
+/* Canvas */
+#canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+
+/* UI Overlay */
+#ui-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 10;
+}
+
+/* UI Panels */
+.ui-panel {
+    position: fixed;
+    background: rgba(0, 0, 0, 0.85);
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 15px;
+    backdrop-filter: blur(10px);
+    pointer-events: auto;
+    transition: all 0.3s ease;
+}
+
+.ui-panel:hover {
+    border-color: #0ff;
+    box-shadow: 0 0 20px rgba(0, 255, 255, 0.2);
+}
+
+.ui-panel h3,
+.ui-panel h4 {
+    color: #0ff;
+    margin: 0 0 10px 0;
+    font-size: 14px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.ui-panel h4 {
+    font-size: 12px;
+    margin-top: 15px;
+}
+
+/* Performance Monitor */
+#perf-monitor {
+    top: 10px;
+    right: 10px;
+    min-width: 200px;
+    font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.metric {
+    display: flex;
+    justify-content: space-between;
+    margin: 5px 0;
+    font-size: 12px;
+}
+
+.metric-value {
+    color: #0f0;
+    font-weight: bold;
+}
+
+/* Controls */
+#controls {
+    top: 10px;
+    left: 10px;
+    min-width: 200px;
+}
+
+.ui-button {
+    display: block;
+    width: 100%;
+    margin: 5px 0;
+    padding: 8px 12px;
+    background: #111;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #fff;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: center;
+}
+
+.ui-button:hover {
+    background: #222;
+    border-color: #0ff;
+    color: #0ff;
+    transform: translateY(-1px);
+}
+
+.ui-button:active {
+    transform: translateY(0);
+}
+
+.separator {
+    height: 1px;
+    background: #333;
+    margin: 15px 0;
+}
+
+/* Node Info */
+#node-info {
+    bottom: 20px;
+    left: 20px;
+    min-width: 300px;
+    max-width: 400px;
+}
+
+#node-info h2 {
+    margin: 0 0 15px 0;
+    font-size: 18px;
+    color: #fff;
+}
+
+.info-row {
+    display: flex;
+    margin: 8px 0;
+    font-size: 13px;
+}
+
+.info-row .label {
+    color: #888;
+    margin-right: 10px;
+    min-width: 80px;
+}
+
+.info-row .value {
+    color: #fff;
+    font-weight: 500;
+}
+
+.hint {
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid #333;
+    color: #666;
+    font-size: 11px;
+    text-align: center;
+    font-style: italic;
+}
+
+/* Dialog */
+.dialog {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    pointer-events: auto;
+}
+
+.dialog-content {
+    background: #111;
+    border: 1px solid #333;
+    border-radius: 12px;
+    padding: 30px;
+    max-width: 500px;
+    width: 90%;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+.dialog-content h2 {
+    color: #0ff;
+    margin: 0 0 20px 0;
+    font-size: 24px;
+}
+
+.dialog-content h3 {
+    color: #fff;
+    margin: 20px 0 10px 0;
+    font-size: 16px;
+}
+
+.dialog-section {
+    margin: 20px 0;
+    padding: 20px 0;
+    border-bottom: 1px solid #333;
+}
+
+.dialog-section:last-child {
+    border-bottom: none;
+}
+
+input[type="text"],
+input[type="file"] {
+    width: 100%;
+    padding: 10px;
+    margin: 10px 0;
+    background: #222;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #fff;
+    font-size: 14px;
+}
+
+input[type="text"]:focus {
+    border-color: #0ff;
+    outline: none;
+}
+
+/* Loading */
+.loading {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    z-index: 1000;
+}
+
+.loading-spinner {
+    width: 50px;
+    height: 50px;
+    margin: 0 auto 20px;
+    border: 3px solid #333;
+    border-top-color: #0ff;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+.loading-text {
+    color: #0ff;
+    font-size: 18px;
+    font-weight: 300;
+    letter-spacing: 2px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .ui-panel {
+        padding: 10px;
+        font-size: 11px;
+    }
+    
+    #perf-monitor {
+        min-width: 150px;
+    }
+    
+    #controls {
+        min-width: 150px;
+    }
+    
+    #node-info {
+        bottom: 10px;
+        left: 10px;
+        right: 10px;
+        min-width: auto;
+        max-width: none;
+    }
+    
+    .ui-button {
+        padding: 6px 10px;
+        font-size: 11px;
+    }
+}
+
+/* Animations */
+.fade-in {
+    animation: fadeIn 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #111;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #333;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #444;
+}
+
+/* Focus States */
+.ui-button:focus,
+input:focus {
+    outline: 2px solid #0ff;
+    outline-offset: 2px;
+}
+
+/* Hover Effects */
+.ui-panel {
+    position: relative;
+    overflow: hidden;
+}
+
+.ui-panel::before {
+    content: '';
+    position: absolute;
+    top: -2px;
+    left: -2px;
+    right: -2px;
+    bottom: -2px;
+    background: linear-gradient(45deg, #0ff, #f0f, #0ff);
+    border-radius: 8px;
+    opacity: 0;
+    z-index: -1;
+    transition: opacity 0.3s;
+}
+
+.ui-panel:hover::before {
+    opacity: 0.3;
+    animation: borderGlow 3s linear infinite;
+}
+
+@keyframes borderGlow {
+    0%, 100% { filter: hue-rotate(0deg); }
+    50% { filter: hue-rotate(180deg); }
+}
