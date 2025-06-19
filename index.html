@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fractality v0.2.2 - The Living Universe</title>
+    <link rel="stylesheet" href="src/styles/main.css">
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    
+    <div id="ui-overlay">
+        <!-- Performance Monitor -->
+        <div id="perf-monitor" class="ui-panel">
+            <h3>Performance Monitor</h3>
+            <div class="metric">
+                <span>FPS:</span>
+                <span class="metric-value" id="fps">0</span>
+            </div>
+            <div class="metric">
+                <span>Nodes:</span>
+                <span class="metric-value" id="node-count">0</span>
+            </div>
+            <div class="metric">
+                <span>Draw Calls:</span>
+                <span class="metric-value" id="draw-calls">1</span>
+            </div>
+            <div class="metric">
+                <span>Memory:</span>
+                <span class="metric-value" id="memory">0 MB</span>
+            </div>
+            <div class="metric">
+                <span>Animation:</span>
+                <span class="metric-value" id="animation-time">0 ms</span>
+            </div>
+        </div>
+        
+        <!-- Controls -->
+        <div id="controls" class="ui-panel">
+            <button id="reset-view" class="ui-button">Reset View</button>
+            <button id="toggle-quality" class="ui-button">Quality: High</button>
+            <button id="load-data" class="ui-button">Load Data</button>
+            <div class="separator"></div>
+            <h4>Test Patterns</h4>
+            <button class="ui-button test-pattern" data-pattern="simple">Simple (13 nodes)</button>
+            <button class="ui-button test-pattern" data-pattern="balanced">Balanced (100 nodes)</button>
+            <button class="ui-button test-pattern" data-pattern="spiral">Golden Spiral</button>
+            <button class="ui-button test-pattern" data-pattern="organic">Organic Growth</button>
+            <button class="ui-button test-pattern" data-pattern="stress">Stress Test (500)</button>
+        </div>
+        
+        <!-- Node Info -->
+        <div id="node-info" class="ui-panel" style="display: none;">
+            <h2 id="node-title">Node Information</h2>
+            <div class="info-row">
+                <span class="label">ID:</span>
+                <span class="value" id="node-id"></span>
+            </div>
+            <div class="info-row">
+                <span class="label">Type:</span>
+                <span class="value" id="node-type"></span>
+            </div>
+            <div class="info-row">
+                <span class="label">Depth:</span>
+                <span class="value" id="node-depth"></span>
+            </div>
+            <div class="info-row">
+                <span class="label">Children:</span>
+                <span class="value" id="node-children"></span>
+            </div>
+            <div class="info-row" id="node-metadata">
+                <!-- Dynamic metadata will be inserted here -->
+            </div>
+            <div class="hint">Click to navigate</div>
+        </div>
+        
+        <!-- Data Source Dialog -->
+        <div id="data-dialog" class="dialog" style="display: none;">
+            <div class="dialog-content">
+                <h2>Load Fractal Data</h2>
+                <div class="dialog-section">
+                    <h3>From URL</h3>
+                    <input type="text" id="data-url" placeholder="https://example.com/fractal.json">
+                    <button id="load-url" class="ui-button">Load from URL</button>
+                </div>
+                <div class="dialog-section">
+                    <h3>From File</h3>
+                    <input type="file" id="data-file" accept=".json">
+                </div>
+                <div class="dialog-section">
+                    <h3>Example Data</h3>
+                    <button class="ui-button load-example" data-source="data/sample-fractal.json">
+                        Load Universe Example
+                    </button>
+                </div>
+                <button id="close-dialog" class="ui-button">Cancel</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Loading Indicator -->
+    <div class="loading" id="loading">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Initializing Fractality...</div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script type="module" src="src/main.js"></script>
+</body>
+</html>
