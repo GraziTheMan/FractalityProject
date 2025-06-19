@@ -340,4 +340,4 @@ export class DataLoader {
 /**
  * Export singleton instance
  */
-export const dataLoader = new DataLoader();
+export const dataLoader = new DataLoader(); 
