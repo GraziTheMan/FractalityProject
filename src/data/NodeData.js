@@ -229,4 +229,4 @@ export class NodeGraph {
             averageChildren: 0
         };
     }
-}
+} 
