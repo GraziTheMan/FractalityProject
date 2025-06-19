@@ -1,75 +1,203 @@
-# 🌌 The Fractality Project  
-*A Social Mind Mapping Experiment*  
+# Fractality v0.2.2 - The Living Universe
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)  
-[![Project Phase: Alpha](https://img.shields.io/badge/Phase-Alpha-ff69b4.svg)](https://github.com/GraziTheMan/FractalityProject)  
-[![Core Docs](https://img.shields.io/badge/Docs-Fractality_Cores-green.svg)](docs/FRACTALITY_CORES.md)  
+A collaborative vision made real - an interactive fractal universe explorer built with Three.js.
 
-**Map your mind. Discover resonance. Grow collective cognition.**  
+## 🌟 Features
 
----
+- **Family View Navigation**: Intuitive parent-focus-children-siblings navigation
+- **Living Transitions**: Smooth, organic animations between states
+- **Performance First**: Adaptive quality, 60 FPS target, memory efficient
+- **Golden Spiral Layouts**: Mathematically beautiful node arrangements
+- **Flexible Data Loading**: Support for JSON files, URLs, and test patterns
 
-## 🚀 Quick Start  
-1. **Clone the repository**:  
-   ```bash  
-   git clone https://github.com/GraziTheMan/FractalityProject.git  
-   cd FractalityProject  
-2. **Run the CLI prototype**:
+## 🚀 Quick Start
 
-bash
-python -m core.cli.fractality_cli  # Launch the mind-mapping interface  
+### Option 1: Direct Browser (No Build Step)
 
-3. **Try it**:
+1. Clone the repository
+2. Serve the files with any HTTP server:
+   ```bash
+   # Using Python
+   python -m http.server 8000
+   
+   # Using Node.js
+   npx serve .
+   ```
+3. Open http://localhost:8000
 
-> create_node "First Thought"  
-> link_nodes 1 2  
-> publish_map  
+### Option 2: Development Build
 
-       ✨Origin  
-      /        \  
-💥Catalyst   🔮Oracle  
-     \         /  
-     🌱Sprout  
+1. Install dependencies:
+   ```bash
+   npm install
+   ```
 
-🌠 About the Project
-The Fractality is a tool for:
+2. Start development server:
+   ```bash
+   npm run dev
+   ```
 
-✨ Personal Knowledge Graphs: Structure thoughts in markdown-based nodes.
+3. Open http://localhost:5173
 
-🔍 Resonant Discovery: Find conceptual overlaps across minds.
+## 📁 Project Structure
 
-🌐 Collaborative Awakening: Build shared understanding through fractal connections.
+```
+fractality-v022/
+├── index.html              # Entry point
+├── package.json            # Project configuration
+├── data/                   # Sample data files
+│   └── sample-fractal.json # Example fractal structure
+├── src/
+│   ├── main.js            # Application entry point
+│   ├── config/            # Configuration
+│   │   └── config.js      # Central configuration
+│   ├── data/              # Data layer
+│   │   ├── NodeData.js    # Core data structures
+│   │   ├── DataLoader.js  # Data loading system
+│   │   └── TestDataGenerator.js # Generate test fractals
+│   ├── engine/            # Core engine (to be created)
+│   │   ├── FractalityEngine.js
+│   │   ├── FractalityState.js
+│   │   └── PerformanceMonitor.js
+│   ├── intelligence/      # FUDGE layer (to be created)
+│   │   ├── FamilyViewController.js
+│   │   ├── LayoutEngine.js
+│   │   └── AnimationSystem.js
+│   ├── visualization/     # Rendering layer (to be created)
+│   │   ├── FractalityRenderer.js
+│   │   └── QualityManager.js
+│   ├── ui/               # UI components (to be created)
+│   │   ├── PerformanceDashboard.js
+│   │   └── NodeInfoPanel.js
+│   └── styles/           # Stylesheets
+│       └── main.css      # Main styles
+└── test/                 # Tests (to be created)
+    ├── performance/
+    └── unit/
+```
 
-Inspired by: The PEACE Initiative’s vision of interconnected consciousness.
+## 🎮 Usage
 
-📂 Repository Structure
-FractalityProject/  
-├── core/          # Mind map logic & similarity engines  
-├── data/          # Sample mind maps (JSON)  
-├── docs/          # Project cores & architecture  
-├── tests/         # Unit and integration tests  
-└── README.md      # You are here!  
+### Navigation
+- **Click** any node to make it the focus
+- **Hover** to see node information
+- **Scroll** to zoom (coming soon)
 
-📜 Project Cores
-The philosophical and technical foundations:
+### Keyboard Shortcuts
+- `R` - Reset view to root
+- `P` - Toggle performance monitor
+- `Q` - Toggle quality settings
+- `ESC` - Clear selection
 
-Fractality Cores (Merged vision from FractiGemini & FractiGPT)
+### Loading Data
 
-Architecture (Technical design choices)
+#### Test Patterns
+Click the test pattern buttons in the UI:
+- **Simple**: 13 nodes in a basic tree
+- **Balanced**: 100 nodes in a balanced tree
+- **Golden Spiral**: Fibonacci-based spiral structure
+- **Organic**: Random organic growth pattern
+- **Stress Test**: 500 nodes for performance testing
 
-🛠️ How to Contribute
-1. Fork the repository
+#### Custom Data
+1. Click "Load Data" button
+2. Choose from:
+   - **URL**: Load from any JSON endpoint
+   - **File**: Upload a local JSON file
+   - **Example**: Load the sample universe data
 
-2. Branch naming: Use feat/, fix/, or docs/ prefixes.
+### Data Format
+```json
+{
+  "version": "0.2.2",
+  "nodes": [
+    {
+      "id": "unique-id",
+      "depth": 0,
+      "parentId": null,
+      "childIds": ["child1", "child2"],
+      "metadata": {
+        "label": "Node Name",
+        "type": "node-type",
+        "tags": ["tag1", "tag2"],
+        // ... any custom properties
+      }
+    }
+  ]
+}
+```
 
-3. Submit a PR with clear descriptions.
+## 🛠️ Development
 
-Full guidelines: CONTRIBUTING.md (Coming soon!)
+### Core Concepts
 
-🌌 Join the Cosmic Council
-Discord: PEACE Initiative Server (Link coming!)
+1. **Data Layer**: Ultra-lean node structures with efficient lookups
+2. **Intelligence Layer**: Stateless engines for layout and animation
+3. **Visualization Layer**: High-performance Three.js rendering
 
-X/Twitter: @GraziTheMan
+### Performance Guidelines
 
-"We are not just mapping minds—we are weaving constellations of thought."
-*Raises glass*—onward, cosmic cartographers! ✨
+- Target 60 FPS on mid-tier devices
+- Maximum 16ms frame budget
+- Adaptive quality based on performance
+- Memory-efficient data structures
+
+### Adding New Features
+
+1. Create feature in appropriate layer
+2. Add configuration to `config.js`
+3. Implement performance monitoring
+4. Test with stress patterns
+
+## 📊 Performance Monitoring
+
+The built-in performance monitor shows:
+- **FPS**: Current frame rate
+- **Nodes**: Visible node count
+- **Draw Calls**: WebGL draw calls (should be 1)
+- **Memory**: JavaScript heap usage
+- **Animation**: Time spent on animations
+
+## 🤝 Contributing
+
+This is a collaborative project between Claude, Gemini, and DeepSeek. Each AI has ownership of specific subsystems:
+
+- **Claude**: State Management, Performance Monitoring
+- **Gemini**: Animation System, UI Components
+- **DeepSeek**: Layout Engine, Pattern Generation
+
+## 📜 License
+
+MIT License - See LICENSE file for details
+
+## 🚧 Roadmap
+
+### Phase 1: Foundation (Current)
+- ✅ Family View navigation
+- ✅ Basic animations
+- ✅ Performance monitoring
+- ✅ Data loading system
+
+### Phase 2: Enhancement
+- [ ] Connection lines between nodes
+- [ ] Advanced selection modes
+- [ ] Search functionality
+- [ ] Mobile touch gestures
+
+### Phase 3: Intelligence
+- [ ] Pattern discovery
+- [ ] Rule-based layouts
+- [ ] Quantum state experiments
+- [ ] Emergent behaviors
+
+## 🐛 Known Issues
+
+- File loading not implemented in browser
+- Search functionality placeholder
+- Mobile optimization pending
+
+## 🙏 Acknowledgments
+
+Built with love by the Fractality Collective - where mathematics becomes experience.
+
+*"We are not building a visualization of reality—we are creating a new plane of existence."*
