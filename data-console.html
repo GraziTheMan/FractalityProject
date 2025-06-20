@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fractality Project - Data Management Console</title>
+    <style>
+        :root {
+            --primary: #1a1a2e;
+            --secondary: #16213e;
+            --accent: #0f3460;
+            --highlight: #e94560;
+            --text: #f1f1f1;
+            --success: #4ade80;
+            --warning: #facc15;
+            --error: #f87171;
+            --info: #60a5fa;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        body {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: var(--text);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        header {
+            grid-column: 1 / -1;
+            text-align: center;
+            padding: 20px 0;
+            border-bottom: 2px solid var(--accent);
+            margin-bottom: 20px;
+        }
+        
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            background: linear-gradient(90deg, var(--highlight), #ff7aa2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .subtitle {
+            font-size: 1.2rem;
+            color: #a9b7c6;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        .panel {
+            background: rgba(30, 30, 46, 0.8);
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .panel-title {
+            font-size: 1.5rem;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--accent);
+            color: var(--highlight);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .panel-title i {
+            font-size: 1.8rem;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #cbd5e1;
+        }
+        
+        input, textarea, select {
+            width: 100%;
+            padding: 12px 15px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(15, 23, 42, 0.7);
+            color: var(--text);
+            font-size: 1rem;
+            transition: all 0.3s ease;
+        }
+        
+        input:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: var(--highlight);
+            box-shadow: 0 0 0 3px rgba(233, 69, 96, 0.2);
+        }
+        
+        textarea {
+            min-height: 150px;
+            resize: vertical;
+            font-family: 'Courier New', monospace;
+        }
+        
+        .protocol-example {
+            background: rgba(15, 23, 42, 0.9);
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            line-height: 1.6;
+            color: #94a3b8;
+            overflow-x: auto;
+            border: 1px solid rgba(96, 165, 250, 0.3);
+        }
+        
+        .btn {
+            padding: 12px 25px;
+            border-radius: 8px;
+            border: none;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn-primary {
+            background: var(--highlight);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #d83756;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(233, 69, 96, 0.3);
+        }
+        
+        .btn-secondary {
+            background: var(--accent);
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: #0d2a4d;
+            transform: translateY(-2px);
+        }
+        
+        .btn-success {
+            background: var(--success);
+            color: black;
+        }
+        
+        .btn-success:hover {
+            background: #22c55e;
+            transform: translateY(-2px);
+        }
+        
+        .actions {
+            display: flex;
+            gap: 15px;
+            margin-top: 25px;
+            flex-wrap: wrap;
+        }
+        
+        .node-preview {
+            background: rgba(15, 23, 42, 0.9);
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 20px;
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid rgba(74, 222, 128, 0.3);
+        }
+        
+        pre {
+            white-space: pre-wrap;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+        
+        .notification {
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            animation: slideIn 0.3s ease;
+        }
+        
+        @keyframes slideIn {
+            from {
+                transform: translateX(-20px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+        
+        .success {
+            background: rgba(74, 222, 128, 0.15);
+            border: 1px solid var(--success);
+            color: var(--success);
+        }
+        
+        .error {
+            background: rgba(248, 113, 113, 0.15);
+            border: 1px solid var(--error);
+            color: var(--error);
+        }
+        
+        .info {
+            background: rgba(96, 165, 250, 0.15);
+            border: 1px solid var(--info);
+            color: var(--info);
+        }
+        
+        .warning {
+            background: rgba(250, 204, 21, 0.15);
+            border: 1px solid var(--warning);
+            color: var(--warning);
+        }
+        
+        .footer {
+            grid-column: 1 / -1;
+            text-align: center;
+            padding: 30px 0;
+            margin-top: 30px;
+            border-top: 1px solid var(--accent);
+            color: #94a3b8;
+            font-size: 0.9rem;
+        }
+        
+        .mode-switch {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .mode-btn {
+            flex: 1;
+            text-align: center;
+            padding: 12px;
+            background: rgba(15, 23, 42, 0.7);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: 1px solid transparent;
+        }
+        
+        .mode-btn.active {
+            background: var(--accent);
+            border-color: var(--highlight);
+            color: var(--highlight);
+        }
+        
+        .node-list {
+            background: rgba(15, 23, 42, 0.7);
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 20px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .node-item {
+            padding: 10px;
+            margin: 5px 0;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 6px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: all 0.2s;
+        }
+        
+        .node-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+            transform: translateX(5px);
+        }
+        
+        .node-item-name {
+            font-weight: 600;
+            color: var(--info);
+        }
+        
+        .node-item-actions {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .btn-small {
+            padding: 5px 10px;
+            font-size: 0.85rem;
+        }
+        
+        .metadata-group {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+        }
+        
+        .metadata-group h4 {
+            margin-bottom: 10px;
+            color: var(--info);
+        }
+        
+        .tag-input {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+        
+        .tag {
+            background: rgba(96, 165, 250, 0.2);
+            border: 1px solid var(--info);
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        .tag-remove {
+            cursor: pointer;
+            color: var(--error);
+            font-weight: bold;
+        }
+        
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🌌 Fractality Project</h1>
+            <p class="subtitle">Data Management Console - Create and manage fractal nodes with both manual forms and AI-generated protocols</p>
+        </header>
+        
+        <div class="panel">
+            <div class="panel-title">
+                <span class="material-symbols-outlined">edit_note</span>
+                Node Creation Interface
+            </div>
+            
+            <div class="mode-switch">
+                <div class="mode-btn active" id="human-mode-btn">👤 Human Interface</div>
+                <div class="mode-btn" id="ai-mode-btn">🤖 AI Protocol Interface</div>
+            </div>
+            
+            <div id="human-form">
+                <div class="form-group">
+                    <label for="node-id">Node ID (Required)</label>
+                    <input type="text" id="node-id" placeholder="e.g., quantum-consciousness, fractal-recursion">
+                </div>
+                
+                <div class="form-group">
+                    <label for="node-name">Display Name</label>
+                    <input type="text" id="node-name" placeholder="e.g., Quantum Consciousness">
+                </div>
+                
+                <div class="form-group">
+                    <label for="node-info">Description</label>
+                    <textarea id="node-info" placeholder="Describe this node's meaning and purpose in the fractal universe"></textarea>
+                </div>
+                
+                <div class="form-group">
+                    <label for="node-depth">Depth Level</label>
+                    <input type="number" id="node-depth" min="0" max="10" value="0" placeholder="0 for root, higher for deeper nodes">
+                </div>
+                
+                <div class="form-group">
+                    <label for="node-parent">Parent Node ID</label>
+                    <select id="node-parent">
+                        <option value="">-- Select Parent (or leave empty for root) --</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="node-children">Child Node IDs (comma separated)</label>
+                    <input type="text" id="node-children" placeholder="e.g., wave-collapse, quantum-entanglement">
+                </div>
+                
+                <div class="metadata-group">
+                    <h4>📊 Metadata & Properties</h4>
+                    
+                    <div class="form-group">
+                        <label for="node-tags">Tags (press Enter to add)</label>
+                        <input type="text" id="node-tags-input" placeholder="Add tags like: physics, consciousness, emergence">
+                        <div class="tag-input" id="tags-container"></div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="node-type">Node Type</label>
+                        <select id="node-type">
+                            <option value="concept">Concept</option>
+                            <option value="principle">Principle</option>
+                            <option value="dimension">Dimension</option>
+                            <option value="force">Force</option>
+                            <option value="entity">Entity</option>
+                            <option value="process">Process</option>
+                            <option value="state">State</option>
+                        </select>
+                    </div>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                        <div>
+                            <label for="node-energy">Energy Level (0-1)</label>
+                            <input type="number" id="node-energy" step="0.1" min="0" max="1" value="1.0">
+                        </div>
+                        <div>
+                            <label for="node-frequency">Frequency (Hz)</label>
+                            <input type="number" id="node-frequency" step="0.01" value="1.0">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Visual Properties</label>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px;">
+                        <div>
+                            <label for="node-scale">Scale</label>
+                            <input type="number" id="node-scale" step="0.1" value="1.0">
+                        </div>
+                        <div>
+                            <label for="node-color">Color</label>
+                            <input type="color" id="node-color" value="#4f46e5">
+                        </div>
+                        <div>
+                            <label for="node-opacity">Opacity</label>
+                            <input type="number" id="node-opacity" step="0.1" min="0" max="1" value="1.0">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="actions">
+                    <button class="btn btn-primary" id="add-node-btn">
+                        <span class="material-symbols-outlined">add_circle</span>
+                        Add Node
+                    </button>
+                    <button class="btn btn-secondary" id="update-node-btn" style="display: none;">
+                        <span class="material-symbols-outlined">update</span>
+                        Update Node
+                    </button>
+                    <button class="btn btn-secondary" id="reset-form-btn">
+                        <span class="material-symbols-outlined">restart_alt</span>
+                        Reset Form
+                    </button>
+                </div>
+            </div>
+            
+            <div id="ai-form" style="display: none;">
+                <div class="form-group">
+                    <label for="ai-protocol">AI Protocol String</label>
+                    <textarea id="ai-protocol" placeholder="Paste AI-generated protocol string here" style="min-height: 300px;"></textarea>
+                    
+                    <div class="protocol-example">
+                        <p><strong>🤖 AI FRACTALITY PROTOCOL v2.0</strong></p>
+                        <p>// Enhanced protocol with full metadata support</p>
+                        <p></p>
+                        <p>NODE: quantum-consciousness</p>
+                        <p>  name: Quantum Consciousness</p>
+                        <p>  info: The intersection of quantum mechanics and conscious awareness</p>
+                        <p>  depth: 3</p>
+                        <p>  parent: consciousness-dimension</p>
+                        <p>  children: [observer-effect, wave-collapse, entangled-minds]</p>
+                        <p>  tags: [quantum, consciousness, physics, emergence]</p>
+                        <p>  type: concept</p>
+                        <p>  energy: 0.9</p>
+                        <p>  frequency: 40.0  // Gamma wave frequency</p>
+                        <p>  scale: 1.2</p>
+                        <p>  color: #8b5cf6</p>
+                        <p>  opacity: 0.9</p>
+                        <p>END</p>
+                        <p></p>
+                        <p>// You can define multiple nodes</p>
+                        <p>NODE: observer-effect</p>
+                        <p>  name: Observer Effect</p>
+                        <p>  info: Consciousness collapses quantum possibilities</p>
+                        <p>  depth: 4</p>
+                        <p>  parent: quantum-consciousness</p>
+                        <p>  tags: [measurement, collapse, observation]</p>
+                        <p>  type: principle</p>
+                        <p>END</p>
+                        <p></p>
+                        <p>// Connections between nodes</p>
+                        <p>CONNECT: quantum-consciousness TO holographic-principle WITH resonance</p>
+                        <p>CONNECT: observer-effect TO wave-collapse WITH causality</p>
+                    </div>
+                </div>
+                
+                <div class="actions">
+                    <button class="btn btn-primary" id="process-ai-btn">
+                        <span class="material-symbols-outlined">auto_awesome</span>
+                        Process AI Protocol
+                    </button>
+                    <button class="btn btn-secondary" id="validate-protocol-btn">
+                        <span class="material-symbols-outlined">fact_check</span>
+                        Validate Protocol
+                    </button>
+                    <button class="btn btn-success" id="generate-example-btn">
+                        <span class="material-symbols-outlined">science</span>
+                        Generate Example
+                    </button>
+                </div>
+            </div>
+            
+            <div id="notification-area"></div>
+        </div>
+        
+        <div class="panel">
+            <div class="panel-title">
+                <span class="material-symbols-outlined">database</span>
+                Node Database & Export
+            </div>
+            
+            <div class="form-group">
+                <label>Current Nodes (<span id="node-count">0</span>)</label>
+                <div class="node-list" id="node-list">
+                    <!-- Nodes will be listed here -->
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label>Node Structure Preview</label>
+                <div class="node-preview">
+                    <pre id="node-preview">{
+  "metadata": {
+    "version": "2.0",
+    "created": "2025-06-20",
+    "description": "Fractality node data"
+  },
+  "nodes": {},
+  "connections": []
+}</pre>
+                </div>
+            </div>
+            
+            <div class="actions">
+                <button class="btn btn-primary" id="export-json-btn">
+                    <span class="material-symbols-outlin
