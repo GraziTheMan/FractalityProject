@@ -1,5 +1,5 @@
 // src/visualization/FractalityRenderer.js
-import * as THREE from 'three';
+import * as THREE from './three.module.js';
 import { config } from '../config/config.js';
 
 /**
