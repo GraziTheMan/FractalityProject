@@ -4,20 +4,22 @@
  * CACE - Context And Complexity Engine
  * Pronounced "cake" 🎂
  * 
+ * Enhanced with mitochondrial-inspired energy principles.
  * Calculates context scores for nodes based on their relationships,
- * complexity, and importance within the fractal structure.
+ * complexity, importance, and metabolic energy patterns.
  */
 export class CACEEngine {
     constructor() {
         // Context calculation parameters
         this.config = {
-            // Weights for different factors
+            // Weights for different factors (now energy-aware)
             weights: {
-                descendants: 0.3,      // Number of descendants
-                depth: 0.2,           // Depth in hierarchy
-                connections: 0.2,     // Number of connections
-                siblingRank: 0.15,    // Position among siblings
-                recentAccess: 0.15    // How recently accessed
+                descendants: 0.25,      // Network complexity
+                depth: 0.15,           // Depth in hierarchy
+                connections: 0.15,     // Number of connections
+                siblingRank: 0.10,     // Position among siblings
+                recentAccess: 0.10,    // How recently accessed
+                energy: 0.25           // NEW: Metabolic energy factor
             },
             
             // Complexity thresholds
@@ -32,6 +34,47 @@ export class CACEEngine {
             temporal: {
                 recentWindow: 5000,    // 5 seconds
                 decayRate: 0.95        // Per second
+            },
+            
+            // NEW: Energy configuration (mitochondrial-inspired)
+            energy: {
+                // Node type energy profiles (mitochondrial density)
+                profiles: {
+                    'executive': 0.9,      // Highest energy needs
+                    'integration': 0.85,   // Integration hubs
+                    'memory': 0.7,         // Memory storage
+                    'processing': 0.6,     // Active processing
+                    'routing': 0.5,        // Connection nodes
+                    'sensory': 0.4,        // Input nodes
+                    'default': 0.5         // Unknown types
+                },
+                
+                // Three consciousness networks (like brain's mitochondrial networks)
+                networks: {
+                    executive: {
+                        color: '#ff00ff',
+                        energyShare: 0.5,
+                        nodes: new Set()
+                    },
+                    memory: {
+                        color: '#00ffff', 
+                        energyShare: 0.3,
+                        nodes: new Set()
+                    },
+                    sensory: {
+                        color: '#ffff00',
+                        energyShare: 0.2,
+                        nodes: new Set()
+                    }
+                },
+                
+                // Metabolic parameters
+                metabolic: {
+                    atpProductionRate: 0.7,    // Energy generation efficiency
+                    atpConsumptionBase: 0.1,   // Base energy use
+                    fusionThreshold: 0.8,      // When nodes should merge energy
+                    fissionThreshold: 0.2       // When nodes should split
+                }
             }
         };
         
@@ -43,6 +86,13 @@ export class CACEEngine {
         this.accessHistory = new Map();
         this.maxHistorySize = 1000;
         
+        // NEW: Energy state tracking
+        this.energyState = {
+            totalAvailable: 1000,      // Total system energy
+            distributed: 0,            // Energy assigned to nodes
+            efficiency: 1.0            // System efficiency
+        };
+        
         // Global graph statistics
         this.graphStats = {
             totalNodes: 0,
@@ -53,15 +103,21 @@ export class CACEEngine {
                 moderate: 0,
                 complex: 0,
                 hypercomplex: 0
+            },
+            // NEW: Energy statistics
+            energyDistribution: {
+                executive: 0,
+                memory: 0,
+                sensory: 0
             }
         };
     }
     
     /**
-     * Analyze the entire graph structure
+     * Analyze the entire graph structure (enhanced with energy analysis)
      */
     analyzeGraph(nodeGraph) {
-        console.log('🎂 CACE: Analyzing graph structure...');
+        console.log('🎂 CACE: Analyzing graph structure with energy profiles...');
         
         // Reset stats
         this.graphStats.totalNodes = nodeGraph.nodes.size;
@@ -74,6 +130,11 @@ export class CACEEngine {
         };
         
         let totalConnections = 0;
+        
+        // Clear network assignments
+        Object.values(this.config.energy.networks).forEach(network => {
+            network.nodes.clear();
+        });
         
         // Analyze each node
         nodeGraph.nodes.forEach(node => {
@@ -88,21 +149,31 @@ export class CACEEngine {
             const descendants = this._countDescendants(nodeGraph, node.id);
             this._categorizeComplexity(descendants);
             
+            // NEW: Assign to consciousness network based on characteristics
+            this._assignToNetwork(node, descendants, connectionCount);
+            
+            // NEW: Calculate metabolic profile
+            const metabolicProfile = this._calculateMetabolicProfile(node, descendants);
+            
             // Cache analysis
             this._cacheNodeAnalysis(node.id, {
                 descendants,
                 connectionCount,
+                metabolicProfile,
                 timestamp: Date.now()
             });
         });
         
         this.graphStats.averageConnections = totalConnections / this.graphStats.totalNodes;
         
+        // NEW: Calculate energy distribution
+        this._calculateEnergyDistribution();
+        
         console.log('✅ CACE: Graph analysis complete', this.graphStats);
     }
     
     /**
-     * Calculate context scores for visible nodes
+     * Calculate context scores for visible nodes (now with energy awareness)
      */
     calculateContext(visibleNodes, focusNodeId) {
         const contextScores = new Map();
@@ -113,6 +184,9 @@ export class CACEEngine {
         // Record access
         this._recordAccess(focusNodeId);
         
+        // NEW: Update energy state based on focus
+        this._updateEnergyForFocus(focusNodeId);
+        
         // Calculate scores for each visible node
         visibleNodes.forEach(node => {
             const score = this._calculateNodeContext(node, focusNode, visibleNodes);
@@ -122,11 +196,14 @@ export class CACEEngine {
         // Normalize scores to 0-1 range
         this._normalizeScores(contextScores);
         
+        // NEW: Apply energy modulation
+        this._applyEnergyModulation(contextScores, visibleNodes);
+        
         return contextScores;
     }
     
     /**
-     * Calculate context score for a single node
+     * Calculate context score for a single node (enhanced with energy)
      */
     _calculateNodeContext(node, focusNode, visibleNodes) {
         const weights = this.config.weights;
@@ -154,7 +231,219 @@ export class CACEEngine {
         const accessScore = this._calculateAccessScore(node.id);
         score += accessScore * weights.recentAccess;
         
+        // 6. NEW: Energy score based on metabolic profile
+        const energyScore = this._calculateEnergyScore(node, analysis);
+        score += energyScore * weights.energy;
+        
         return score;
+    }
+    
+    /**
+     * NEW: Calculate energy score based on metabolic profile
+     */
+    _calculateEnergyScore(node, analysis) {
+        if (!analysis.metabolicProfile) return 0.5;
+        
+        const profile = analysis.metabolicProfile;
+        
+        // Energy score based on:
+        // - Available ATP (energy reserves)
+        // - Production efficiency
+        // - Network assignment priority
+        
+        let energyScore = profile.atpAvailable / profile.atpCapacity;
+        energyScore *= profile.efficiency;
+        
+        // Boost for nodes in high-priority networks
+        const network = this._getNodeNetwork(node.id);
+        if (network === 'executive') {
+            energyScore *= 1.2;
+        } else if (network === 'memory') {
+            energyScore *= 1.1;
+        }
+        
+        return Math.min(1, energyScore);
+    }
+    
+    /**
+     * NEW: Calculate metabolic profile for a node
+     */
+    _calculateMetabolicProfile(node, descendants) {
+        const nodeType = node.metadata?.type || 'default';
+        const mitochodrialDensity = this.config.energy.profiles[nodeType] || 
+                                   this.config.energy.profiles.default;
+        
+        // Base metabolic rate depends on complexity
+        const complexityFactor = Math.min(1, descendants / 100);
+        const baseConsumption = this.config.energy.metabolic.atpConsumptionBase;
+        
+        return {
+            mitochodrialDensity,
+            atpCapacity: mitochodrialDensity * 100,
+            atpAvailable: mitochodrialDensity * 100 * 0.8, // Start at 80% capacity
+            atpProduction: mitochodrialDensity * this.config.energy.metabolic.atpProductionRate,
+            atpConsumption: baseConsumption * (1 + complexityFactor),
+            efficiency: 0.7 + (mitochodrialDensity * 0.3), // 70-100% efficiency
+            temperature: 37.0 // Baseline temperature (activity level)
+        };
+    }
+    
+    /**
+     * NEW: Assign node to consciousness network
+     */
+    _assignToNetwork(node, descendants, connectionCount) {
+        const depth = node.depth;
+        const complexity = descendants;
+        
+        // Executive network: High-level nodes with many descendants
+        if (depth <= 2 && complexity > 20) {
+            this.config.energy.networks.executive.nodes.add(node.id);
+        }
+        // Memory network: Mid-level nodes with moderate complexity
+        else if (depth >= 2 && depth <= 5 && complexity > 5) {
+            this.config.energy.networks.memory.nodes.add(node.id);
+        }
+        // Sensory network: Leaf nodes and input processors
+        else {
+            this.config.energy.networks.sensory.nodes.add(node.id);
+        }
+    }
+    
+    /**
+     * NEW: Calculate system-wide energy distribution
+     */
+    _calculateEnergyDistribution() {
+        const networks = this.config.energy.networks;
+        
+        // Count nodes in each network
+        const totals = {
+            executive: networks.executive.nodes.size,
+            memory: networks.memory.nodes.size,
+            sensory: networks.sensory.nodes.size
+        };
+        
+        const totalNodes = totals.executive + totals.memory + totals.sensory;
+        
+        if (totalNodes > 0) {
+            this.graphStats.energyDistribution = {
+                executive: totals.executive / totalNodes,
+                memory: totals.memory / totalNodes,
+                sensory: totals.sensory / totalNodes
+            };
+        }
+        
+        // Distribute available energy according to network shares
+        this.energyState.distributed = 0;
+        Object.entries(networks).forEach(([networkName, network]) => {
+            const nodeCount = network.nodes.size;
+            const energyAllocation = this.energyState.totalAvailable * network.energyShare;
+            const energyPerNode = nodeCount > 0 ? energyAllocation / nodeCount : 0;
+            
+            // Store for later use
+            network.energyPerNode = energyPerNode;
+            this.energyState.distributed += nodeCount * energyPerNode;
+        });
+    }
+    
+    /**
+     * NEW: Update energy state when focus changes
+     */
+    _updateEnergyForFocus(focusNodeId) {
+        // Increase energy allocation to focused node's network
+        const network = this._getNodeNetwork(focusNodeId);
+        if (!network) return;
+        
+        // Temporarily boost energy to focused network
+        const boost = 0.2; // 20% boost
+        const networks = this.config.energy.networks;
+        
+        // Redistribute energy shares
+        if (network === 'executive') {
+            networks.executive.energyShare = 0.5 + boost;
+            networks.memory.energyShare = 0.3 - boost/2;
+            networks.sensory.energyShare = 0.2 - boost/2;
+        } else if (network === 'memory') {
+            networks.executive.energyShare = 0.5 - boost/2;
+            networks.memory.energyShare = 0.3 + boost;
+            networks.sensory.energyShare = 0.2 - boost/2;
+        } else if (network === 'sensory') {
+            networks.executive.energyShare = 0.5 - boost/2;
+            networks.memory.energyShare = 0.3 - boost/2;
+            networks.sensory.energyShare = 0.2 + boost;
+        }
+        
+        // Recalculate distribution
+        this._calculateEnergyDistribution();
+    }
+    
+    /**
+     * NEW: Apply energy modulation to context scores
+     */
+    _applyEnergyModulation(scores, visibleNodes) {
+        visibleNodes.forEach(node => {
+            const currentScore = scores.get(node.id) || 0;
+            const analysis = this._getNodeAnalysis(node.id);
+            
+            if (analysis.metabolicProfile) {
+                // Modulate score based on available energy
+                const energyRatio = analysis.metabolicProfile.atpAvailable / 
+                                   analysis.metabolicProfile.atpCapacity;
+                
+                // Low energy reduces context score
+                const modulated = currentScore * (0.5 + 0.5 * energyRatio);
+                scores.set(node.id, modulated);
+            }
+        });
+    }
+    
+    /**
+     * NEW: Get which network a node belongs to
+     */
+    _getNodeNetwork(nodeId) {
+        const networks = this.config.energy.networks;
+        
+        if (networks.executive.nodes.has(nodeId)) return 'executive';
+        if (networks.memory.nodes.has(nodeId)) return 'memory';
+        if (networks.sensory.nodes.has(nodeId)) return 'sensory';
+        
+        return null;
+    }
+    
+    /**
+     * NEW: Update metabolic state over time
+     */
+    updateMetabolicState(deltaTime) {
+        this.analysisCache.forEach((analysis, nodeId) => {
+            if (!analysis.metabolicProfile) return;
+            
+            const profile = analysis.metabolicProfile;
+            
+            // ATP production
+            const produced = profile.atpProduction * deltaTime;
+            
+            // ATP consumption (increases with temperature/activity)
+            const consumed = profile.atpConsumption * deltaTime * 
+                           (profile.temperature / 37.0);
+            
+            // Update available ATP
+            profile.atpAvailable += produced - consumed;
+            profile.atpAvailable = Math.max(0, 
+                Math.min(profile.atpCapacity, profile.atpAvailable));
+            
+            // Check for fusion/fission conditions
+            const atpRatio = profile.atpAvailable / profile.atpCapacity;
+            
+            if (atpRatio < this.config.energy.metabolic.fissionThreshold) {
+                // Node is energy-starved, might need to fission
+                profile.needsFission = true;
+            } else if (atpRatio > this.config.energy.metabolic.fusionThreshold) {
+                // Node has excess energy, could fuse
+                profile.canFuse = true;
+            }
+            
+            // Update efficiency based on energy state
+            profile.efficiency = 0.5 + 0.5 * atpRatio;
+        });
     }
     
     /**
@@ -262,6 +551,7 @@ export class CACEEngine {
         return {
             descendants: 0,
             connectionCount: 1,
+            metabolicProfile: null,
             timestamp: Date.now()
         };
     }
@@ -326,25 +616,41 @@ export class CACEEngine {
     }
     
     /**
-     * Get CACE recommendations for navigation
+     * Get CACE recommendations for navigation (enhanced with energy awareness)
      */
     getNavigationHints(currentNodeId, visibleNodes) {
         const hints = {
             recommended: [],
             avoid: [],
-            explore: []
+            explore: [],
+            energyNeeded: []  // NEW: Nodes that need energy boost
         };
         
         visibleNodes.forEach(node => {
             const analysis = this._getNodeAnalysis(node.id);
             const accessScore = this._calculateAccessScore(node.id);
             
-            // Recommend unexplored complex nodes
-            if (analysis.descendants > 20 && accessScore < 0.1) {
+            // NEW: Check energy state
+            if (analysis.metabolicProfile) {
+                const energyRatio = analysis.metabolicProfile.atpAvailable / 
+                                   analysis.metabolicProfile.atpCapacity;
+                
+                if (energyRatio < 0.3) {
+                    hints.energyNeeded.push({
+                        nodeId: node.id,
+                        reason: 'low_energy',
+                        energyRatio
+                    });
+                }
+            }
+            
+            // Recommend unexplored complex nodes with good energy
+            if (analysis.descendants > 20 && accessScore < 0.1 && 
+                analysis.metabolicProfile?.efficiency > 0.7) {
                 hints.explore.push({
                     nodeId: node.id,
-                    reason: 'unexplored_complex',
-                    score: analysis.descendants
+                    reason: 'unexplored_complex_energized',
+                    score: analysis.descendants * analysis.metabolicProfile.efficiency
                 });
             }
             
@@ -370,6 +676,7 @@ export class CACEEngine {
         // Sort by score
         hints.recommended.sort((a, b) => b.score - a.score);
         hints.explore.sort((a, b) => b.score - a.score);
+        hints.energyNeeded.sort((a, b) => a.energyRatio - b.energyRatio);
         
         return hints;
     }
@@ -390,14 +697,20 @@ export class CACEEngine {
     }
     
     /**
-     * Get CACE statistics
+     * Get CACE statistics (enhanced with energy data)
      */
     getStats() {
         return {
             graphStats: { ...this.graphStats },
             cacheSize: this.analysisCache.size,
             historySize: this.accessHistory.size,
-            config: { ...this.config }
+            config: { ...this.config },
+            energyState: { ...this.energyState },
+            networkSizes: {
+                executive: this.config.energy.networks.executive.nodes.size,
+                memory: this.config.energy.networks.memory.nodes.size,
+                sensory: this.config.energy.networks.sensory.nodes.size
+            }
         };
     }
 }
