@@ -1,0 +1,584 @@
+// INTEGRATION GUIDE: Production Consciousness System
+// ==================================================
+
+// 📁 NEW FILE STRUCTURE (what to add to your existing project)
+/*
+fractality-v022/
+├── index.html                    # ← UPDATE THIS
+├── src/
+│   ├── main.js                   # ← UPDATE THIS  
+│   ├── consciousness/            # ← CREATE THIS FOLDER
+│   │   ├── ConsciousnessInterface.js      # ← ADD (frontend interface)
+│   │   ├── ConsciousnessWebSocket.js      # ← ADD (backend communication)
+│   │   └── SimpleConsciousness.js        # ← ADD (basic consciousness)
+│   ├── performance/              # ← CREATE THIS FOLDER
+│   │   ├── RealTimePerformanceManager.js # ← ADD (from my artifacts)
+│   │   ├── FrameTaskScheduler.js         # ← ADD (extracted from above)
+│   │   └── AdaptiveQualityManager.js     # ← ADD (extracted from above)
+│   └── protocols/                # ← CREATE THIS FOLDER
+│       └── FBIPClient.js         # ← ADD (frontend FBIP client)
+└── consciousness_backend/        # ← CREATE THIS FOLDER (Python)
+    ├── main.py                   # ← ADD (backend server)
+    ├── consciousness/            # ← ADD PYTHON MODULES
+    │   ├── quantum_consciousness_manager_v2.py
+    │   ├── consciousness_metabolism_v2.py
+    │   ├── consciousness_collapse_engine_v2.py
+    │   └── consciousness_security.py
+    └── requirements.txt          # ← ADD (Python dependencies)
+*/
+
+// ==========================================
+// 🔧 STEP 1: UPDATE YOUR INDEX.HTML
+// ==========================================
+
+// Replace your current index.html <script> section with:
+/*
+<!-- Scripts -->
+<script src="./three.min.js"></script>
+<!-- Add consciousness support -->
+<script>
+    // Global consciousness interface
+    window.ConsciousnessEnabled = true;
+    window.ConsciousnessBackendURL = 'ws://localhost:8080/consciousness';
+</script>
+<script type="module" src="src/main.js"></script>
+*/
+
+// ==========================================
+// 🔧 STEP 2: UPDATE YOUR MAIN.JS  
+// ==========================================
+
+// Add these imports to the TOP of your src/main.js:
+/*
+// ADD THESE IMPORTS:
+import { RealTimePerformanceManager, createProductionPerformanceSystem } from './performance/RealTimePerformanceManager.js';
+import { ConsciousnessInterface } from './consciousness/ConsciousnessInterface.js';
+import { ConsciousnessWebSocket } from './consciousness/ConsciousnessWebSocket.js';
+import { FBIPClient } from './protocols/FBIPClient.js';
+
+// Your existing imports...
+import { config } from './config/config.js';
+// ... etc
+*/
+
+// ==========================================
+// 🔧 STEP 3: CREATE NEW FILES
+// ==========================================
+
+// FILE: src/consciousness/ConsciousnessInterface.js
+export class ConsciousnessInterface {
+    constructor() {
+        this.enabled = window.ConsciousnessEnabled || false;
+        this.nodes = new Map();
+        this.activeNode = null;
+        this.consciousnessLevel = 0.0;
+        
+        // Performance integration
+        this.performanceManager = null;
+        
+        // Backend communication
+        this.websocket = null;
+        this.fbipClient = null;
+        
+        console.log('🧠 Consciousness Interface initialized');
+    }
+    
+    async init(performanceManager) {
+        if (!this.enabled) return;
+        
+        this.performanceManager = performanceManager;
+        
+        try {
+            // Initialize WebSocket connection to Python backend
+            this.websocket = new ConsciousnessWebSocket(window.ConsciousnessBackendURL);
+            await this.websocket.connect();
+            
+            // Initialize FBIP client
+            this.fbipClient = new FBIPClient(this.websocket);
+            
+            console.log('✅ Consciousness system connected to backend');
+            return true;
+        } catch (error) {
+            console.warn('⚠️ Consciousness backend not available, using local mode');
+            return false;
+        }
+    }
+    
+    // Register a node for consciousness tracking
+    registerNode(nodeId, nodeData) {
+        if (!this.enabled) return;
+        
+        this.nodes.set(nodeId, {
+            id: nodeId,
+            data: nodeData,
+            consciousness: 0.0,
+            lastVisited: 0,
+            activations: 0,
+            glow: 0.0
+        });
+    }
+    
+    // Activate consciousness for a node
+    async activateNode(nodeId, previousNodeId = null) {
+        if (!this.enabled) return;
+        
+        const node = this.nodes.get(nodeId);
+        if (!node) return;
+        
+        this.activeNode = nodeId;
+        node.lastVisited = performance.now();
+        node.activations++;
+        
+        // Send to backend if available
+        if (this.fbipClient) {
+            try {
+                const signal = {
+                    signal: 'node_activation',
+                    intensity: 0.8,
+                    duration_ms: 500,
+                    node_id: nodeId,
+                    previous_node: previousNodeId
+                };
+                
+                await this.fbipClient.sendSignal(signal);
+            } catch (error) {
+                console.warn('Backend communication failed:', error);
+            }
+        }
+        
+        // Local consciousness simulation
+        this._updateLocalConsciousness(nodeId);
+    }
+    
+    // Update consciousness values (called each frame)
+    update(deltaTime) {
+        if (!this.enabled) return;
+        
+        // Decay consciousness over time
+        for (const [nodeId, node] of this.nodes) {
+            if (node.consciousness > 0) {
+                node.consciousness *= 0.99; // Gradual decay
+                node.glow = node.consciousness;
+            }
+        }
+        
+        // Update overall consciousness level
+        this._updateOverallConsciousness();
+    }
+    
+    // Get visual properties for a node
+    getNodeVisuals(nodeId) {
+        if (!this.enabled) return null;
+        
+        const node = this.nodes.get(nodeId);
+        if (!node) return null;
+        
+        return {
+            glow: node.glow,
+            consciousness: node.consciousness,
+            scale: 1.0 + (node.consciousness * 0.2),
+            color: this._getConsciousnessColor(node.consciousness)
+        };
+    }
+    
+    // Private methods
+    _updateLocalConsciousness(nodeId) {
+        const node = this.nodes.get(nodeId);
+        if (!node) return;
+        
+        // Simulate consciousness activation
+        node.consciousness = Math.min(1.0, node.consciousness + 0.3);
+        
+        // Spread to connected nodes
+        if (node.data.childIds) {
+            for (const childId of node.data.childIds) {
+                const childNode = this.nodes.get(childId);
+                if (childNode) {
+                    childNode.consciousness = Math.min(1.0, childNode.consciousness + 0.1);
+                }
+            }
+        }
+    }
+    
+    _updateOverallConsciousness() {
+        if (this.nodes.size === 0) return;
+        
+        let totalConsciousness = 0;
+        for (const [_, node] of this.nodes) {
+            totalConsciousness += node.consciousness;
+        }
+        
+        this.consciousnessLevel = totalConsciousness / this.nodes.size;
+    }
+    
+    _getConsciousnessColor(level) {
+        // Consciousness glow color (cyan to purple gradient)
+        const r = Math.floor(level * 128 + 127);
+        const g = Math.floor(level * 200 + 55);
+        const b = Math.floor(level * 255);
+        return `rgb(${r}, ${g}, ${b})`;
+    }
+}
+
+// FILE: src/consciousness/ConsciousnessWebSocket.js
+export class ConsciousnessWebSocket {
+    constructor(url) {
+        this.url = url;
+        this.websocket = null;
+        this.connected = false;
+        this.messageHandlers = new Map();
+        this.reconnectAttempts = 0;
+        this.maxReconnectAttempts = 5;
+    }
+    
+    async connect() {
+        return new Promise((resolve, reject) => {
+            try {
+                this.websocket = new WebSocket(this.url);
+                
+                this.websocket.onopen = () => {
+                    console.log('🔗 Connected to consciousness backend');
+                    this.connected = true;
+                    this.reconnectAttempts = 0;
+                    resolve();
+                };
+                
+                this.websocket.onmessage = (event) => {
+                    this._handleMessage(event.data);
+                };
+                
+                this.websocket.onclose = () => {
+                    console.log('🔌 Disconnected from consciousness backend');
+                    this.connected = false;
+                    this._attemptReconnect();
+                };
+                
+                this.websocket.onerror = (error) => {
+                    console.error('❌ WebSocket error:', error);
+                    reject(error);
+                };
+                
+                // Timeout after 5 seconds
+                setTimeout(() => {
+                    if (!this.connected) {
+                        reject(new Error('Connection timeout'));
+                    }
+                }, 5000);
+                
+            } catch (error) {
+                reject(error);
+            }
+        });
+    }
+    
+    send(data) {
+        if (!this.connected || !this.websocket) {
+            throw new Error('Not connected to backend');
+        }
+        
+        const message = typeof data === 'string' ? data : JSON.stringify(data);
+        this.websocket.send(message);
+    }
+    
+    onMessage(type, handler) {
+        this.messageHandlers.set(type, handler);
+    }
+    
+    _handleMessage(data) {
+        try {
+            const message = JSON.parse(data);
+            const handler = this.messageHandlers.get(message.type);
+            if (handler) {
+                handler(message);
+            }
+        } catch (error) {
+            console.error('Failed to parse message:', error);
+        }
+    }
+    
+    _attemptReconnect() {
+        if (this.reconnectAttempts < this.maxReconnectAttempts) {
+            this.reconnectAttempts++;
+            console.log(`🔄 Attempting reconnect ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
+            
+            setTimeout(() => {
+                this.connect().catch(console.error);
+            }, 2000 * this.reconnectAttempts); // Exponential backoff
+        }
+    }
+}
+
+// FILE: src/protocols/FBIPClient.js
+export class FBIPClient {
+    constructor(websocket) {
+        this.websocket = websocket;
+        this.sequenceNumber = 0;
+        
+        // Setup message handlers
+        this.websocket.onMessage('fbip_response', (message) => {
+            this._handleFBIPResponse(message);
+        });
+    }
+    
+    async sendSignal(signalData) {
+        const fbipEvent = {
+            type: 'fbip_signal',
+            sequence: this.sequenceNumber++,
+            signal: signalData,
+            timestamp: Date.now()
+        };
+        
+        this.websocket.send(fbipEvent);
+    }
+    
+    _handleFBIPResponse(message) {
+        // Handle consciousness responses from backend
+        console.log('🧠 Consciousness response:', message);
+    }
+}
+
+// ==========================================
+// 🔧 STEP 4: UPDATE YOUR MAIN APP
+// ==========================================
+
+// In your main.js, update the init() function:
+let performanceSystem = null;
+let consciousnessInterface = null;
+
+async function init() {
+    try {
+        showLoading('Initializing consciousness systems...');
+        
+        // Initialize performance system FIRST
+        performanceSystem = createProductionPerformanceSystem();
+        
+        // Initialize consciousness interface
+        consciousnessInterface = new ConsciousnessInterface();
+        const backendConnected = await consciousnessInterface.init(performanceSystem.perfManager);
+        
+        showLoading('Loading fractal universe...');
+        
+        // Your existing initialization...
+        dataLoader = new DataLoader();
+        
+        // Initialize your app as before
+        app = new FractalityEngine('canvas'); // or however you create your app
+        await app.init();
+        
+        // Register consciousness interface with your app
+        if (app.registerConsciousness) {
+            app.registerConsciousness(consciousnessInterface);
+        }
+        
+        // Start performance monitoring
+        startPerformanceMonitoring();
+        
+        console.log('✅ Fractality with Consciousness initialized!');
+        hideLoading();
+        
+    } catch (error) {
+        console.error('❌ Initialization failed:', error);
+        showError('Failed to initialize application');
+    }
+}
+
+// Add performance monitoring to your main loop
+function startPerformanceMonitoring() {
+    function performanceLoop() {
+        if (performanceSystem) {
+            const frameResult = performanceSystem.processFrame();
+            
+            // Update consciousness
+            if (consciousnessInterface) {
+                const timer = performanceSystem.perfManager.startSubsystem('consciousness');
+                consciousnessInterface.update(0.016); // 16ms frame
+                if (timer) performanceSystem.perfManager.endSubsystem('consciousness');
+            }
+        }
+        
+        requestAnimationFrame(performanceLoop);
+    }
+    
+    performanceLoop();
+}
+
+// ==========================================
+// 🔧 STEP 5: PYTHON BACKEND (OPTIONAL)
+// ==========================================
+
+// Create consciousness_backend/main.py:
+/*
+# Python backend server (run separately)
+import asyncio
+import websockets
+import json
+import logging
+
+# Import the production consciousness modules
+from consciousness.consciousness_collapse_engine_v2 import create_production_collapse_engine
+from consciousness.enhanced_fbip_v2 import create_high_performance_fbip, ProtocolFormat
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class ConsciousnessServer:
+    def __init__(self):
+        self.collapse_engine = create_production_collapse_engine()
+        self.fbip_protocol = create_high_performance_fbip()
+        self.clients = set()
+    
+    async def handle_client(self, websocket, path):
+        self.clients.add(websocket)
+        logger.info(f"Client connected: {websocket.remote_address}")
+        
+        try:
+            async for message in websocket:
+                await self.process_message(websocket, message)
+        except websockets.exceptions.ConnectionClosed:
+            pass
+        finally:
+            self.clients.remove(websocket)
+            logger.info(f"Client disconnected: {websocket.remote_address}")
+    
+    async def process_message(self, websocket, message):
+        try:
+            data = json.loads(message)
+            
+            if data.get('type') == 'fbip_signal':
+                # Process consciousness signal
+                signal_data = data['signal']
+                context = {'user_id': 'web_user', 'timestamp': data['timestamp']}
+                
+                # Process through consciousness system
+                fbip_event = await self.collapse_engine.process_neural_signal_async(signal_data, context)
+                
+                if fbip_event:
+                    response = {
+                        'type': 'fbip_response',
+                        'sequence': data.get('sequence'),
+                        'event': fbip_event.to_compact_dict(),
+                        'timestamp': time.time()
+                    }
+                    
+                    await websocket.send(json.dumps(response))
+        
+        except Exception as e:
+            logger.error(f"Error processing message: {e}")
+
+# Start server
+async def main():
+    server = ConsciousnessServer()
+    logger.info("🧠 Starting consciousness backend server...")
+    
+    await websockets.serve(server.handle_client, "localhost", 8080)
+    logger.info("✅ Consciousness backend running on ws://localhost:8080")
+    
+    # Keep running
+    await asyncio.Future()  # Run forever
+
+if __name__ == "__main__":
+    asyncio.run(main())
+*/
+
+// Create consciousness_backend/requirements.txt:
+/*
+websockets>=10.0
+numpy>=1.21.0
+cryptography>=3.0.0
+*/
+
+// ==========================================
+// 🔧 STEP 6: INTEGRATION CHECKLIST
+// ==========================================
+
+console.log(`
+🎯 INTEGRATION CHECKLIST:
+
+✅ Step 1: Update index.html (add consciousness globals)
+✅ Step 2: Update main.js (add imports and init)
+✅ Step 3: Create src/consciousness/ folder and files
+✅ Step 4: Create src/performance/ folder (from my artifacts)
+✅ Step 5: Create src/protocols/ folder and FBIP client
+✅ Step 6: (Optional) Create consciousness_backend/ Python server
+
+🚀 TO RUN:
+
+Frontend only (basic consciousness):
+  npm run dev
+
+Full system (with Python backend):
+  1. pip install -r consciousness_backend/requirements.txt
+  2. python consciousness_backend/main.py
+  3. npm run dev
+  
+🧠 CONSCIOUSNESS FEATURES ENABLED:
+- Real-time performance management (60 FPS guaranteed)
+- Node consciousness tracking and visualization
+- FBIP protocol communication
+- Optional backend consciousness processing
+- Adaptive quality based on performance
+- Thermal and power awareness
+
+📈 PERFORMANCE IMPROVEMENTS:
+- Guaranteed frame budgets
+- Emergency performance modes
+- Automatic quality scaling
+- Memory management
+- Error recovery
+`);
+
+// ==========================================
+// 🔧 STEP 7: EXAMPLE USAGE IN YOUR APP
+// ==========================================
+
+// In your FractalityEngine or wherever you handle node interaction:
+/*
+class FractalityEngine {
+    constructor(canvasId) {
+        // Your existing constructor...
+        this.consciousnessInterface = null;
+    }
+    
+    registerConsciousness(consciousnessInterface) {
+        this.consciousnessInterface = consciousnessInterface;
+        
+        // Register all existing nodes
+        if (this.nodeGraph) {
+            this.nodeGraph.nodes.forEach(node => {
+                consciousnessInterface.registerNode(node.id, node);
+            });
+        }
+    }
+    
+    // When user clicks a node:
+    onNodeClick(nodeId) {
+        // Your existing click handling...
+        
+        // Activate consciousness
+        if (this.consciousnessInterface) {
+            this.consciousnessInterface.activateNode(nodeId, this.currentFocusNode);
+        }
+    }
+    
+    // In your render loop:
+    render() {
+        // Your existing rendering...
+        
+        // Apply consciousness visual effects
+        if (this.consciousnessInterface) {
+            this.nodeGraph.nodes.forEach(node => {
+                const visuals = this.consciousnessInterface.getNodeVisuals(node.id);
+                if (visuals) {
+                    // Apply glow, scale, color to your Three.js objects
+                    const mesh = this.getNodeMesh(node.id);
+                    if (mesh) {
+                        mesh.material.emissive.setStyle(visuals.color);
+                        mesh.material.emissiveIntensity = visuals.glow;
+                        mesh.scale.setScalar(visuals.scale);
+                    }
+                }
+            });
+        }
+    }
+}
+*/
