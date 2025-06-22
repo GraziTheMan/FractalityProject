@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Fractality v0.2.2 - The Living Universe</title>
     <link rel="stylesheet" href="src/styles/main.css">
+<script>
+  // If mobile, redirect to mobile.html
+  if (/Mobi|Android|iPhone/i.test(navigator.userAgent)) {
+    window.location.href = "mobile.html";
+  }
+</script>
 </head>
 <body>
     <canvas id="canvas"></canvas>
