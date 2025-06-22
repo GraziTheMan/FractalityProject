@@ -532,4 +532,28 @@ export class AnimationSystem {
             config: { ...this.config }
         };
     }
+    /**
+ * High-level render trigger (stub for init.js)
+ */
+render(visibleNodes, positions, contextScores) {
+    // Apply target positions to each node
+    visibleNodes.forEach(node => {
+        node.position = node.position || new THREE.Vector3();
+        node.opacity = node.opacity ?? 1;
+        node.scale = node.scale ?? 1;
+        node.color = node.color || new THREE.Color(1, 1, 1);
+
+        // Optional: use contextScores to influence scale/opacity
+        const context = contextScores?.get(node.id) ?? 1;
+        node.targetScale = 0.5 + 0.5 * context;
+        node.targetOpacity = context;
+
+        // You can also color nodes based on priority or context
+        node.targetColor = new THREE.Color().setHSL(context, 0.7, 0.5);
+    });
+
+    // Animate everything into position
+    this.startTransition(visibleNodes, positions);
+}
+
 }
