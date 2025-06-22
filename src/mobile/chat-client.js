@@ -1,6 +1,6 @@
 import { io } from 'https://cdn.socket.io/4.7.2/socket.io.esm.min.js';
 
-export const chatSocket = io('https://YOUR_CHAT_SERVER_URL');
+export const chatSocket = io('https://thefractalityplatform.onrender.com');
 
 chatSocket.on('connect', () => console.log('Chat connected:', chatSocket.id));
 chatSocket.on('message', msg => {
