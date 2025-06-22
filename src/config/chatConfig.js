@@ -128,4 +128,8 @@ export const chatConfig = {
         showTokenCounts: false,
         simulateResponses: false // For testing without API calls
     }
+
 };
+
+};
+
