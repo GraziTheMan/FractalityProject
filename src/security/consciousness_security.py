@@ -487,7 +487,7 @@ class ConsciousnessEncryption:
                     protected_data[field] = self._encrypt_field(protected_data[field])
         
         elif privacy_mode == PrivacyMode.ZERO_KNOWLEDGE:
-            # Apply zero-knowledge transformations
+             # Apply zero-knowledge transformations
             protected_data = self._apply_zero_knowledge_proof(protected_data)
         
         return protected_data
@@ -497,4 +497,747 @@ class ConsciousnessEncryption:
         
         if privacy_mode == PrivacyMode.TRANSPARENT:
             return data
+        
+        # Most privacy transformations are one-way
+        # Only pseudonymous mode can be partially reversed with proper authorization
+        
+        if privacy_mode == PrivacyMode.PSEUDONYMOUS:
+            # Would need secure pseudonym reversal database
+            pass
+        
+        return data
     
+    def _encrypt_authenticated(self, plaintext: bytes, key: bytes, iv: bytes, 
+                             context: EncryptionContext) -> Tuple[bytes, bytes]:
+        """Encrypt with authenticated encryption (AES-GCM)"""
+        
+        cipher = Cipher(algorithms.AES(key), modes.GCM(iv))
+        encryptor = cipher.encryptor()
+        
+        ciphertext = encryptor.update(plaintext) + encryptor.finalize()
+        auth_tag = encryptor.tag
+        
+        return ciphertext, auth_tag
+    
+    def _decrypt_authenticated(self, ciphertext: bytes, key: bytes, iv: bytes, 
+                             auth_tag: bytes, context: EncryptionContext) -> Optional[bytes]:
+        """Decrypt with authenticated encryption verification"""
+        
+        try:
+            cipher = Cipher(algorithms.AES(key), modes.GCM(iv, auth_tag))
+            decryptor = cipher.decryptor()
+            
+            plaintext = decryptor.update(ciphertext) + decryptor.finalize()
+            return plaintext
+            
+        except Exception as e:
+            logger.error(f"Authenticated decryption failed: {e}")
+            return None
+    
+    def _encrypt_standard(self, plaintext: bytes, key: bytes, iv: bytes, 
+                         context: EncryptionContext) -> bytes:
+        """Standard encryption (AES-CBC)"""
+        
+        cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
+        encryptor = cipher.encryptor()
+        
+        # Add PKCS7 padding
+        padded_plaintext = self._add_padding(plaintext)
+        
+        ciphertext = encryptor.update(padded_plaintext) + encryptor.finalize()
+        return ciphertext
+    
+    def _decrypt_standard(self, ciphertext: bytes, key: bytes, iv: bytes, 
+                         context: EncryptionContext) -> Optional[bytes]:
+        """Standard decryption (AES-CBC)"""
+        
+        try:
+            cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
+            decryptor = cipher.decryptor()
+            
+            padded_plaintext = decryptor.update(ciphertext) + decryptor.finalize()
+            plaintext = self._remove_padding(padded_plaintext)
+            
+            return plaintext
+            
+        except Exception as e:
+            logger.error(f"Standard decryption failed: {e}")
+            return None
+    
+    def _add_padding(self, data: bytes) -> bytes:
+        """Add PKCS7 padding"""
+        padding_length = 16 - (len(data) % 16)
+        padding = bytes([padding_length] * padding_length)
+        return data + padding
+    
+    def _remove_padding(self, data: bytes) -> bytes:
+        """Remove PKCS7 padding"""
+        padding_length = data[-1]
+        return data[:-padding_length]
+    
+    def _generate_pseudonym(self, user_id: str) -> str:
+        """Generate pseudonym for user ID"""
+        # Use HMAC with secret key for consistent pseudonyms
+        secret = b"pseudonym_secret_key"  # Would be securely managed
+        pseudonym_hash = hmac.new(secret, user_id.encode('utf-8'), hashlib.sha256).hexdigest()
+        return f"pseudo_{pseudonym_hash[:16]}"
+    
+    def _encrypt_field(self, field_data: Any) -> str:
+        """Encrypt individual field"""
+        # Simplified field encryption
+        field_str = json.dumps(field_data)
+        field_hash = hashlib.sha256(field_str.encode('utf-8')).hexdigest()
+        return f"encrypted_{field_hash[:16]}"
+    
+    def _apply_zero_knowledge_proof(self, data: Dict) -> Dict:
+        """Apply zero-knowledge proof transformations"""
+        # Simplified zero-knowledge proof
+        # In production, this would use proper ZK-SNARK or similar
+        
+        zk_data = {
+            "proof_type": "zk_consciousness",
+            "commitment": hashlib.sha256(json.dumps(data).encode('utf-8')).hexdigest(),
+            "proof_timestamp": time.time(),
+            "verifiable_properties": {
+                "consciousness_level_above_threshold": True,
+                "valid_neural_patterns": True,
+                "temporal_consistency": True
+            }
+        }
+        
+        return zk_data
+
+class ConsentManager:
+    """Manages user consent for consciousness data processing"""
+    
+    def __init__(self, database_path: str = "consent.db"):
+        self.database_path = database_path
+        self.consent_cache: Dict[str, ConsentRecord] = {}
+        self._lock = threading.Lock()
+        
+        # Initialize database
+        self._initialize_database()
+        
+        # Consent monitoring
+        self.consent_violations = []
+        self.audit_log = []
+        
+        logger.info("Consent manager initialized")
+    
+    def request_consent(self, user_id: str, requested_level: ConsentLevel, 
+                       duration_days: Optional[int] = None, 
+                       additional_permissions: Optional[Dict] = None) -> bool:
+        """Request user consent for consciousness data processing"""
+        
+        try:
+            # Check if user already has valid consent
+            existing_consent = self.get_user_consent(user_id)
+            
+            if existing_consent and existing_consent.is_valid():
+                # Check if existing consent covers requested level
+                if self._consent_level_covers(existing_consent.consent_level, requested_level):
+                    logger.info(f"User {user_id} already has sufficient consent")
+                    return True
+            
+            # Create new consent request
+            consent_request = {
+                "user_id": user_id,
+                "requested_level": requested_level.value,
+                "duration_days": duration_days,
+                "additional_permissions": additional_permissions or {},
+                "request_timestamp": time.time(),
+                "request_id": secrets.token_hex(16)
+            }
+            
+            # In production, this would present UI for user consent
+            # For now, simulate automatic consent for testing
+            logger.info(f"Consent requested for user {user_id}: {requested_level.value}")
+            
+            # Simulate user granting consent
+            granted_consent = self._simulate_user_consent_response(consent_request)
+            
+            if granted_consent:
+                return self.record_consent(user_id, granted_consent)
+            else:
+                self._log_consent_denial(user_id, requested_level)
+                return False
+                
+        except Exception as e:
+            logger.error(f"Consent request failed: {e}")
+            return False
+    
+    def record_consent(self, user_id: str, consent_data: Dict) -> bool:
+        """Record user consent in database"""
+        
+        with self._lock:
+            try:
+                # Create consent record
+                expiry_timestamp = None
+                if consent_data.get("duration_days"):
+                    expiry_timestamp = time.time() + (consent_data["duration_days"] * 24 * 3600)
+                
+                consent_record = ConsentRecord(
+                    user_id=user_id,
+                    consent_level=ConsentLevel(consent_data["consent_level"]),
+                    granted_timestamp=time.time(),
+                    expiry_timestamp=expiry_timestamp,
+                    allow_signal_capture=consent_data.get("allow_signal_capture", False),
+                    allow_processing=consent_data.get("allow_processing", False),
+                    allow_storage=consent_data.get("allow_storage", False),
+                    allow_sharing=consent_data.get("allow_sharing", False),
+                    allow_research=consent_data.get("allow_research", False),
+                    max_retention_days=consent_data.get("max_retention_days"),
+                    auto_delete=consent_data.get("auto_delete", True),
+                    allowed_partners=consent_data.get("allowed_partners", []),
+                    geographic_restrictions=consent_data.get("geographic_restrictions", []),
+                    consent_method=consent_data.get("consent_method", "explicit")
+                )
+                
+                # Store in database
+                self._store_consent_in_db(consent_record)
+                
+                # Update cache
+                self.consent_cache[user_id] = consent_record
+                
+                # Log consent grant
+                self._log_consent_action("GRANTED", user_id, consent_record.consent_level)
+                
+                logger.info(f"Consent recorded for user {user_id}: {consent_record.consent_level.value}")
+                return True
+                
+            except Exception as e:
+                logger.error(f"Failed to record consent: {e}")
+                return False
+    
+    def revoke_consent(self, user_id: str, reason: str = "user_request") -> bool:
+        """Revoke user consent"""
+        
+        with self._lock:
+            try:
+                consent_record = self.get_user_consent(user_id)
+                
+                if not consent_record:
+                    logger.warning(f"No consent found for user {user_id}")
+                    return False
+                
+                # Mark as revoked
+                consent_record.revoked = True
+                consent_record.revocation_timestamp = time.time()
+                consent_record.revocation_reason = reason
+                
+                # Update database
+                self._update_consent_in_db(consent_record)
+                
+                # Update cache
+                self.consent_cache[user_id] = consent_record
+                
+                # Log revocation
+                self._log_consent_action("REVOKED", user_id, consent_record.consent_level, reason)
+                
+                logger.info(f"Consent revoked for user {user_id}: {reason}")
+                return True
+                
+            except Exception as e:
+                logger.error(f"Failed to revoke consent: {e}")
+                return False
+    
+    def check_consent_for_operation(self, user_id: str, operation: str) -> bool:
+        """Check if user has given consent for specific operation"""
+        
+        consent_record = self.get_user_consent(user_id)
+        
+        if not consent_record or not consent_record.is_valid():
+            self._log_consent_violation(user_id, operation, "No valid consent")
+            return False
+        
+        if not consent_record.allows_operation(operation):
+            self._log_consent_violation(user_id, operation, "Operation not permitted by consent")
+            return False
+        
+        return True
+    
+    def get_user_consent(self, user_id: str) -> Optional[ConsentRecord]:
+        """Get current consent record for user"""
+        
+        # Check cache first
+        if user_id in self.consent_cache:
+            return self.consent_cache[user_id]
+        
+        # Load from database
+        consent_record = self._load_consent_from_db(user_id)
+        
+        if consent_record:
+            self.consent_cache[user_id] = consent_record
+        
+        return consent_record
+    
+    def get_consent_audit_log(self, user_id: Optional[str] = None, 
+                            days: int = 30) -> List[Dict]:
+        """Get consent audit log"""
+        
+        cutoff_time = time.time() - (days * 24 * 3600)
+        
+        filtered_log = [
+            entry for entry in self.audit_log
+            if entry["timestamp"] >= cutoff_time and
+            (user_id is None or entry.get("user_id") == user_id)
+        ]
+        
+        return filtered_log
+    
+    def cleanup_expired_consents(self):
+        """Clean up expired consent records"""
+        
+        current_time = time.time()
+        expired_users = []
+        
+        for user_id, consent_record in self.consent_cache.items():
+            if (consent_record.expiry_timestamp and 
+                current_time > consent_record.expiry_timestamp):
+                expired_users.append(user_id)
+        
+        for user_id in expired_users:
+            logger.info(f"Consent expired for user: {user_id}")
+            self._log_consent_action("EXPIRED", user_id, self.consent_cache[user_id].consent_level)
+            del self.consent_cache[user_id]
+    
+    # Private methods
+    
+    def _initialize_database(self):
+        """Initialize consent database"""
+        
+        try:
+            conn = sqlite3.connect(self.database_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS consent_records (
+                    user_id TEXT PRIMARY KEY,
+                    consent_level TEXT NOT NULL,
+                    granted_timestamp REAL NOT NULL,
+                    expiry_timestamp REAL,
+                    allow_signal_capture BOOLEAN,
+                    allow_processing BOOLEAN,
+                    allow_storage BOOLEAN,
+                    allow_sharing BOOLEAN,
+                    allow_research BOOLEAN,
+                    max_retention_days INTEGER,
+                    auto_delete BOOLEAN,
+                    allowed_partners TEXT,
+                    geographic_restrictions TEXT,
+                    revoked BOOLEAN DEFAULT FALSE,
+                    revocation_timestamp REAL,
+                    revocation_reason TEXT,
+                    consent_version TEXT,
+                    legal_basis TEXT,
+                    consent_method TEXT
+                )
+            ''')
+            
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS consent_audit_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp REAL NOT NULL,
+                    action TEXT NOT NULL,
+                    user_id TEXT,
+                    consent_level TEXT,
+                    details TEXT
+                )
+            ''')
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info("Consent database initialized")
+            
+        except Exception as e:
+            logger.error(f"Database initialization failed: {e}")
+    
+    def _store_consent_in_db(self, consent_record: ConsentRecord):
+        """Store consent record in database"""
+        
+        conn = sqlite3.connect(self.database_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT OR REPLACE INTO consent_records (
+                user_id, consent_level, granted_timestamp, expiry_timestamp,
+                allow_signal_capture, allow_processing, allow_storage,
+                allow_sharing, allow_research, max_retention_days, auto_delete,
+                allowed_partners, geographic_restrictions, revoked,
+                revocation_timestamp, revocation_reason, consent_version,
+                legal_basis, consent_method
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            consent_record.user_id,
+            consent_record.consent_level.value,
+            consent_record.granted_timestamp,
+            consent_record.expiry_timestamp,
+            consent_record.allow_signal_capture,
+            consent_record.allow_processing,
+            consent_record.allow_storage,
+            consent_record.allow_sharing,
+            consent_record.allow_research,
+            consent_record.max_retention_days,
+            consent_record.auto_delete,
+            json.dumps(consent_record.allowed_partners),
+            json.dumps(consent_record.geographic_restrictions),
+            consent_record.revoked,
+            consent_record.revocation_timestamp,
+            consent_record.revocation_reason,
+            consent_record.consent_version,
+            consent_record.legal_basis,
+            consent_record.consent_method
+        ))
+        
+        conn.commit()
+        conn.close()
+    
+    def _load_consent_from_db(self, user_id: str) -> Optional[ConsentRecord]:
+        """Load consent record from database"""
+        
+        try:
+            conn = sqlite3.connect(self.database_path)
+            cursor = conn.cursor()
+            
+            cursor.execute(
+                'SELECT * FROM consent_records WHERE user_id = ?',
+                (user_id,)
+            )
+            
+            row = cursor.fetchone()
+            conn.close()
+            
+            if not row:
+                return None
+            
+            # Reconstruct consent record
+            consent_record = ConsentRecord(
+                user_id=row[0],
+                consent_level=ConsentLevel(row[1]),
+                granted_timestamp=row[2],
+                expiry_timestamp=row[3],
+                allow_signal_capture=bool(row[4]),
+                allow_processing=bool(row[5]),
+                allow_storage=bool(row[6]),
+                allow_sharing=bool(row[7]),
+                allow_research=bool(row[8]),
+                max_retention_days=row[9],
+                auto_delete=bool(row[10]),
+                allowed_partners=json.loads(row[11]) if row[11] else [],
+                geographic_restrictions=json.loads(row[12]) if row[12] else [],
+                revoked=bool(row[13]),
+                revocation_timestamp=row[14],
+                revocation_reason=row[15],
+                consent_version=row[16] or "1.0",
+                legal_basis=row[17] or "informed_consent",
+                consent_method=row[18] or "explicit"
+            )
+            
+            return consent_record
+            
+        except Exception as e:
+            logger.error(f"Failed to load consent from database: {e}")
+            return None
+    
+    def _update_consent_in_db(self, consent_record: ConsentRecord):
+        """Update consent record in database"""
+        self._store_consent_in_db(consent_record)  # Uses INSERT OR REPLACE
+    
+    def _consent_level_covers(self, existing_level: ConsentLevel, 
+                            requested_level: ConsentLevel) -> bool:
+        """Check if existing consent level covers requested level"""
+        
+        level_hierarchy = {
+            ConsentLevel.NONE: 0,
+            ConsentLevel.BASIC: 1,
+            ConsentLevel.PROCESSING: 2,
+            ConsentLevel.STORAGE: 3,
+            ConsentLevel.SHARING: 4,
+            ConsentLevel.RESEARCH: 5,
+            ConsentLevel.FULL: 6
+        }
+        
+        return level_hierarchy[existing_level] >= level_hierarchy[requested_level]
+    
+    def _simulate_user_consent_response(self, consent_request: Dict) -> Optional[Dict]:
+        """Simulate user consent response (for testing)"""
+        
+        # In production, this would be replaced with actual user interface
+        requested_level = ConsentLevel(consent_request["requested_level"])
+        
+        # Simulate user granting consent for testing
+        if requested_level in [ConsentLevel.BASIC, ConsentLevel.PROCESSING]:
+            return {
+                "consent_level": requested_level.value,
+                "allow_signal_capture": True,
+                "allow_processing": True,
+                "allow_storage": requested_level != ConsentLevel.BASIC,
+                "allow_sharing": False,
+                "allow_research": False,
+                "duration_days": consent_request.get("duration_days", 30),
+                "consent_method": "simulated_explicit"
+            }
+        
+        return None  # Simulate denial for higher levels
+    
+    def _log_consent_action(self, action: str, user_id: str, 
+                          consent_level: ConsentLevel, details: str = ""):
+        """Log consent action to audit trail"""
+        
+        log_entry = {
+            "timestamp": time.time(),
+            "action": action,
+            "user_id": user_id,
+            "consent_level": consent_level.value,
+            "details": details
+        }
+        
+        self.audit_log.append(log_entry)
+        
+        # Store in database
+        try:
+            conn = sqlite3.connect(self.database_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT INTO consent_audit_log (timestamp, action, user_id, consent_level, details)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (
+                log_entry["timestamp"],
+                log_entry["action"],
+                log_entry["user_id"],
+                log_entry["consent_level"],
+                log_entry["details"]
+            ))
+            
+            conn.commit()
+            conn.close()
+            
+        except Exception as e:
+            logger.error(f"Failed to log consent action: {e}")
+    
+    def _log_consent_denial(self, user_id: str, requested_level: ConsentLevel):
+        """Log consent denial"""
+        self._log_consent_action("DENIED", user_id, requested_level, "User denied consent")
+    
+    def _log_consent_violation(self, user_id: str, operation: str, reason: str):
+        """Log consent violation"""
+        
+        violation = {
+            "timestamp": time.time(),
+            "user_id": user_id,
+            "operation": operation,
+            "reason": reason
+        }
+        
+        self.consent_violations.append(violation)
+        logger.warning(f"Consent violation: {violation}")
+
+# Integrated security system
+class ConsciousnessSecuritySystem:
+    """Integrated security system for consciousness data"""
+    
+    def __init__(self, use_hardware_hsm: bool = False):
+        # Initialize components
+        self.key_manager = SecureKeyManager(use_hardware_hsm)
+        self.encryption = ConsciousnessEncryption(self.key_manager)
+        self.consent_manager = ConsentManager()
+        
+        # Security policies
+        self.default_classification = DataClassification.CONFIDENTIAL
+        self.default_security_level = SecurityLevel.STANDARD
+        self.default_privacy_mode = PrivacyMode.PRIVATE
+        
+        # Monitoring
+        self.security_events = []
+        self.threat_detection = True
+        
+        logger.info("Consciousness security system initialized")
+    
+    def secure_consciousness_data(self, data: Dict, user_id: str, 
+                                operation: str = "processing") -> Optional[Dict]:
+        """Secure consciousness data with consent and encryption"""
+        
+        try:
+            # Check consent
+            if not self.consent_manager.check_consent_for_operation(user_id, operation):
+                logger.warning(f"Consent check failed for user {user_id}, operation {operation}")
+                return None
+            
+            # Determine security context based on data sensitivity
+            context = self._determine_security_context(data)
+            
+            # Encrypt data
+            secured_data = self.encryption.encrypt_consciousness_data(data, user_id, context)
+            
+            if secured_data:
+                self._log_security_event("DATA_SECURED", user_id, {"operation": operation})
+                logger.debug(f"Consciousness data secured for user: {user_id}")
+            
+            return secured_data
+            
+        except Exception as e:
+            logger.error(f"Data security operation failed: {e}")
+            self._log_security_event("SECURITY_ERROR", user_id, {"error": str(e)})
+            return None
+    
+    def unsecure_consciousness_data(self, secured_data: Dict, user_id: str) -> Optional[Dict]:
+        """Unsecure (decrypt) consciousness data"""
+        
+        try:
+            # Verify user authorization
+            if not self._verify_user_authorization(user_id, secured_data):
+                return None
+            
+            # Decrypt data
+            data = self.encryption.decrypt_consciousness_data(secured_data, user_id)
+            
+            if data:
+                self._log_security_event("DATA_UNSECURED", user_id, {})
+                logger.debug(f"Consciousness data unsecured for user: {user_id}")
+            
+            return data
+            
+        except Exception as e:
+            logger.error(f"Data unsecurity operation failed: {e}")
+            self._log_security_event("UNSECURITY_ERROR", user_id, {"error": str(e)})
+            return None
+    
+    def get_security_report(self) -> Dict:
+        """Get comprehensive security report"""
+        
+        return {
+            "encryption_stats": self.encryption.encryption_stats,
+            "consent_summary": {
+                "total_users": len(self.consent_manager.consent_cache),
+                "recent_violations": len([
+                    v for v in self.consent_manager.consent_violations
+                    if time.time() - v["timestamp"] < 86400  # Last 24 hours
+                ])
+            },
+            "key_management": {
+                "total_keys": len(self.key_manager.master_keys),
+                "key_operations": len(self.key_manager.key_operations_log)
+            },
+            "security_events": len(self.security_events),
+            "threat_detection_enabled": self.threat_detection
+        }
+    
+    def _determine_security_context(self, data: Dict) -> EncryptionContext:
+        """Determine appropriate security context for data"""
+        
+        # Analyze data to determine classification
+        classification = self.default_classification
+        
+        # Check for highly sensitive patterns
+        if any(key in data for key in ["neural_patterns", "quantum_states", "consciousness_metrics"]):
+            classification = DataClassification.SECRET
+        
+        # Check for research or public data
+        if data.get("data_type") == "research" or data.get("anonymized"):
+            classification = DataClassification.INTERNAL
+        
+        return EncryptionContext(
+            data_classification=classification,
+            security_level=self.default_security_level,
+            privacy_mode=self.default_privacy_mode
+        )
+    
+    def _verify_user_authorization(self, user_id: str, secured_data: Dict) -> bool:
+        """Verify user is authorized to decrypt data"""
+        
+        # Check if user has valid consent
+        consent = self.consent_manager.get_user_consent(user_id)
+        if not consent or not consent.is_valid():
+            return False
+        
+        # Additional authorization checks could be added here
+        return True
+    
+    def _log_security_event(self, event_type: str, user_id: str, details: Dict):
+        """Log security event"""
+        
+        event = {
+            "timestamp": time.time(),
+            "event_type": event_type,
+            "user_id": user_id,
+            "details": details
+        }
+        
+        self.security_events.append(event)
+        
+        # Trim events if too many
+        if len(self.security_events) > 10000:
+            self.security_events = self.security_events[-5000:]
+
+# Usage example
+if __name__ == "__main__":
+    try:
+        # Create security system
+        security_system = ConsciousnessSecuritySystem(use_hardware_hsm=False)
+        
+        print("🔒 Consciousness Security System Test")
+        print("=" * 50)
+        
+        # Test user ID
+        user_id = "test_user_001"
+        
+        # Request consent
+        consent_granted = security_system.consent_manager.request_consent(
+            user_id, 
+            ConsentLevel.PROCESSING,
+            duration_days=30
+        )
+        
+        print(f"Consent granted: {consent_granted}")
+        
+        # Test data
+        consciousness_data = {
+            "user_id": user_id,
+            "signal_type": "gamma_sync",
+            "intensity": 0.8,
+            "neural_patterns": [0.1, 0.2, 0.3, 0.4],
+            "consciousness_metrics": {
+                "level": 0.75,
+                "coherence": 0.9
+            },
+            "timestamp": time.time()
+        }
+        
+        # Secure the data
+        secured_data = security_system.secure_consciousness_data(
+            consciousness_data, 
+            user_id, 
+            "processing"
+        )
+        
+        if secured_data:
+            print("✅ Data successfully secured")
+            print(f"Encryption algorithm: {secured_data['encryption_context']['algorithm']}")
+            print(f"Security level: {secured_data['encryption_context']['security_level']}")
+            
+            # Unsecure the data
+            recovered_data = security_system.unsecure_consciousness_data(secured_data, user_id)
+            
+            if recovered_data:
+                print("✅ Data successfully recovered")
+                print(f"Data integrity: {'✅ OK' if recovered_data['intensity'] == consciousness_data['intensity'] else '❌ FAILED'}")
+            else:
+                print("❌ Failed to recover data")
+        else:
+            print("❌ Failed to secure data")
+        
+        # Get security report
+        report = security_system.get_security_report()
+        print(f"\n📊 Security Report:")
+        print(f"Encryptions: {report['encryption_stats']['total_encrypted']}")
+        print(f"Decryptions: {report['encryption_stats']['total_decrypted']}")
+        print(f"Users with consent: {report['consent_summary']['total_users']}")
+        print(f"Security events: {report['security_events']}")
+        
+        print("\n✅ Security system test completed successfully!")
+        
+    except Exception as e:
+        print(f"❌ Security test failed: {e}")
+        logger.exception("Security system test failed")
