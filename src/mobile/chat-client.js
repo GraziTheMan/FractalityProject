@@ -1,13 +1,24 @@
-import { io } from 'https://cdn.socket.io/4.7.2/socket.io.esm.min.js';
+import { io } from "https://cdn.socket.io/4.7.2/socket.io.esm.min.js";
 
-export const chatSocket = io('https://thefractalityplatform.onrender.com');
+const socket = io('http://192.168.50.212:3000'); // update for your deployment URL
 
-chatSocket.on('connect', () => console.log('Chat connected:', chatSocket.id));
-chatSocket.on('message', msg => {
-  const event = new CustomEvent('chat:message', { detail: msg });
-  window.dispatchEvent(event);
+const log = document.getElementById('chatLog');
+const input = document.getElementById('chatInput');
+const send = document.getElementById('chatSend');
+
+// Display incoming messages
+socket.on('message', data => {
+  const el = document.createElement('div');
+  el.textContent = `${data.sender}: ${data.text}`;
+  log.appendChild(el);
+  log.scrollTop = log.scrollHeight;
 });
 
-export function sendChat(text) {
-  chatSocket.emit('message', { text, timestamp: Date.now() });
-}
+// Send message
+send.addEventListener('click', () => {
+  const msg = input.value.trim();
+  if (msg) {
+    socket.emit('message', { text: msg });
+    input.value = '';
+  }
+});
