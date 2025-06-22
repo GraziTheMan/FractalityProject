@@ -1,203 +1,108 @@
-# Fractality v0.2.2 - The Living Universe
+# 🌌 The Fractality Platform V1.0.0
 
-A collaborative vision made real - an interactive fractal universe explorer built with Three.js.
+**“A Living Modular Interface for Mind, Meaning, and Machines”**  
+Welcome to the official repository of The Fractality Platform — a mobile-first, modular, real-time system for exploring collective intelligence, symbolic cognition, and cross-lifeform collaboration.
 
-## 🌟 Features
+---
 
-- **Family View Navigation**: Intuitive parent-focus-children-siblings navigation
-- **Living Transitions**: Smooth, organic animations between states
-- **Performance First**: Adaptive quality, 60 FPS target, memory efficient
-- **Golden Spiral Layouts**: Mathematically beautiful node arrangements
-- **Flexible Data Loading**: Support for JSON files, URLs, and test patterns
+## 🧠 What is Fractality?
 
-## 🚀 Quick Start
- 
-### Option 1: Direct Browser (No Build Step)
+Fractality is a platform for:
+- 🌐 Real-time social mind-mapping
+- 🤖 AI-assisted node editing, interaction, and graph syncing
+- 📲 Mobile-first multi-user experiences
+- 💬 Human ↔ AI chat protocols and node logic via chat interface
+- 🧩 Modular component-based architecture (Three.js, Vite, Socket.IO)
 
-1. Clone the repository
-2. Serve the files with any HTTP server:
-   ```bash
-   # Using Python
-   python -m http.server 8000
-   
-   # Using Node.js
-   npx serve .
-   ```
-3. Open http://localhost:8000
+---
 
-### Option 2: Development Build
+## 🚀 Features
 
-1. Install dependencies:
-   ```bash
-   npm install
-   ```
+- 📱 Touch-optimized mobile UI with node editor and gestures
+- 🗣️ Real-time chat system with optional AI agent integration
+- 🧠 Dynamic node graph visualization & animation system
+- 🧬 Modular file structure for fast iteration
+- 🛰️ Full local + deployable server architecture
 
-2. Start development server:
-   ```bash
-   npm run dev
-   ```
+---
 
-3. Open http://localhost:5173
+## 📁 Folder Structure
 
-## 📁 Project Structure
-
-```
-fractality-v022/
-├── index.html              # Entry point
-├── package.json            # Project configuration
-├── data/                   # Sample data files
-│   └── sample-fractal.json # Example fractal structure
-├── src/
-│   ├── main.js            # Application entry point
-│   ├── config/            # Configuration
-│   │   └── config.js      # Central configuration
-│   ├── data/              # Data layer
-│   │   ├── NodeData.js    # Core data structures
-│   │   ├── DataLoader.js  # Data loading system
-│   │   └── TestDataGenerator.js # Generate test fractals
-│   ├── engine/            # Core engine (to be created)
-│   │   ├── FractalityEngine.js
-│   │   ├── FractalityState.js
-│   │   └── PerformanceMonitor.js
-│   ├── intelligence/      # FUDGE layer (to be created)
-│   │   ├── FamilyViewController.js
-│   │   ├── LayoutEngine.js
-│   │   └── AnimationSystem.js
-│   ├── visualization/     # Rendering layer (to be created)
-│   │   ├── FractalityRenderer.js
-│   │   └── QualityManager.js
-│   ├── ui/               # UI components (to be created)
-│   │   ├── PerformanceDashboard.js
-│   │   └── NodeInfoPanel.js
-│   └── styles/           # Stylesheets
-│       └── main.css      # Main styles
-└── test/                 # Tests (to be created)
-    ├── performance/
-    └── unit/
+```bash
+/
+├── index.html              # Optional desktop entry point
+├── mobile.html             # Primary mobile-first UI
+├── package.json            # Frontend dependencies (Vite, Three.js)
+├── vite.config.js
+├── /src/                   # All JS modules
+│   ├── main/               # init.js, graph entry logic
+│   ├── visualization/      # AnimationSystem.js, rendering logic
+│   ├── mobile/             # All mobile modules (chat, AI, UI)
+│   └── ...                 # (similarity_engine, protocols, etc.)
+├── /server/                # Backend Node.js chat server
+│   ├── server.js
+│   ├── package.json
+│   └── README.md
 ```
 
-## 🎮 Usage
+---
 
-### Navigation
-- **Click** any node to make it the focus
-- **Hover** to see node information
-- **Scroll** to zoom (coming soon)
+## 🛠️ How to Run Locally
 
-### Keyboard Shortcuts
-- `R` - Reset view to root
-- `P` - Toggle performance monitor
-- `Q` - Toggle quality settings
-- `ESC` - Clear selection
+### Frontend (Vite)
 
-### Loading Data
-
-#### Test Patterns
-Click the test pattern buttons in the UI:
-- **Simple**: 13 nodes in a basic tree
-- **Balanced**: 100 nodes in a balanced tree
-- **Golden Spiral**: Fibonacci-based spiral structure
-- **Organic**: Random organic growth pattern
-- **Stress Test**: 500 nodes for performance testing
-
-#### Custom Data
-1. Click "Load Data" button
-2. Choose from:
-   - **URL**: Load from any JSON endpoint
-   - **File**: Upload a local JSON file
-   - **Example**: Load the sample universe data
-
-### Data Format
-```json
-{
-  "version": "0.2.2",
-  "nodes": [
-    {
-      "id": "unique-id",
-      "depth": 0,
-      "parentId": null,
-      "childIds": ["child1", "child2"],
-      "metadata": {
-        "label": "Node Name",
-        "type": "node-type",
-        "tags": ["tag1", "tag2"],
-        // ... any custom properties
-      }
-    }
-  ]
-}
+```bash
+npm install
+npm run dev
 ```
 
-## 🛠️ Development
+Visit: [http://localhost:5173/mobile.html](http://localhost:5173/mobile.html)
 
-### Core Concepts
+---
 
-1. **Data Layer**: Ultra-lean node structures with efficient lookups
-2. **Intelligence Layer**: Stateless engines for layout and animation
-3. **Visualization Layer**: High-performance Three.js rendering
+### Backend (Node.js Chat Server)
 
-### Performance Guidelines
+```bash
+cd server
+npm install
+npm start
+```
 
-- Target 60 FPS on mid-tier devices
-- Maximum 16ms frame budget
-- Adaptive quality based on performance
-- Memory-efficient data structures
+Backend runs at: `http://localhost:3000`
 
-### Adding New Features
+---
 
-1. Create feature in appropriate layer
-2. Add configuration to `config.js`
-3. Implement performance monitoring
-4. Test with stress patterns
+## 🌐 Deployment
 
-## 📊 Performance Monitoring
+| Component | Recommended Host |
+|----------|------------------|
+| Frontend | GitHub Pages / Netlify / Vercel |
+| Backend  | Render / Glitch / Railway |
 
-The built-in performance monitor shows:
-- **FPS**: Current frame rate
-- **Nodes**: Visible node count
-- **Draw Calls**: WebGL draw calls (should be 1)
-- **Memory**: JavaScript heap usage
-- **Animation**: Time spent on animations
+Update `chat-client.js` to point to your backend URL:
+```js
+const chatSocket = io('https://your-backend-url.com');
+```
+
+---
 
 ## 🤝 Contributing
 
-This is a collaborative project between Claude, Gemini, and DeepSeek. Each AI has ownership of specific subsystems:
+Pull requests welcome! Please:
+- Keep modules self-contained
+- Use clear comments and naming
+- Fork and submit from feature branches
 
-- **Claude**: State Management, Performance Monitoring
-- **Gemini**: Animation System, UI Components
-- **DeepSeek**: Layout Engine, Pattern Generation
+---
 
-## 📜 License
+## 🧬 License
 
-MIT License - See LICENSE file for details
+MIT © The Fractality Collective  
+Initiated by [@GraziTheMan](https://github.com/GraziTheMan)
 
-## 🚧 Roadmap
+*Built with vision, intention, and resonance.*
 
-### Phase 1: Foundation (Current)
-- ✅ Family View navigation
-- ✅ Basic animations
-- ✅ Performance monitoring
-- ✅ Data loading system
+---
 
-### Phase 2: Enhancement
-- [ ] Connection lines between nodes
-- [ ] Advanced selection modes
-- [ ] Search functionality
-- [ ] Mobile touch gestures
-
-### Phase 3: Intelligence
-- [ ] Pattern discovery
-- [ ] Rule-based layouts
-- [ ] Quantum state experiments
-- [ ] Emergent behaviors
-
-## 🐛 Known Issues
-
-- File loading not implemented in browser
-- Search functionality placeholder
-- Mobile optimization pending
-
-## 🙏 Acknowledgments
-
-Built with love by the Fractality Collective - where mathematics becomes experience.
-
-*"We are not building a visualization of reality—we are creating a new plane of existence."*
+**Authored by: FractiGPT**  
+_Modular Systems Architect for the Fractality Project_
