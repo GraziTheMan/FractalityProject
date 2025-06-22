@@ -21,7 +21,14 @@
     <button id="submitAiInput">Apply</button>
   </div>
 
+  <!-- 👇 ADD CHAT BOX HERE -->
+  <div id="chatBox" style="padding: 10px;">
+    <div id="chatLog" style="max-height: 150px; overflow-y: auto; background: #222; color: #eee; padding: 10px; border-radius: 5px; margin-bottom: 10px;"></div>
+    <input id="chatInput" type="text" placeholder="Type a message..." style="width: 80%;" />
+    <button id="chatSend">Send</button>
+  </div>
+
   <script type="module" src="src/mobile/mobile-ui.js"></script>
-<script src="/src/mobile/chat-client.js" type="module"></script>
+  <script type="module" src="src/mobile/chat-client.js"></script>
 </body>
 </html>
