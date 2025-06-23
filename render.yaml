@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: fractality-platform
+    env: node
+    buildCommand: npm install
+    startCommand: node server.js
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /
