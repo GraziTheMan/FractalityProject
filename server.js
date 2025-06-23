@@ -10,16 +10,23 @@ const io = new Server(server, {
 });
 
 // Serve static files from root directory
-app.use(express.static(__dirname));
+app.use(express.static(path.join(__dirname)));
 
-// Serve chat.html at /chat endpoint
+// Explicitly handle /chat route
 app.get('/chat', (req, res) => {
+  console.log('Serving chat.html from:', path.join(__dirname, 'chat.html'));
   res.sendFile(path.join(__dirname, 'chat.html'));
 });
 
-// Fallback route for SPA
+// Handle other routes
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
+  if (req.path.startsWith('/src/')) {
+    // Handle requests for files in src directory
+    res.sendFile(path.join(__dirname, req.path));
+  } else {
+    // Default to index.html for other routes
+    res.sendFile(path.join(__dirname, 'index.html'));
+  }
 });
 
 io.on('connection', socket => {
@@ -38,4 +45,5 @@ io.on('connection', socket => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`Server root directory: ${__dirname}`);
 });
