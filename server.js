@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
+const { fileURLToPath } = require('url');
 
 const app = express();
 const server = http.createServer(app);
@@ -11,6 +12,14 @@ const io = new Server(server, {
 
 // Serve static files from root directory
 app.use(express.static(path.join(__dirname)));
+
+// Add MIME type for JavaScript modules
+app.use((req, res, next) => {
+  if (req.path.endsWith('.js')) {
+    res.type('application/javascript');
+  }
+  next();
+});
 
 // Explicitly handle /chat route
 app.get('/chat', (req, res) => {
