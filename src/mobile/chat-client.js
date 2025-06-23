@@ -1,6 +1,6 @@
 import { io } from "https://cdn.socket.io/4.7.2/socket.io.esm.min.js";
 
-const socket = io('http://192.168.50.212:3000'); // update for your deployment URL
+const socket = io("https://thefractalityplatform.onrender.com");
 
 const log = document.getElementById('chatLog');
 const input = document.getElementById('chatInput');
