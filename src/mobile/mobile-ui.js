@@ -28,9 +28,13 @@ function renderBubbleView(container) {
   container.innerHTML = '<h2>🧠 Bubble View</h2><p>This will render the dynamic node graph.</p>';
 }
 
+import { initChatUI } from './chat-ui.js';
 function renderChatView(container) {
-  container.innerHTML = '<h2>💬 Chat</h2><p>Chat interface coming soon.</p>';
+  initChatUI("moduleContainer");
 }
+
+
+
 
 function renderConeView(container) {
   container.innerHTML = '<h2>🔺 Cone View</h2><p>This module is under development.</p>';
