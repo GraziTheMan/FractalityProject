@@ -1,65 +1,30 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Fractality Mobile Chat</title>
-  <style>
-    body {
-      margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #10141a;
-      color: #eee;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-    }
-
-    #chatContainer {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      height: 100vh;
-      width: 100vw;
-      max-width: 100vw;
-      max-height: 100vh;
-    }
-
-    .chat-error {
-      background: #ff4d4f;
-      color: #fff;
-      text-align: center;
-      padding: 8px;
-      border-radius: 4px;
-      margin: 6px;
-      font-size: 0.98rem;
-    }
-  </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fractality Mobile</title>
+  <link rel="stylesheet" href="mobile.css" />
 </head>
 <body>
-  <div id="chatContainer"></div>
+  <header>
+    <h1>Fractality</h1>
+    <button id="toggleDrawer">☰</button>
+  </header>
 
-  <script type="module">
-    import { initChatUI } from './src/mobile/chat-ui.js';
+  <nav id="drawer" class="hidden">
+    <ul>
+      <li><button data-module="bubble">🧠 Bubble View</button></li>
+      <li><button data-module="chat">💬 Chat</button></li>
+      <li><button data-module="cone">🔺 Cone View</button></li>
+      <li><button data-module="editor">🛠️ Node Editor</button></li>
+    </ul>
+  </nav>
 
-    // Add error display
-    function showError(msg) {
-      let errDiv = document.querySelector('.chat-error');
-      if (!errDiv) {
-        errDiv = document.createElement('div');
-        errDiv.className = 'chat-error';
-        document.body.prepend(errDiv);
-      }
-      errDiv.textContent = msg;
-    }
+  <main id="moduleContainer">
+    <!-- Dynamic module view will appear here -->
+  </main>
 
-    // Listen for errors from chat-client
-    window.addEventListener('chat:error', e => {
-      showError(e.detail?.message || 'Connection error');
-    });
-
-    // Initialize chat UI
-    initChatUI('chatContainer');
-  </script>
+  <script type="module" src="src/mobile/mobile-ui.js"></script>
 </body>
 </html>
