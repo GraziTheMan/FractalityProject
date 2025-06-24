@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Fractality Mobile</title>
-  <link rel="stylesheet" href="mobile.css" />
+  <link rel="stylesheet" href="src/styles/mobile.css" />
 </head>
 <body>
   <header>
@@ -12,7 +12,7 @@
     <button id="toggleDrawer">☰</button>
   </header>
 
-  <nav id="drawer" class="hidden">
+  <nav id="menuDrawer" class="hidden">
     <ul>
       <li><button data-module="bubble">🧠 Bubble View</button></li>
       <li><button data-module="chat">💬 Chat</button></li>
@@ -21,9 +21,7 @@
     </ul>
   </nav>
 
-  <main id="moduleContainer">
-    <!-- Dynamic module view will appear here -->
-  </main>
+  <main id="moduleContainer"></main>
 
   <script type="module" src="src/mobile/mobile-ui.js"></script>
 </body>
