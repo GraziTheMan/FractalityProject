@@ -1,36 +1,53 @@
-// src/mobile/chat-client.js
 import { io } from "https://cdn.socket.io/4.7.2/socket.io.esm.min.js";
 
-let socket;
-try {
-  socket = io("https://thefractalityplatform.onrender.com");
-} catch (err) {
-  window.dispatchEvent(new CustomEvent('chat:error', { detail: { message: "Failed to load chat server" } }));
+const socket = io("https://thefractalityplatform.onrender.com");
+
+// Generate or retrieve a persistent guest username
+function generateUsername() {
+  const prefixes = ["Fractalite", "SpiralNoder", "ThinkSeed", "MindNode", "EchoSpark"];
+  const emoji = ["🌱", "🧠", "🌌", "💡", "🔮"];
+  const i = Math.floor(Math.random() * prefixes.length);
+  const suffix = Math.floor(Math.random() * 9000) + 1000;
+  return `${emoji[i]} ${prefixes[i]}-${suffix}`;
 }
 
-const sendChat = (msg) => {
-  if (socket && socket.connected) {
-    socket.emit('message', { text: msg });
-  } else {
-    window.dispatchEvent(new CustomEvent('chat:error', { detail: { message: "Not connected to chat server." } }));
-  }
-};
+const username = localStorage.getItem("fractality-username") || (() => {
+  const name = generateUsername();
+  localStorage.setItem("fractality-username", name);
+  return name;
+})();
 
-window.sendChat = sendChat; // for import in chat-ui.js
+export function initChatUI(containerId) {
+  const container = document.getElementById(containerId);
+  container.innerHTML = `
+    <div id="chatLog" style="flex:1; overflow-y:auto; padding:10px; background:#111; border-radius:4px;"></div>
+    <div style="display:flex; padding:10px; gap:6px;">
+      <input id="chatInput" type="text" placeholder="Message..." style="flex:1; padding:0.5rem;" />
+      <button id="chatSend">Send</button>
+    </div>
+  `;
 
-if (socket) {
-  // Display incoming messages
-  socket.on('message', data => {
-    window.dispatchEvent(new CustomEvent('chat:message', { detail: data }));
+  const log = document.getElementById("chatLog");
+  const input = document.getElementById("chatInput");
+  const send = document.getElementById("chatSend");
+
+  socket.on("message", (data) => {
+    const el = document.createElement("div");
+    el.textContent = `${data.sender}: ${data.text}`;
+    el.style.marginBottom = "0.5rem";
+    log.appendChild(el);
+    log.scrollTop = log.scrollHeight;
   });
 
-  // Handle connection errors
-  socket.on('connect_error', () => {
-    window.dispatchEvent(new CustomEvent('chat:error', { detail: { message: "Connection to chat server failed" } }));
+  send.addEventListener("click", () => {
+    const msg = input.value.trim();
+    if (msg) {
+      socket.emit("message", { sender: username, text: msg });
+      input.value = "";
+    }
   });
-  socket.on('disconnect', () => {
-    window.dispatchEvent(new CustomEvent('chat:error', { detail: { message: "Disconnected from chat server" } }));
+
+  input.addEventListener("keypress", (e) => {
+    if (e.key === "Enter") send.click();
   });
 }
-
-export { sendChat };
