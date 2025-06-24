@@ -1,0 +1,98 @@
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #10141a;
+  color: #eee;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+header {
+  background: #222;
+  color: #fff;
+  padding: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+#menuDrawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 75%;
+  height: 100%;
+  background: #1a1a1a;
+  color: white;
+  transform: translateX(-100%);
+  transition: transform 0.3s ease;
+  z-index: 10;
+  padding: 1rem;
+}
+
+#menuDrawer.visible {
+  transform: translateX(0);
+}
+
+#menuDrawer ul {
+  list-style: none;
+  padding: 0;
+}
+
+#menuDrawer li {
+  margin: 1rem 0;
+}
+
+#moduleContainer {
+  flex: 1;
+  padding: 1rem;
+  overflow-y: auto;
+}
+
+.editor-tab.hidden {
+  display: none;
+}
+
+#editorTabs {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+#editorTabs .tab {
+  background: #333;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  border-radius: 5px;
+}
+
+#editorTabs .tab.active {
+  background: #0af;
+  color: black;
+  font-weight: bold;
+}
+
+#aiEditor textarea {
+  width: 100%;
+  height: 6rem;
+  background: #111;
+  color: white;
+  border: none;
+  resize: none;
+  padding: 0.5rem;
+  margin-top: 1rem;
+}
+
+#aiEditor button {
+  width: 100%;
+  margin-top: 0.5rem;
+  background: #0af;
+  color: black;
+  font-weight: bold;
+  border: none;
+  padding: 0.75rem;
+}
