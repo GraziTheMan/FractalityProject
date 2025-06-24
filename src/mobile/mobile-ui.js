@@ -33,9 +33,6 @@ function renderChatView(container) {
   initChatUI("moduleContainer");
 }
 
-
-
-
 function renderConeView(container) {
   container.innerHTML = '<h2>🔺 Cone View</h2><p>This module is under development.</p>';
 }
