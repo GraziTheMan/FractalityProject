@@ -1,5 +1,11 @@
 collapse_prediction_engine.py
 
+# CollapsePredictionEngine.py
+# Placement: /core/field_engines/
+# Depends on: NodeGraph, SemanticResonanceEngine, EnergyEngine, TrailEngine
+# Role: Predict next most probable node-collapse based on weighted field dynamics
+
+
 from datetime import datetime import numpy as np
 
 class CollapsePredictionEngine: def init(self, node_graph, resonance_engine, energy_engine, trail_engine): self.graph = node_graph self.resonance = resonance_engine self.energy = energy_engine self.trails = trail_engine
