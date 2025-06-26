@@ -125,23 +125,20 @@ class ConsciousnessUser:
         self._check_phase_transition()
         
     def _check_phase_transition(self):
-        """Check if user should transition to new phase"""
-        consciousness_metric = self.energy_level * self.resonance_frequency
-        
-        previous_phase = self.phase_state
-        
-        if consciousness_metric >= self.SUPERIONIC_THRESHOLD:
-            self.phase_state = UserPhase.SUPERIONIC
-            self._grant_superionic_permissions()
-        elif consciousness_metric >= self.LIQUID_THRESHOLD:
-            self.phase_state = UserPhase.LIQUID
-            self._grant_liquid_permissions()
-        else:
-            self.phase_state = UserPhase.SOLID
-            
-        # Log phase transition
-        if previous_phase != self.phase_state:
-            self._log_phase_transition(previous_phase, self.phase_state)
+    """Check if user should transition to new phase"""
+    from core.field_engines.phase_engine import calculate_phase_state
+
+    previous_phase = self.phase_state
+    self.phase_state = calculate_phase_state(self.energy_level, self.resonance_frequency)
+
+    if self.phase_state == UserPhase.LIQUID:
+        self._grant_liquid_permissions()
+    elif self.phase_state == UserPhase.SUPERIONIC:
+        self._grant_superionic_permissions()
+
+    # Log phase transition
+    if previous_phase != self.phase_state:
+        self._log_phase_transition(previous_phase, self.phase_state)
             
     def _grant_liquid_permissions(self):
         """Grant permissions for liquid phase users"""
