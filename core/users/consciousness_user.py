@@ -163,35 +163,9 @@ class ConsciousnessUser:
         print(f"User {self.consciousness_id} transitioned from {from_phase.value} to {to_phase.value}")
         
     def calculate_resonance_with(self, other_user: 'ConsciousnessUser') -> float:
-        """Calculate resonance with another user"""
-        # Structure similarity
-        shared_structures = len(
-            self.contributed_structures & other_user.contributed_structures
-        )
-        total_structures = len(
-            self.contributed_structures | other_user.contributed_structures
-        )
-        structure_similarity = shared_structures / max(total_structures, 1)
-        
-        # Energy compatibility
-        energy_diff = abs(self.energy_level - other_user.energy_level)
-        energy_compatibility = 1.0 / (1.0 + energy_diff / 100.0)
-        
-        # Phase alignment
-        phase_alignment = 1.0 if self.phase_state == other_user.phase_state else 0.5
-        
-        # Existing connection boost
-        connection_boost = self.resonance_connections.get(other_user.consciousness_id, 0) / 100.0
-        
-        # Calculate total resonance
-        resonance = (
-            structure_similarity * 0.4 +
-            energy_compatibility * 0.3 +
-            phase_alignment * 0.2 +
-            connection_boost * 0.1
-        )
-        
-        return min(resonance, 1.0)
+    """Calculate resonance with another user using phase_engine"""
+    from core.field_engines.phase_engine import calculate_resonance_score
+    return calculate_resonance_score(self, other_user)
         
     def can_see_user(self, other_user: 'ConsciousnessUser', aspect: str) -> bool:
         """Check if this user can see another user's aspect"""
