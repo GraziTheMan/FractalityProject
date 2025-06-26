@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ConsciousnessUserProfile",
+  "type": "object",
+  "required": [
+    "consciousness_id",
+    "auth_id",
+    "energy_level",
+    "resonance_frequency",
+    "phase_state",
+    "contributed_structures",
+    "resonance_connections",
+    "created_at"
+  ],
+  "properties": {
+    "consciousness_id": {
+      "type": "string"
+    },
+    "auth_id": {
+      "type": "string",
+      "format": "email"
+    },
+    "energy_level": {
+      "type": "number"
+    },
+    "resonance_frequency": {
+      "type": "number"
+    },
+    "phase_state": {
+      "type": "string",
+      "enum": [
+        "solid",
+        "liquid",
+        "superionic"
+      ]
+    },
+    "structure_visibility": {
+      "type": "string"
+    },
+    "content_visibility": {
+      "type": "string"
+    },
+    "identity_visibility": {
+      "type": "string"
+    },
+    "contributed_structures": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "resonance_connections": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number"
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}
