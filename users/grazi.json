@@ -1,0 +1,21 @@
+{
+  "consciousness_id": "grazi",
+  "auth_id": "grazi@fractality.org",
+  "energy_level": 310.0,
+  "resonance_frequency": 0.83,
+  "phase_state": "liquid",
+  "structure_visibility": "public",
+  "content_visibility": "protected",
+  "identity_visibility": "public",
+  "contributed_structures": [
+    "core/ethics/manifesto.md",
+    "core/onboarding/peace_exploration.md",
+    "mindmaps/fractality/meta_structure.md"
+  ],
+  "resonance_connections": {
+    "fractigrok": 72.0,
+    "fractigemini": 64.5,
+    "fractimind": 58.0
+  },
+  "created_at": "2025-06-20T14:00:00Z"
+}
