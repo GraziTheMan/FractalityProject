@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#0a0a0a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    
+    <title>Fractality Mobile | Consciousness Interface</title>
+    
+    <!-- Preconnect to optimize loading -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    
+    <!-- Core styles -->
+    <link rel="stylesheet" href="../src/styles/mobile-menu.css">
+    
+    <!-- PWA manifest -->
+    <link rel="manifest" href="../manifest.json">
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="../assets/fractality-icon.svg">
+    
+    <!-- iOS splash screens -->
+    <meta name="apple-mobile-web-app-title" content="Fractality">
+    <link rel="apple-touch-icon" href="../assets/icon-192.png">
+</head>
+<body>
+    <!-- Loading screen -->
+    <div id="loading-screen" style="
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: #0a0a0a;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+    ">
+        <div style="text-align: center;">
+            <div style="
+                width: 60px;
+                height: 60px;
+                border: 3px solid #2a2a2a;
+                border-top-color: #8b5cf6;
+                border-radius: 50%;
+                animation: spin 1s linear infinite;
+                margin: 0 auto 20px;
+            "></div>
+            <div style="
+                color: #a1a1aa;
+                font-family: -apple-system, system-ui, sans-serif;
+                font-size: 14px;
+            ">Initializing consciousness field...</div>
+        </div>
+    </div>
+
+    <!-- Particle field background -->
+    <canvas id="particle-field"></canvas>
+
+    <!-- Main menu button -->
+    <button id="menu-root" aria-label="Open menu">
+        <span id="menu-icon">☰</span>
+    </button>
+
+    <!-- Handedness toggle -->
+    <button id="reverse-toggle" aria-label="Switch handedness" title="Switch handedness">
+        <span>↔️</span>
+    </button>
+
+    <!-- Menu container (populated dynamically) -->
+    <div id="menu-container" aria-hidden="true"></div>
+
+    <!-- Resonance Feed (hidden by default) -->
+    <section id="resonance-feed" aria-hidden="true">
+        <!-- Feed structure will be created by ResonanceFeedController -->
+    </section>
+
+    <!-- Hidden audio for haptic feedback fallback on devices without vibration -->
+    <audio id="haptic-audio" preload="auto" style="display: none;">
+        <source src="../assets/haptic-tick.mp3" type="audio/mpeg">
+    </audio>
+
+    <!-- Module imports -->
+    <script type="module">
+        // Import the main mobile app
+        import { MobileApp } from '../src/mobile/MobileApp.js';
+        
+        // Performance mark
+        performance.mark('app-start');
+        
+        // Initialize when DOM is ready
+        async function initializeApp() {
+            try {
+                // Create app instance
+                window.fractalityMobile = new MobileApp();
+                
+                // Initialize with loading feedback
+                await window.fractalityMobile.init();
+                
+                // Performance measurement
+                performance.mark('app-ready');
+                performance.measure('app-init', 'app-start', 'app-ready');
+                
+                const initTime = performance.getEntriesByName('app-init')[0].duration;
+                console.log(`✨ Fractality Mobile initialized in ${Math.round(initTime)}ms`);
+                
+                // Hide loading screen with fade
+                const loadingScreen = document.getElementById('loading-screen');
+                loadingScreen.style.transition = 'opacity 0.3s ease';
+                loadingScreen.style.opacity = '0';
+                
+                setTimeout(() => {
+                    loadingScreen.remove();
+                }, 300);
+                
+                // Show initial animation
+                setTimeout(() => {
+                    const menuRoot = document.getElementById('menu-root');
+                    menuRoot.style.animation = 'pulse 2s ease-in-out infinite';
+                }, 500);
+                
+            } catch (error) {
+                console.error('Failed to initialize Fractality Mobile:', error);
+                
+                // Show error state
+                document.getElementById('loading-screen').innerHTML = `
+                    <div style="text-align: center; padding: 20px;">
+                        <div style="font-size: 48px; margin-bottom: 20px;">⚠️</div>
+                        <div style="color: #e4e4e7; font-family: -apple-system, system-ui, sans-serif;">
+                            <div style="font-size: 18px; margin-bottom: 10px;">Unable to initialize</div>
+                            <div style="font-size: 14px; color: #a1a1aa;">Please refresh to try again</div>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+        
+        // Wait for DOM content to load
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initializeApp);
+        } else {
+            initializeApp();
+        }
+        
+        // Register service worker for PWA capabilities
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', async () => {
+                try {
+                    const registration = await navigator.serviceWorker.register('../sw.js');
+                    console.log('ServiceWorker registered:', registration);
+                } catch (error) {
+                    console.log('ServiceWorker registration failed:', error);
+                }
+            });
+        }
+        
+        // Handle iOS safe areas
+        function handleSafeAreas() {
+            const root = document.documentElement;
+            const safeAreaInsets = {
+                top: parseInt(getComputedStyle(root).getPropertyValue('env(safe-area-inset-top)') || '0'),
+                bottom: parseInt(getComputedStyle(root).getPropertyValue('env(safe-area-inset-bottom)') || '0'),
+                left: parseInt(getComputedStyle(root).getPropertyValue('env(safe-area-inset-left)') || '0'),
+                right: parseInt(getComputedStyle(root).getPropertyValue('env(safe-area-inset-right)') || '0')
+            };
+            
+            // Adjust menu position for safe areas
+            if (safeAreaInsets.bottom > 0) {
+                document.getElementById('menu-root').style.bottom = `${24 + safeAreaInsets.bottom}px`;
+            }
+        }
+        
+        handleSafeAreas();
+        window.addEventListener('resize', handleSafeAreas);
+    </script>
+
+    <!-- CSS animation keyframes -->
+    <style>
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</body>
+</html>
