@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Executive Control System - Interactive Demo</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a0a;
+            color: #fff;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        /* Main visualization area */
+        #visualization {
+            flex: 1;
+            position: relative;
+            background: radial-gradient(circle at center, #1a1a2e, #0a0a0a);
+            overflow: hidden;
+        }
+        
+        /* Floating nodes */
+        .node {
+            position: absolute;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(255,255,255,0.8), rgba(255,255,255,0.2));
+            box-shadow: 0 0 20px rgba(255,255,255,0.5);
+            transition: all 0.3s ease-out;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            cursor: pointer;
+        }
+        
+        .node.dimmed {
+            opacity: 0.3;
+            transform: scale(0.8);
+        }
+        
+        .node.highlighted {
+            box-shadow: 0 0 40px rgba(255,0,255,0.8);
+            background: radial-gradient(circle, rgba(255,0,255,0.9), rgba(255,0,255,0.3));
+        }
+        
+        /* Control panels */
+        #controls {
+            width: 350px;
+            background: rgba(16, 16, 16, 0.95);
+            backdrop-filter: blur(10px);
+            display: flex;
+            flex-direction: column;
+            border-left: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .panel {
+            padding: 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .panel h3 {
+            margin: 0 0 15px 0;
+            color: #ff00ff;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        /* Metrics display */
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 10px 0;
+            font-size: 13px;
+        }
+        
+        .metric-value {
+            font-weight: bold;
+            color: #00ff88;
+        }
+        
+        .metric-bar {
+            width: 100px;
+            height: 4px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 2px;
+            overflow: hidden;
+            margin-left: 10px;
+        }
+        
+        .metric-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #00ff88, #ff00ff);
+            transition: width 0.3s ease-out;
+        }
+        
+        /* Executive decisions log */
+        #decision-log {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        
+        .decision {
+            background: rgba(255,255,255,0.05);
+            border-radius: 8px;
+            padding: 12px;
+            margin: 8px 0;
+            font-size: 12px;
+            border-left: 3px solid #ff00ff;
+        }
+        
+        .decision-type {
+            color: #ff00ff;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        
+        .decision-reasoning {
+            color: rgba(255,255,255,0.7);
+            font-style: italic;
+        }
+        
+        /* Control buttons */
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        button {
+            flex: 1;
+            padding: 10px;
+            background: linear-gradient(135deg, #ff00ff, #00ff88);
+            border: none;
+            border-radius: 5px;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(255,0,255,0.5);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        /* Status indicators */
+        .status {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+        
+        .status.active { background: #00ff88; }
+        .status.warning { background: #ffaa00; }
+        .status.critical { background: #ff0066; }
+        
+        /* Executive state indicator */
+        #executive-state {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.8);
+            padding: 15px 20px;
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        #executive-state h4 {
+            margin: 0 0 10px 0;
+            color: #ff00ff;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+        
+        .state-item {
+            font-size: 11px;
+            margin: 5px 0;
+            display: flex;
+            align-items: center;
+        }
+        
+        /* Conflict indicator */
+        .conflict-indicator {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255,0,0,0.2);
+            border: 2px solid rgba(255,0,0,0.8);
+            border-radius: 10px;
+            padding: 20px;
+            display: none;
+            animation: pulse 1s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { transform: translate(-50%, -50%) scale(1); }
+            50% { transform: translate(-50%, -50%) scale(1.05); }
+            100% { transform: translate(-50%, -50%) scale(1); }
+        }
+    </style>
+</head>
+<body>
+    <div id="visualization">
+        <!-- Executive state indicator -->
+        <div id="executive-state">
+            <h4>Executive Control</h4>
+            <div class="state-item">
+                <span class="status active"></span>
+                <span>Mode: <span id="exec-mode">Active</span></span>
+            </div>
+            <div class="state-item">
+                <span>Fatigue: <span id="exec-fatigue">0%</span></span>
+            </div>
+            <div class="state-item">
+                <span>Primary Goal: <span id="exec-goal">Coherence</span></span>
+            </div>
+        </div>
+        
+        <!-- Conflict indicator -->
+        <div class="conflict-indicator" id="conflict">
+            <strong>RESOURCE CONFLICT DETECTED</strong><br>
+            Resolving competition between networks...
+        </div>
+        
+        <!-- Nodes will be added here dynamically -->
+    </div>
+    
+    <div id="controls">
+        <!-- System metrics panel -->
+        <div class="panel">
+            <h3>System Metrics</h3>
+            
+            <div class="metric">
+                <span>Performance (FPS)</span>
+                <span class="metric-value" id="fps">60</span>
+                <div class="metric-bar">
+                    <div class="metric-fill" id="fps-bar" style="width: 100%"></div>
+                </div>
+            </div>
+            
+            <div class="metric">
+                <span>Field Coherence</span>
+                <span class="metric-value" id="coherence">85%</span>
+                <div class="metric-bar">
+                    <div class="metric-fill" id="coherence-bar" style="width: 85%"></div>
+                </div>
+            </div>
+            
+            <div class="metric">
+                <span>Platform Energy</span>
+                <span class="metric-value" id="platform-energy">70%</span>
+                <div class="metric-bar">
+                    <div class="metric-fill" id="platform-energy-bar" style="width: 70%"></div>
+                </div>
+            </div>
+            
+            <div class="metric">
+                <span>Observer Energy</span>
+                <span class="metric-value" id="observer-energy">30%</span>
+                <div class="metric-bar">
+                    <div class="metric-fill" id="observer-energy-bar" style="width: 30%"></div>
+                </div>
+            </div>
+            
+            <div class="metric">
+                <span>User Overwhelm</span>
+                <span class="metric-value" id="overwhelm">15%</span>
+                <div class="metric-bar">
+                    <div class="metric-fill" id="overwhelm-bar" style="width: 15%"></div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Test scenarios panel -->
+        <div class="panel">
+            <h3>Test Scenarios</h3>
+            <div class="controls">
+                <button onclick="simulateLowPerformance()">Low FPS</button>
+                <button onclick="simulateOverwhelm()">Overwhelm</button>
+            </div>
+            <div class="controls">
+                <button onclick="simulateConflict()">Conflict</button>
+                <button onclick="resetSystem()">Reset</button>
+            </div>
+        </div>
+        
+        <!-- Executive decisions log -->
+        <div id="decision-log">
+            <h3 style="color: #ff00ff; margin: 0 0 15px 0;">Executive Decisions</h3>
+            <!-- Decisions will be logged here -->
+        </div>
+    </div>
+
+    <script>
+        // Simulated platform state
+        let platformState = {
+            fps: 60,
+            nodeCount: 50,
+            coherence: 0.85,
+            platformEnergy: 0.7,
+            observerEnergy: 0.3,
+            overwhelm: 0.15,
+            nodes: []
+        };
+        
+        // Executive state
+        let executiveState = {
+            mode: 'Active',
+            fatigue: 0,
+            goal: 'Coherence',
+            decisionCount: 0
+        };
+        
+        // Initialize visualization
+        function initializeVisualization() {
+            const viz = document.getElementById('visualization');
+            
+            // Create initial nodes
+            for (let i = 0; i < 50; i++) {
+                const node = document.createElement('div');
+                node.className = 'node';
+                node.textContent = i;
+                node.style.left = Math.random() * (viz.offsetWidth - 40) + 'px';
+                node.style.top = Math.random() * (viz.offsetHeight - 40) + 'px';
+                
+                // Random movement
+                node.dataset.vx = (Math.random() - 0.5) * 2;
+                node.dataset.vy = (Math.random() - 0.5) * 2;
+                
+                viz.appendChild(node);
+                platformState.nodes.push(node);
+            }
+            
+            // Start animation
+            animate();
+            
+            // Start executive monitoring
+            startExecutiveMonitoring();
+        }
+        
+        // Animation loop
+        function animate() {
+            const viz = document.getElementById('visualization');
+            
+            platformState.nodes.forEach(node => {
+                let x = parseFloat(node.style.left);
+                let y = parseFloat(node.style.top);
+                let vx = parseFloat(node.dataset.vx);
+                let vy = parseFloat(node.dataset.vy);
+                
+                // Update position
+                x += vx;
+                y += vy;
+                
+                // Bounce off walls
+                if (x <= 0 || x >= viz.offsetWidth - 40) {
+                    vx = -vx;
+                    node.dataset.vx = vx;
+                }
+                if (y <= 0 || y >= viz.offsetHeight - 40) {
+                    vy = -vy;
+                    node.dataset.vy = vy;
+                }
+                
+                node.style.left = x + 'px';
+                node.style.top = y + 'px';
+            });
+            
+            // Simulate FPS calculation
+            if (platformState.fps < 60) {
+                platformState.fps = Math.min(60, platformState.fps + 0.5);
+                updateMetrics();
+            }
+            
+            requestAnimationFrame(animate);
+        }
+        
+        // Executive monitoring simulation
+        function startExecutiveMonitoring() {
+            setInterval(() => {
+                // Check for issues
+                const issues = detectIssues();
+                
+                if (issues.length > 0) {
+                    const decision = makeExecutiveDecision(issues[0]);
+                    if (decision) {
+                        executeDecision(decision);
+                        logDecision(decision);
+                    }
+                }
+                
+                // Update executive state
+                executiveState.fatigue = Math.max(0, executiveState.fatigue - 1);
+                updateExecutiveState();
+            }, 1000);
+        }
+        
+        // Issue detection
+        function detectIssues() {
+            const issues = [];
+            
+            if (platformState.fps < 30) {
+                issues.push({
+                    type: 'performance',
+                    severity: (30 - platformState.fps) / 30
+                });
+            }
+            
+            if (platformState.coherence < 0.5) {
+                issues.push({
+                    type: 'coherence',
+                    severity: (0.5 - platformState.coherence) / 0.5
+                });
+            }
+            
+            if (platformState.overwhelm > 0.7) {
+                issues.push({
+                    type: 'overwhelm',
+                    severity: platformState.overwhelm
+                });
+            }
+            
+            if (platformState.platformEnergy + platformState.observerEnergy > 1.2) {
+                issues.push({
+                    type: 'resource_conflict',
+                    severity: 0.8
+                });
+            }
+            
+            return issues.sort((a, b) => b.severity - a.severity);
+        }
+        
+        // Executive decision making
+        function makeExecutiveDecision(issue) {
+            // Don't make decisions if too fatigued
+            if (executiveState.fatigue > 80) {
+                executiveState.mode = 'Resting';
+                return null;
+            }
+            
+            executiveState.mode = 'Deciding';
+            
+            switch(issue.type) {
+                case 'performance':
+                    return {
+                        type: 'Performance Optimization',
+                        action: 'reduce_complexity',
+                        reasoning: 'FPS below threshold - reducing visual complexity',
+                        params: {
+                            cullNodes: Math.floor(platformState.nodeCount * 0.3),
+                            dimNodes: true
+                        }
+                    };
+                    
+                case 'coherence':
+                    return {
+                        type: 'Coherence Restoration',
+                        action: 'boost_coherence',
+                        reasoning: 'Field coherence too low - strengthening connections',
+                        params: {
+                            highlightCore: true,
+                            coherenceBoost: 1.5
+                        }
+                    };
+                    
+                case 'overwhelm':
+                    return {
+                        type: 'Cognitive Load Reduction',
+                        action: 'simplify',
+                        reasoning: 'User showing overwhelm - simplifying interface',
+                        params: {
+                            maxNodes: 30,
+                            slowAnimation: true
+                        }
+                    };
+                    
+                case 'resource_conflict':
+                    return {
+                        type: 'Resource Reallocation',
+                        action: 'reallocate',
+                        reasoning: 'Resource competition detected - rebalancing energy',
+                        params: {
+                            platform: 0.6,
+                            observer: 0.4
+                        }
+                    };
+            }
+            
+            return null;
+        }
+        
+        // Execute decisions
+        function executeDecision(decision) {
+            executiveState.mode = 'Executing';
+            executiveState.fatigue += 10;
+            executiveState.decisionCount++;
+            
+            switch(decision.action) {
+                case 'reduce_complexity':
+                    // Dim some nodes
+                    const toDim = Math.floor(platformState.nodes.length * 0.3);
+                    for (let i = 0; i < toDim; i++) {
+                        platformState.nodes[i].classList.add('dimmed');
+                    }
+                    platformState.nodeCount = platformState.nodes.length - toDim;
+                    
+                    // Improve FPS
+                    setTimeout(() => {
+                        platformState.fps = 45;
+                        updateMetrics();
+                    }, 500);
+                    break;
+                    
+                case 'boost_coherence':
+                    // Highlight central nodes
+                    const toHighlight = Math.floor(platformState.nodes.length * 0.2);
+                    for (let i = 0; i < toHighlight; i++) {
+                        const idx = Math.floor(platformState.nodes.length / 2) + i - toHighlight/2;
+                        if (platformState.nodes[idx]) {
+                            platformState.nodes[idx].classList.add('highlighted');
+                        }
+                    }
+                    
+                    // Improve coherence
+                    setTimeout(() => {
+                        platformState.coherence = Math.min(1, platformState.coherence * 1.5);
+                        updateMetrics();
+                    }, 500);
+                    break;
+                    
+                case 'simplify':
+                    // Hide many nodes
+                    const toHide = platformState.nodes.length - 30;
+                    for (let i = 30; i < platformState.nodes.length; i++) {
+                        platformState.nodes[i].style.display = 'none';
+                    }
+                    platformState.nodeCount = 30;
+                    
+                    // Reduce overwhelm
+                    setTimeout(() => {
+                        platformState.overwhelm = 0.3;
+                        updateMetrics();
+                    }, 500);
+                    break;
+                    
+                case 'reallocate':
+                    // Show conflict resolution
+                    document.getElementById('conflict').style.display = 'block';
+                    
+                    setTimeout(() => {
+                        platformState.platformEnergy = decision.params.platform;
+                        platformState.observerEnergy = decision.params.observer;
+                        updateMetrics();
+                        document.getElementById('conflict').style.display = 'none';
+                    }, 2000);
+                    break;
+            }
+            
+            setTimeout(() => {
+                executiveState.mode = 'Monitoring';
+            }, 1000);
+        }
+        
+        // Update UI metrics
+        function updateMetrics() {
+            // FPS
+            document.getElementById('fps').textContent = Math.round(platformState.fps);
+            document.getElementById('fps-bar').style.width = (platformState.fps / 60 * 100) + '%';
+            
+            // Coherence
+            document.getElementById('coherence').textContent = Math.round(platformState.coherence * 100) + '%';
+            document.getElementById('coherence-bar').style.width = (platformState.coherence * 100) + '%';
+            
+            // Energy
+            document.getElementById('platform-energy').textContent = Math.round(platformState.platformEnergy * 100) + '%';
+            document.getElementById('platform-energy-bar').style.width = (platformState.platformEnergy * 100) + '%';
+            
+            document.getElementById('observer-energy').textContent = Math.round(platformState.observerEnergy * 100) + '%';
+            document.getElementById('observer-energy-bar').style.width = (platformState.observerEnergy * 100) + '%';
+            
+            // Overwhelm
+            document.getElementById('overwhelm').textContent = Math.round(platformState.overwhelm * 100) + '%';
+            document.getElementById('overwhelm-bar').style.width = (platformState.overwhelm * 100) + '%';
+        }
+        
+        // Update executive state display
+        function updateExecutiveState() {
+            document.getElementById('exec-mode').textContent = executiveState.mode;
+            document.getElementById('exec-fatigue').textContent = executiveState.fatigue + '%';
+            document.getElementById('exec-goal').textContent = executiveState.goal;
+            
+            // Update status indicator
+            const status = document.querySelector('#executive-state .status');
+            if (executiveState.fatigue > 80) {
+                status.className = 'status critical';
+            } else if (executiveState.fatigue > 50) {
+                status.className = 'status warning';
+            } else {
+                status.className = 'status active';
+            }
+        }
+        
+        // Log decisions
+        function logDecision(decision) {
+            const log = document.getElementById('decision-log');
+            const entry = document.createElement('div');
+            entry.className = 'decision';
+            entry.innerHTML = `
+                <div class="decision-type">${decision.type}</div>
+                <div class="decision-reasoning">${decision.reasoning}</div>
+                <div style="margin-top: 5px; font-size: 11px; color: #666;">
+                    Decision #${executiveState.decisionCount} • ${new Date().toLocaleTimeString()}
+                </div>
+            `;
+            
+            // Add to top of log
+            log.insertBefore(entry, log.children[1]);
+            
+            // Keep only last 10 decisions
+            while (log.children.length > 11) {
+                log.removeChild(log.lastChild);
+            }
+        }
+        
+        // Test scenario functions
+        function simulateLowPerformance() {
+            platformState.fps = 15;
+            updateMetrics();
+            logDecision({
+                type: 'User Trigger',
+                reasoning: 'Simulated performance drop to test executive response'
+            });
+        }
+        
+        function simulateOverwhelm() {
+            platformState.overwhelm = 0.85;
+            // Show all nodes
+            platformState.nodes.forEach(node => {
+                node.style.display = 'block';
+                node.classList.remove('dimmed', 'highlighted');
+            });
+            platformState.nodeCount = platformState.nodes.length;
+            updateMetrics();
+            logDecision({
+                type: 'User Trigger',
+                reasoning: 'Simulated user overwhelm scenario'
+            });
+        }
+        
+        function simulateConflict() {
+            platformState.platformEnergy = 0.8;
+            platformState.observerEnergy = 0.7;
+            updateMetrics();
+            logDecision({
+                type: 'User Trigger',
+                reasoning: 'Simulated resource conflict between networks'
+            });
+        }
+        
+        function resetSystem() {
+            // Reset all values
+            platformState = {
+                fps: 60,
+                nodeCount: 50,
+                coherence: 0.85,
+                platformEnergy: 0.7,
+                observerEnergy: 0.3,
+                overwhelm: 0.15,
+                nodes: platformState.nodes
+            };
+            
+            // Reset nodes
+            platformState.nodes.forEach(node => {
+                node.style.display = 'block';
+                node.classList.remove('dimmed', 'highlighted');
+            });
+            
+            executiveState.fatigue = 0;
+            executiveState.mode = 'Active';
+            
+            updateMetrics();
+            updateExecutiveState();
+            
+            logDecision({
+                type: 'System Reset',
+                reasoning: 'All systems returned to baseline state'
+            });
+        }
+        
+        // Initialize on load
+        window.onload = () => {
+            initializeVisualization();
+            updateMetrics();
+            updateExecutiveState();
+            
+            // Welcome message
+            logDecision({
+                type: 'System Startup',
+                reasoning: 'Executive Control System initialized and monitoring'
+            });
+        };
+    </script>
+</body>
+</html>

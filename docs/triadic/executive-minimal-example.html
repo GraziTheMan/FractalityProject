@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Executive Control - Minimal Example</title>
+    <style>
+        body {
+            margin: 20px;
+            font-family: monospace;
+            background: #000;
+            color: #0f0;
+        }
+        
+        #log {
+            border: 1px solid #0f0;
+            padding: 10px;
+            height: 400px;
+            overflow-y: auto;
+            margin-top: 20px;
+        }
+        
+        .decision {
+            border-left: 3px solid #f0f;
+            padding-left: 10px;
+            margin: 10px 0;
+        }
+        
+        button {
+            background: #0f0;
+            color: #000;
+            border: none;
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+            font-family: monospace;
+            font-weight: bold;
+        }
+        
+        button:hover {
+            background: #f0f;
+        }
+        
+        .metric {
+            display: inline-block;
+            margin: 10px;
+            padding: 5px 10px;
+            border: 1px solid #0f0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Executive Control - Minimal Working Example</h1>
+    <p>This shows the absolute minimum code needed to add executive control to any system.</p>
+    
+    <div id="metrics">
+        <div class="metric">FPS: <span id="fps">60</span></div>
+        <div class="metric">Nodes: <span id="nodes">100</span></div>
+        <div class="metric">Energy: <span id="energy">100</span>%</div>
+    </div>
+    
+    <div>
+        <button onclick="simulateLag()">Simulate Lag</button>
+        <button onclick="simulateGrowth()">Add Many Nodes</button>
+        <button onclick="simulateDrain()">Drain Energy</button>
+        <button onclick="reset()">Reset</button>
+    </div>
+    
+    <div id="log"></div>
+
+    <script>
+        // ====================================
+        // MINIMAL EXECUTIVE IMPLEMENTATION
+        // ====================================
+        
+        // 1. Create the Worker code as a string (or separate file)
+        const workerCode = `
+            // Minimal Executive Brain
+            let state = {
+                fps: 60,
+                nodes: 100,
+                energy: 100
+            };
+            
+            // Decision loop - runs every 500ms
+            setInterval(() => {
+                // Simple rule-based decisions
+                if (state.fps < 30 && state.nodes > 50) {
+                    self.postMessage({
+                        type: 'decision',
+                        action: 'reduce_nodes',
+                        reason: 'Low FPS detected - reducing complexity',
+                        params: { maxNodes: 50 }
+                    });
+                }
+                
+                if (state.energy < 20) {
+                    self.postMessage({
+                        type: 'decision',
+                        action: 'emergency_mode',
+                        reason: 'Critical energy - entering conservation mode',
+                        params: { saveEnergy: true }
+                    });
+                }
+                
+                if (state.nodes > 200) {
+                    self.postMessage({
+                        type: 'decision',
+                        action: 'limit_growth',
+                        reason: 'Too many nodes - preventing overload',
+                        params: { cullNodes: true }
+                    });
+                }
+            }, 500);
+            
+            // Receive state updates
+            self.onmessage = (e) => {
+                if (e.data.type === 'update') {
+                    state = e.data.state;
+                }
+            };
+        `;
+        
+        // 2. Create the Worker
+        const blob = new Blob([workerCode], { type: 'application/javascript' });
+        const worker = new Worker(URL.createObjectURL(blob));
+        
+        // 3. Simple platform simulation
+        const platform = {
+            fps: 60,
+            nodes: 100,
+            energy: 100
+        };
+        
+        // 4. Send updates to executive
+        setInterval(() => {
+            worker.postMessage({
+                type: 'update',
+                state: {
+                    fps: platform.fps,
+                    nodes: platform.nodes,
+                    energy: platform.energy
+                }
+            });
+        }, 100);
+        
+        // 5. Handle executive decisions
+        worker.onmessage = (e) => {
+            const decision = e.data;
+            log(`🧠 Executive Decision: ${decision.action}`);
+            log(`   Reason: ${decision.reason}`);
+            
+            // Execute the decision
+            switch(decision.action) {
+                case 'reduce_nodes':
+                    platform.nodes = decision.params.maxNodes;
+                    log('   ✓ Reduced nodes to ' + platform.nodes);
+                    setTimeout(() => {
+                        platform.fps = 45; // Simulate improvement
+                        updateDisplay();
+                    }, 500);
+                    break;
+                    
+                case 'emergency_mode':
+                    log('   ⚡ Emergency mode activated!');
+                    // Simulate energy recovery
+                    const recovery = setInterval(() => {
+                        platform.energy = Math.min(100, platform.energy + 5);
+                        updateDisplay();
+                        if (platform.energy >= 50) {
+                            clearInterval(recovery);
+                            log('   ✓ Energy recovered to safe levels');
+                        }
+                    }, 200);
+                    break;
+                    
+                case 'limit_growth':
+                    platform.nodes = 150;
+                    log('   ✓ Growth limited - nodes capped at 150');
+                    break;
+            }
+            
+            updateDisplay();
+        };
+        
+        // ====================================
+        // UI FUNCTIONS
+        // ====================================
+        
+        function updateDisplay() {
+            document.getElementById('fps').textContent = platform.fps;
+            document.getElementById('nodes').textContent = platform.nodes;
+            document.getElementById('energy').textContent = platform.energy;
+            
+            // Color code the metrics
+            document.getElementById('fps').style.color = platform.fps < 30 ? '#f00' : '#0f0';
+            document.getElementById('energy').style.color = platform.energy < 30 ? '#f00' : '#0f0';
+        }
+        
+        function log(message) {
+            const logDiv = document.getElementById('log');
+            const entry = document.createElement('div');
+            
+            if (message.startsWith('🧠')) {
+                entry.className = 'decision';
+            }
+            
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logDiv.insertBefore(entry, logDiv.firstChild);
+            
+            // Keep only last 20 entries
+            while (logDiv.children.length > 20) {
+                logDiv.removeChild(logDiv.lastChild);
+            }
+        }
+        
+        // Test functions
+        function simulateLag() {
+            platform.fps = 15;
+            updateDisplay();
+            log('User triggered: Simulated lag (15 FPS)');
+        }
+        
+        function simulateGrowth() {
+            platform.nodes += 150;
+            updateDisplay();
+            log('User triggered: Added 150 nodes');
+        }
+        
+        function simulateDrain() {
+            platform.energy = 15;
+            updateDisplay();
+            log('User triggered: Energy drained to 15%');
+        }
+        
+        function reset() {
+            platform.fps = 60;
+            platform.nodes = 100;
+            platform.energy = 100;
+            updateDisplay();
+            log('System reset to baseline');
+        }
+        
+        // Start
+        log('Executive Control System started');
+        log('Try the buttons to see automatic decisions');
+        updateDisplay();
+        
+        // ====================================
+        // THAT'S IT! 
+        // ====================================
+        // The executive is now:
+        // - Monitoring your metrics
+        // - Making decisions when thresholds are crossed
+        // - Sending commands back to your platform
+        // - Never touching actual user data
+        
+        // To integrate with your real platform:
+        // 1. Replace 'platform' object with your actual platform
+        // 2. Add real metric collection in the update interval
+        // 3. Implement the decision handlers for your system
+        // 4. Move the worker code to a separate file
+        
+        // Total overhead: ~50 lines of code
+    </script>
+</body>
+</html>
