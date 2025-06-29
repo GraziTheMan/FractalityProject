@@ -1,6 +1,7 @@
 
 import { RadialMenu } from './components/radialMenu.js';
 import { AppState } from './utils/appState.js';
+import { setupMirrorToggle } from './components/mirrorToggle.js';
 
 document.getElementById('state-indicator').innerText = 'State: Balanced';
 document.getElementById('desktop-dock').innerText = 'Desktop Dock Placeholder';
@@ -18,3 +19,5 @@ const menu = new RadialMenu('radial-menu', {
     { label: '📈 Diag', onClick: () => AppState.setView('diagnostics') },
   ]
 });
+
+setupMirrorToggle(menu);
