@@ -1,0 +1,13 @@
+#dashboard {
+  font-family: monospace;
+  font-size: 0.9em;
+  color: #0ff;
+  background: #111;
+  padding: 1em;
+  overflow-y: auto;
+  max-height: 400px;
+  border: 1px solid #0ff;
+}
+.log-entry {
+  margin-bottom: 0.5em;
+}

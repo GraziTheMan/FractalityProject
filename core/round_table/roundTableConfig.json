@@ -1,0 +1,12 @@
+[
+  {
+    "name": "Claude",
+    "url": "https://api.anthropic.com/complete",
+    "memoryFile": "Claude.json"
+  },
+  {
+    "name": "GPT",
+    "url": "https://api.openai.com/v1/completions",
+    "memoryFile": "ChatGPT.json"
+  }
+]

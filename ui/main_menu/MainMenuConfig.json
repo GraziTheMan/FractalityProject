@@ -1,0 +1,17 @@
+{
+  "main": [
+    { "label": "Mindmap", "icon": "🧠", "event": "openPortal" },
+    { "label": "Social", "icon": "👥", "submenu": "social" },
+    { "label": "Node Manager", "icon": "🗂", "event": "openPortal" },
+    { "label": "Bubble View", "icon": "🫧", "event": "openPortal" },
+    { "label": "Cone View", "icon": "🔻", "event": "openPortal" },
+    { "label": "System", "icon": "⚙️", "event": "openPortal" },
+    { "label": "Assistant", "icon": "🤖", "event": "openPortal" },
+    { "label": "Diagnostics", "icon": "📊", "event": "openPortal" }
+  ],
+  "social": [
+    { "label": "Chat", "icon": "💬", "event": "openPortal" },
+    { "label": "Forums", "icon": "📣", "event": "openPortal" },
+    { "label": "Home", "icon": "🏠", "submenu": "main" }
+  ]
+}

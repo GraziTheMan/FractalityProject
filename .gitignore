@@ -1,4 +1,27 @@
-__pycache__/  
-*.pyc  
-.env  
-venv/  
+
+# Node modules
+node_modules/
+
+# Logs
+logs
+*.log
+
+# Environment
+.env
+
+# Build output
+dist/
+
+# VSCode
+.vscode/
+
+# MacOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+# Local models or large assets
+models/audio/*.onnx
+models/**/*.h5

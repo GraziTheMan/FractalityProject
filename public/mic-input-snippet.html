@@ -1,0 +1,16 @@
+<!-- Add to index.html -->
+<button id="mic-toggle">🎙️</button>
+<script type="module">
+  import { initSpeechInput } from '../ui/microphone_input/useSpeechInput.js';
+
+  const mic = initSpeechInput((text) => {
+    console.log('You said:', text);
+    if (window.sharedContext) {
+      window.sharedContext.setMemory('spokenIntent', text);
+    }
+  });
+
+  document.getElementById('mic-toggle').addEventListener('click', () => {
+    mic.toggle();
+  });
+</script>

@@ -1,0 +1,11 @@
+#portal-root {
+  padding: 1em;
+  background: #111;
+  color: #0f0;
+  font-family: monospace;
+}
+.portal-view {
+  border: 1px solid #0f0;
+  padding: 1em;
+  margin-top: 1em;
+}

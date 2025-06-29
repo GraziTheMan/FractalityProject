@@ -1,0 +1,42 @@
+#radial-menu {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 9999;
+}
+
+.menu-node {
+  background: #222;
+  color: #0f0;
+  padding: 10px 14px;
+  font-size: 24px;
+  border-radius: 50%;
+  border: 2px solid #0f0;
+  text-align: center;
+}
+
+.menu-actions {
+  position: absolute;
+  bottom: 50px;
+  right: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+  opacity: 0;
+}
+
+.menu-actions.open {
+  pointer-events: all;
+  opacity: 1;
+}
+
+.action-node {
+  position: absolute;
+  background: #111;
+  color: #0f0;
+  border: 1px solid #0f0;
+  padding: 10px;
+  border-radius: 50%;
+  font-size: 20px;
+  transform: rotate(calc(var(--i) * 60deg)) translate(80px) rotate(calc(var(--i) * -60deg));
+  transform-origin: bottom right;
+}

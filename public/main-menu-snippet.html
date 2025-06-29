@@ -1,0 +1,12 @@
+<!-- Add to mobile.html -->
+<div id="main-menu"></div>
+<link rel="stylesheet" href="../ui/radial_menu/RadialMenu.css">
+<script type="module">
+  import { MainMenuRadial } from '../ui/main_menu/MainMenuRadial.js';
+  new MainMenuRadial('main-menu');
+
+  window.addEventListener('openPortal', (e) => {
+    console.log('🔁 Switching to portal:', e.detail);
+    // This is where you trigger portal-specific rendering logic
+  });
+</script>

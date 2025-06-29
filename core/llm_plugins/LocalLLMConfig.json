@@ -1,0 +1,8 @@
+{
+  "defaultModel": "mistral",
+  "fallbackModel": "phi2",
+  "weights": {
+    "Claude": 0.9,
+    "Ollama": 0.7
+  }
+}
