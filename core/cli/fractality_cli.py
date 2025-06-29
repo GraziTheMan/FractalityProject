@@ -19,12 +19,84 @@ console = Console()
 class FractalityCLI:
     def __init__(self, root_dir: str = "mindmaps"):
         self.root = Path(root_dir)
+
         self.bridge = FractalNodeBridge(root_dir)
         self.resonance = HybridResonance(root_dir)
         
     def add_node(self, path: str, archetype: str = "🌱Sprout"):
         """Create new node"""
         new_path = self.root / path
+
+        self.nodes: Dict[Path, Node] = {}
+        self.load_all()
+
+    def load_all(self):
+        """Load all markdown nodes from directory"""
+        self.nodes = {}
+        for md_file in self.root.rglob("*.md"):
+            self.nodes[md_file] = Node(md_file)
+
+    def get_node(self, path: str) -> Optional[Node]:
+        """Get node by relative path (e.g. 'Philosophy/Consciousness.md')"""
+        full_path = (self.root / path).resolve()
+        return self.nodes.get(full_path)
+
+# In fractality_cli.py
+class FractalityCLI:
+    def __init__(self, root_dir: str = "mindmaps"):
+        # Adjust path relative to CLI location
+        if not Path(root_dir).is_absolute():
+            root_dir = str(Path(__file__).parent.parent.parent / root_dir)
+        
+        self.root = Path(root_dir)
+        self.bridge = FractalNodeBridge(root_dir)
+        self.resonance = HybridResonance(root_dir)
+
+# ---------------------------
+# CLI Logic
+# ---------------------------
+
+console = Console()
+mindmap = MindMap()
+
+parser = argparse.ArgumentParser(
+    description="🌌 Fractality CLI - Markdown Mind Mapping",
+    formatter_class=argparse.RawTextHelpFormatter
+)
+parser.add_argument(
+    "--root", 
+    default="mindmaps",
+    help="Root directory for mindmaps (default: mindmaps)"
+)
+
+subparsers = parser.add_subparsers(dest="command")
+
+# Add Node
+add_parser = subparsers.add_parser("add", help="Create new node")
+add_parser.add_argument("path", help="Path to new node (e.g. Philosophy/Consciousness.md)")
+
+# Edit Node
+edit_parser = subparsers.add_parser("edit", help="Edit node content")
+edit_parser.add_argument("path", help="Path to existing node")
+
+# Connect Nodes
+conn_parser = subparsers.add_parser("connect", help="Connect two nodes")
+conn_parser.add_argument("source", help="Source node path")
+conn_parser.add_argument("target", help="Target node path")
+conn_parser.add_argument("--weight", type=float, default=1.0,
+                       help="Connection strength (0.0-1.0)")
+
+# View Map
+view_parser = subparsers.add_parser("view", help="Visualize mind map")
+
+def main():
+    args = parser.parse_args()
+    global mindmap
+    mindmap = MindMap(args.root)
+
+    if args.command == "add":
+        new_path = Path(args.root) / args.path
+
         if new_path.exists():
             console.print("[red]Error: Node already exists[/]")
             return
@@ -309,3 +381,125 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+# 
+# WASNT SURE WHERE TO ADD THIS SO ADDING
+# AT THE END. WILL PROBABLY HAVE TO FIX
+
+
+# Update for fractality_cli.py - Add this to your existing CLI file
+
+def do_find(self, args):
+    """
+    Find nodes by semantic resonance
+    Usage: find <query>
+    Example: find cosmic consciousness
+    """
+    if not args:
+        print("❌ Please provide a search query")
+        return
+    
+    query = args.strip()
+    print(f"🔍 Searching for nodes resonating with: '{query}'")
+    
+    try:
+        # Use the resonance engine
+        from resonance.hybrid_resonance import HybridResonance
+        
+        # Initialize resonance engine if not already done
+        if not hasattr(self, 'resonance_engine'):
+            print("Initializing resonance engine...")
+            self.resonance_engine = HybridResonance(
+                model_name='sentence-transformers/all-MiniLM-L6-v2',
+                cache_dir='.cache/embeddings'
+            )
+            
+            # Build index from current nodes
+            self._build_resonance_index()
+        
+        # Perform search
+        results = self.resonance_engine.find_similar(
+            query=query,
+            top_k=10,
+            method='hybrid',  # Uses both TF-IDF and semantic
+            weights={'tfidf': 0.3, 'semantic': 0.7}
+        )
+        
+        if not results:
+            print("No resonant nodes found")
+            return
+        
+        # Display results
+        print(f"\n✨ Found {len(results)} resonant nodes:\n")
+        for i, (node_id, score, node_data) in enumerate(results, 1):
+            print(f"{i}. {node_id} (score: {score:.3f})")
+            if 'label' in node_data.get('metadata', {}):
+                print(f"   📝 {node_data['metadata']['label']}")
+            if 'description' in node_data.get('metadata', {}):
+                desc = node_data['metadata']['description'][:100]
+                if len(node_data['metadata']['description']) > 100:
+                    desc += "..."
+                print(f"   💭 {desc}")
+            print()
+        
+    except ImportError:
+        print("❌ Resonance engine not available. Please check your installation.")
+        print("   Run: pip install sentence-transformers scikit-learn")
+    except Exception as e:
+        print(f"❌ Error during search: {e}")
+
+def _build_resonance_index(self):
+    """Build resonance index from current nodes"""
+    print("Building resonance index...")
+    
+    documents = []
+    for node_id, node_data in self.nodes.items():
+        # Combine all text from the node
+        text_parts = []
+        
+        # Add label
+        if 'label' in node_data.get('metadata', {}):
+            text_parts.append(node_data['metadata']['label'])
+        
+        # Add description
+        if 'description' in node_data.get('metadata', {}):
+            text_parts.append(node_data['metadata']['description'])
+        
+        # Add tags
+        if 'tags' in node_data.get('metadata', {}):
+            text_parts.extend(node_data['metadata']['tags'])
+        
+        # Create document
+        if text_parts:
+            documents.append({
+                'id': node_id,
+                'text': ' '.join(text_parts),
+                'metadata': node_data
+            })
+    
+    # Build index
+    self.resonance_engine.build_index(documents)
+    print(f"✅ Index built with {len(documents)} nodes")
+
+def do_resonance_stats(self, args):
+    """Show resonance engine statistics"""
+    if not hasattr(self, 'resonance_engine'):
+        print("Resonance engine not initialized. Run 'find' command first.")
+        return
+    
+    stats = self.resonance_engine.get_stats()
+    print("\n📊 Resonance Engine Statistics:")
+    print(f"   Total indexed nodes: {stats['total_documents']}")
+    print(f"   TF-IDF vocabulary size: {stats['tfidf_vocab_size']}")
+    print(f"   Embedding dimension: {stats['embedding_dim']}")
+    print(f"   Cache size: {stats['cache_size']} embeddings")
+    print(f"   Search method: {stats['default_method']}")
+
+# Add aliases for convenience
+do_search = do_find
+do_query = do_find
+
