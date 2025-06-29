@@ -259,6 +259,326 @@ input[type="text"]:focus {
     letter-spacing: 2px;
 }
 
+/* added CLI bridge */
+
+/* CLI Bridge Integration Styles - Merged with existing UI */
+/* Add these to your existing styles/main.css */
+
+/* CLI Sync Status - positioned to work with state indicator */
+.state-container {
+  position: relative;
+}
+
+.cli-sync-status {
+  display: inline-block;
+  margin-left: 20px;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid #333;
+  border-radius: 15px;
+  padding: 5px 15px;
+}
+
+.sync-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #666;
+  transition: all 0.3s ease;
+}
+
+.status-dot.connected {
+  background: #ffaa00;
+  box-shadow: 0 0 8px #ffaa00;
+}
+
+.status-dot.synced {
+  background: #00ff00;
+  box-shadow: 0 0 8px #00ff00;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.status-text {
+  color: #fff;
+  font-size: 12px;
+}
+
+/* Desktop Dock CLI Controls */
+#desktop-dock {
+  background: rgba(0, 0, 0, 0.8);
+  border: 1px solid #333;
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.cli-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.dock-button {
+  background: rgba(30, 30, 30, 0.9);
+  border: 1px solid #444;
+  color: #ccc;
+  padding: 6px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.3s ease;
+}
+
+.dock-button:hover {
+  background: rgba(50, 50, 50, 0.9);
+  border-color: #666;
+  color: #fff;
+}
+
+.dock-button.active {
+  background: rgba(0, 100, 0, 0.3);
+  border-color: #00ff00;
+  color: #00ff00;
+}
+
+/* Mini search in dock */
+.cli-search-mini {
+  display: flex;
+  gap: 5px;
+  margin-left: auto;
+}
+
+.cli-search-mini input {
+  background: rgba(20, 20, 20, 0.9);
+  border: 1px solid #333;
+  color: #fff;
+  padding: 6px 10px;
+  border-radius: 5px;
+  font-size: 13px;
+  width: 150px;
+}
+
+.cli-search-mini input:focus {
+  outline: none;
+  border-color: #666;
+}
+
+.cli-search-mini button {
+  background: rgba(30, 30, 30, 0.9);
+  border: 1px solid #444;
+  color: #ccc;
+  padding: 6px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.cli-search-mini button:hover {
+  background: rgba(50, 50, 50, 0.9);
+  border-color: #666;
+}
+
+/* Search Results Panel - Floating */
+.search-results-panel {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(10, 10, 10, 0.95);
+  border: 2px solid #00ff00;
+  border-radius: 10px;
+  padding: 20px;
+  max-width: 500px;
+  max-height: 70vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  z-index: 10000;
+  box-shadow: 0 0 30px rgba(0, 255, 0, 0.3);
+}
+
+.search-results-panel h4 {
+  color: #00ff00;
+  margin: 0 0 15px 0;
+  font-size: 16px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.results-list {
+  flex: 1;
+  overflow-y: auto;
+  margin-bottom: 15px;
+}
+
+.result-item {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid #222;
+  border-radius: 5px;
+  padding: 10px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.result-item:hover {
+  background: rgba(0, 255, 0, 0.1);
+  border-color: #00ff00;
+  transform: translateX(5px);
+}
+
+.result-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.result-label {
+  color: #fff;
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.result-score {
+  color: #00ff00;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.result-matches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.match {
+  background: rgba(0, 255, 0, 0.2);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  color: #aaa;
+}
+
+.close-results {
+  align-self: center;
+  background: rgba(30, 30, 30, 0.9);
+  border: 1px solid #666;
+  color: #ccc;
+  padding: 6px 20px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.close-results:hover {
+  background: rgba(50, 50, 50, 0.9);
+  border-color: #999;
+  color: #fff;
+}
+
+/* Notifications - Compact for radial UI */
+.notification {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.9);
+  border: 1px solid #00ff00;
+  border-radius: 20px;
+  padding: 10px 20px;
+  color: #fff;
+  font-size: 13px;
+  z-index: 10001;
+  animation: slideUp 0.3s ease;
+  max-width: 400px;
+  text-align: center;
+}
+
+.notification.error {
+  border-color: #ff0000;
+  color: #ff6666;
+}
+
+.notification.fade-out {
+  animation: slideDown 0.3s ease;
+}
+
+@keyframes slideUp {
+  from {
+    transform: translate(-50%, 100%);
+    opacity: 0;
+  }
+  to {
+    transform: translate(-50%, 0);
+    opacity: 1;
+  }
+}
+
+@keyframes slideDown {
+  from {
+    transform: translate(-50%, 0);
+    opacity: 1;
+  }
+  to {
+    transform: translate(-50%, 100%);
+    opacity: 0;
+  }
+}
+
+/* Scrollbar styling for results */
+.results-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.results-list::-webkit-scrollbar-track {
+  background: #111;
+  border-radius: 3px;
+}
+
+.results-list::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 3px;
+}
+
+.results-list::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .cli-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .cli-search-mini {
+    margin-left: 0;
+    margin-top: 10px;
+  }
+  
+  .cli-search-mini input {
+    flex: 1;
+  }
+  
+  .search-results-panel {
+    max-width: 90%;
+    max-height: 80vh;
+  }
+}
+
+/* End of addition -- Grazi */
+
 @keyframes spin {
     to { transform: rotate(360deg); }
 }
