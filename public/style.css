@@ -1,11 +1,20 @@
-body { margin: 0; font-family: sans-serif; }
-.radial-menu, .state-indicator, .home-button, .content-view, .biometric-panel, .desktop-dock {
-  border: 1px dashed #ccc;
-  margin: 10px;
-  padding: 20px;
+
+.radial-ready {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.05);
 }
-.hidden { display: none; }
-.desktop-only { display: none; }
-@media (min-width: 1024px) {
-  .desktop-only { display: block; }
+.radial-item {
+  position: absolute;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: white;
+  border: 1px solid #ccc;
+  font-size: 10px;
+  cursor: pointer;
 }
