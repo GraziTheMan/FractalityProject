@@ -62,6 +62,17 @@ class MindMap:
         full_path = (self.root / path).resolve()
         return self.nodes.get(full_path)
 
+# In fractality_cli.py
+class FractalityCLI:
+    def __init__(self, root_dir: str = "mindmaps"):
+        # Adjust path relative to CLI location
+        if not Path(root_dir).is_absolute():
+            root_dir = str(Path(__file__).parent.parent.parent / root_dir)
+        
+        self.root = Path(root_dir)
+        self.bridge = FractalNodeBridge(root_dir)
+        self.resonance = HybridResonance(root_dir)
+
 # ---------------------------
 # CLI Logic
 # ---------------------------
