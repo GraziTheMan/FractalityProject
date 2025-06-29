@@ -1,0 +1,11 @@
+body { margin: 0; font-family: sans-serif; }
+.radial-menu, .state-indicator, .home-button, .content-view, .biometric-panel, .desktop-dock {
+  border: 1px dashed #ccc;
+  margin: 10px;
+  padding: 20px;
+}
+.hidden { display: none; }
+.desktop-only { display: none; }
+@media (min-width: 1024px) {
+  .desktop-only { display: block; }
+}

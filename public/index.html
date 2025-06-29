@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fractality Platform</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Main Radial Menu Node -->
+    <div id="radial-menu" class="radial-menu"></div>
+
+    <!-- Consciousness State Indicator -->
+    <div id="state-indicator" class="state-indicator"></div>
+
+    <!-- Home Button (for submenus) -->
+    <button id="home-button" class="home-button hidden">Home</button>
+
+    <!-- Content View Swapper -->
+    <div id="content-view" class="content-view">
+      <!-- Bubble View, Cone View, Node Manager, etc. dynamically injected here -->
+    </div>
+
+    <!-- Biometric Panel (hidden by default) -->
+    <div id="biometric-panel" class="biometric-panel hidden"></div>
+
+    <!-- Desktop Dock (mobile-hidden) -->
+    <div id="desktop-dock" class="desktop-dock desktop-only"></div>
+  </div>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
