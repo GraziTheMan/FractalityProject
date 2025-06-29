@@ -1,1 +1,0 @@
-See canonical copy in project canvas.
