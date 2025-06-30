@@ -5,7 +5,7 @@ import { FractalityState } from './FractalityState.js';
 import { PerformanceMonitor } from './PerformanceMonitor.js';
 import { FamilyViewController } from '../intelligence/FamilyViewController.js';
 import { LayoutEngine } from '../intelligence/LayoutEngine.js';
-import { AnimationSystem } from '../intelligence/AnimationSystem.js';
+import { AnimationSystem } from '../visualization/AnimationSystem.js';
 import { CACEEngine } from '../intelligence/CACEEngine.js';
 import { FractalityRenderer } from '../visualization/FractalityRenderer.js';
 import { QualityManager } from '../visualization/QualityManager.js';
