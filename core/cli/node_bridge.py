@@ -13,9 +13,9 @@ class FractalNodeBridge:
     """Converts between markdown files and JavaScript FractalNode format"""
     
     def __init__(self, mindmap_root: str = "mindmaps"):
-        self.root = Path(mindmap_root)
+        self.root = Path(mindmap_root) if Path(mindmap_root).is_absolute() else Path("../../mindmaps")
         self.root.mkdir(exist_ok=True)
-        
+
     def markdown_to_fractal_node(self, filepath: Path) -> Dict[str, Any]:
         """Convert a markdown file to FractalNode JSON format"""
         if not filepath.exists():
