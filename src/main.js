@@ -11,6 +11,9 @@ import { TestDataGenerator } from './data/TestDataGenerator.js';
 import { SearchInterface } from './ui/SearchInterface.js';
 import { NodeDebugPanel } from './ui/NodeDebugPanel.js';
 
+// FIXED:
+import { AnimationSystem } from './visualization/AnimationSystem.js';
+
 // Initialize state indicator
 document.getElementById('state-indicator').innerText = 'State: Balanced';
 document.getElementById('desktop-dock').innerText = 'Desktop Dock Placeholder';
