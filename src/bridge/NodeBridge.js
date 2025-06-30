@@ -1,29 +1,102 @@
 // src/bridge/NodeBridge.js
 // Bridge between CLI-generated content and frontend visualization
-// Works with the unified NodeSchema.js
+// Now includes Flask server communication alongside file-based sync
+// COMPLETE VERSION - includes all original methods plus server integration
 
 import { FractalNode, NodeCollection, NodeMigration } from '../shared/NodeSchema.js';
 import { DataLoader } from '../data/DataLoader.js';
 
 /**
- * NodeBridge - Connects CLI markdown system with frontend visualization
- * Handles data synchronization, format conversion, and live updates
+ * NodeBridge - Unified bridge for CLI integration
+ * Handles server communication, file sync, data conversion, and live updates
  */
 export class NodeBridge {
-    constructor() {
+    constructor(serverUrl = 'http://localhost:8001') {
         this.nodeCollection = new NodeCollection();
         this.dataLoader = new DataLoader();
         this.syncInterval = null;
         this.watchedFiles = new Set();
         
+        // Server connection
+        this.serverUrl = serverUrl;
+        this.serverConnected = false;
+        this.lastHealthCheck = null;
+        
         // Event emitter for updates
         this.listeners = new Map();
+        
+        // Initialize server connection
+        this.initializeServer();
     }
     
     /**
-     * Load nodes from CLI export
+     * Initialize connection to Flask server
+     */
+    async initializeServer() {
+        try {
+            const response = await fetch(`${this.serverUrl}/health`);
+            if (response.ok) {
+                this.lastHealthCheck = await response.json();
+                this.serverConnected = true;
+                console.log('✅ NodeBridge: Connected to CLI server', this.lastHealthCheck);
+                this.emit('serverConnected', this.lastHealthCheck);
+                return true;
+            }
+        } catch (error) {
+            console.log('📁 NodeBridge: Server not available, using file-based mode');
+            this.serverConnected = false;
+            this.emit('serverDisconnected', error);
+            return false;
+        }
+    }
+    
+    /**
+     * Load nodes from CLI (server or file) - UPDATED METHOD
      */
     async loadFromCLI(source) {
+        if (this.serverConnected) {
+            return await this.loadFromServer();
+        } else {
+            return await this.loadFromFile(source);
+        }
+    }
+    
+    /**
+     * Load nodes from Flask server - NEW METHOD
+     */
+    async loadFromServer() {
+        try {
+            const response = await this.serverFetch('/nodes');
+            
+            if (!response.success) {
+                throw new Error(response.error || 'Server load failed');
+            }
+            
+            // Import nodes with migration if needed
+            const importResult = this.importNodes(response.nodes);
+            
+            console.log('✅ NodeBridge: Loaded from server', importResult);
+            
+            // Emit load event
+            this.emit('nodesLoaded', {
+                nodes: this.nodeCollection.exportAll(),
+                stats: importResult,
+                source: 'server'
+            });
+            
+            return importResult;
+            
+        } catch (error) {
+            console.error('❌ NodeBridge: Server load failed', error);
+            this.serverConnected = false;
+            throw error;
+        }
+    }
+    
+    /**
+     * Load nodes from file - RENAMED FROM loadFromCLI
+     */
+    async loadFromFile(source) {
         try {
             // Load data using existing DataLoader
             const data = await this.dataLoader.loadData(source);
@@ -35,24 +108,25 @@ export class NodeBridge {
             // Import nodes with migration if needed
             const importResult = this.importNodes(data.nodes);
             
-            console.log('✅ CLI Bridge: Loaded', importResult);
+            console.log('✅ NodeBridge: Loaded from file', importResult);
             
             // Emit load event
             this.emit('nodesLoaded', {
                 nodes: this.nodeCollection.exportAll(),
-                stats: importResult
+                stats: importResult,
+                source: 'file'
             });
             
             return importResult;
             
         } catch (error) {
-            console.error('❌ CLI Bridge: Load failed', error);
+            console.error('❌ NodeBridge: File load failed', error);
             throw error;
         }
     }
     
     /**
-     * Import nodes with format detection and migration
+     * Import nodes with format detection and migration - ORIGINAL METHOD
      */
     importNodes(nodesData) {
         const results = {
@@ -97,7 +171,7 @@ export class NodeBridge {
     }
     
     /**
-     * Export nodes for CLI consumption
+     * Export nodes for CLI consumption - ORIGINAL METHOD
      */
     exportForCLI() {
         const nodes = this.nodeCollection.exportAll();
@@ -109,7 +183,7 @@ export class NodeBridge {
             _filepath: this.generateFilepath(node)
         }));
         
-        return {
+        const exportData = {
             version: "0.2.2",
             nodes: cliNodes,
             metadata: {
@@ -118,44 +192,66 @@ export class NodeBridge {
                 source: "fractality-frontend"
             }
         };
+        
+        // Try server export if connected
+        if (this.serverConnected) {
+            this.serverFetch('/export', {
+                method: 'POST',
+                body: JSON.stringify({ output: 'fractal-export.json' })
+            }).catch(error => {
+                console.warn('Server export failed:', error);
+            });
+        }
+        
+        return exportData;
     }
     
     /**
-     * Enable auto-sync with CLI export file
+     * Enable auto-sync with CLI export file - UPDATED METHOD
      */
     enableAutoSync(exportPath, interval = 2000) {
         this.disableAutoSync();
         
         this.syncInterval = setInterval(async () => {
             try {
-                // Check if file has changed (mock implementation)
-                const hasChanged = await this.checkFileChanged(exportPath);
-                
-                if (hasChanged) {
-                    console.log('🔄 CLI Bridge: Detected changes, syncing...');
-                    await this.loadFromCLI(exportPath);
+                if (this.serverConnected) {
+                    // Check server health
+                    const health = await this.serverFetch('/health');
+                    this.lastHealthCheck = health;
+                } else {
+                    // Try to reconnect
+                    await this.initializeServer();
+                    
+                    // Check file changes if in file mode
+                    const hasChanged = await this.checkFileChanged(exportPath);
+                    if (hasChanged) {
+                        console.log('🔄 NodeBridge: File changes detected, reloading...');
+                        await this.loadFromFile(exportPath);
+                    }
                 }
             } catch (error) {
-                console.error('❌ CLI Bridge: Sync error', error);
+                console.warn('NodeBridge: Auto-sync error', error);
+                this.serverConnected = false;
+                this.emit('serverDisconnected', error);
             }
         }, interval);
         
-        console.log('✅ CLI Bridge: Auto-sync enabled');
+        console.log('✅ NodeBridge: Auto-sync enabled');
     }
     
     /**
-     * Disable auto-sync
+     * Disable auto-sync - ORIGINAL METHOD
      */
     disableAutoSync() {
         if (this.syncInterval) {
             clearInterval(this.syncInterval);
             this.syncInterval = null;
-            console.log('🛑 CLI Bridge: Auto-sync disabled');
+            console.log('🛑 NodeBridge: Auto-sync disabled');
         }
     }
     
     /**
-     * Update resonance scores from similarity engine
+     * Update resonance scores from similarity engine - ORIGINAL METHOD
      */
     updateResonanceScores(scores) {
         let updated = 0;
@@ -178,7 +274,7 @@ export class NodeBridge {
     }
     
     /**
-     * Update CACE energy values
+     * Update CACE energy values - ORIGINAL METHOD
      */
     updateEnergyValues(energyData) {
         let updated = 0;
@@ -200,7 +296,7 @@ export class NodeBridge {
     }
     
     /**
-     * Get nodes for visualization with all computed properties
+     * Get nodes for visualization with all computed properties - ORIGINAL METHOD
      */
     getVisibleNodes(criteria = {}) {
         const nodes = this.nodeCollection.findNodes(criteria);
@@ -219,9 +315,70 @@ export class NodeBridge {
     }
     
     /**
-     * Search nodes by content (for connecting to CLI find command)
+     * Search nodes by content - UPDATED METHOD
      */
     async searchNodes(query, options = {}) {
+        if (this.serverConnected) {
+            return await this.searchOnServer(query, options);
+        } else {
+            return await this.searchLocally(query, options);
+        }
+    }
+    
+    /**
+     * Search using server's resonance engine - NEW METHOD
+     */
+    async searchOnServer(query, options = {}) {
+        try {
+            const searchData = {
+                query: query,
+                limit: options.limit || 10,
+                type: options.type || 'hybrid'
+            };
+            
+            const response = await this.serverFetch('/search', {
+                method: 'POST',
+                body: JSON.stringify(searchData)
+            });
+            
+            if (!response.success) {
+                throw new Error(response.error || 'Search failed');
+            }
+            
+            // Update local resonance scores
+            const scores = {};
+            response.results.forEach(result => {
+                scores[result.node_id] = {
+                    semantic: result.similarity.semantic,
+                    tfidf: result.similarity.tfidf
+                };
+            });
+            this.updateResonanceScores(scores);
+            
+            console.log(`🔍 NodeBridge: Server search found ${response.results.length} results`);
+            
+            // Convert server results to local format
+            const localResults = response.results.map(result => ({
+                node: this.nodeCollection.getNode(result.node_id)?.toJSON(),
+                score: result.similarity.hybrid,
+                matches: [{
+                    type: 'server',
+                    similarity: result.similarity
+                }]
+            })).filter(r => r.node); // Filter out nodes not in local collection
+            
+            return localResults;
+            
+        } catch (error) {
+            console.warn('Server search failed, falling back to local:', error);
+            return await this.searchLocally(query, options);
+        }
+    }
+    
+    /**
+     * Search locally - ORIGINAL METHOD
+     */
+    async searchLocally(query, options = {}) {
         const results = [];
         
         this.nodeCollection.nodes.forEach(node => {
@@ -257,17 +414,79 @@ export class NodeBridge {
     }
     
     /**
-     * Bridge to Python CLI command execution
+     * Execute CLI command - UPDATED METHOD
      */
     async executeCLICommand(command, args) {
-        // This would connect to a local server or use WebSockets
-        // For now, we'll simulate the response
-        
-        console.log(`🔧 CLI Bridge: Executing ${command}`, args);
+        if (this.serverConnected) {
+            return await this.executeOnServer(command, args);
+        } else {
+            return await this.executeMockCommand(command, args);
+        }
+    }
+    
+    /**
+     * Execute command on Flask server - NEW METHOD
+     */
+    async executeOnServer(command, args) {
+        try {
+            switch (command) {
+                case 'find':
+                    return await this.searchOnServer(args.query, args.options);
+                    
+                case 'add':
+                    const response = await this.serverFetch('/nodes', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            path: args.path || `${args.label}.md`,
+                            archetype: args.type || 'default',
+                            content: args.content || `# ${args.label}\n\nNew node created via bridge`,
+                            tags: args.tags || []
+                        })
+                    });
+                    
+                    if (response.success) {
+                        // Reload nodes to get the new one
+                        await this.loadFromServer();
+                        return { success: true, node_id: response.node_id };
+                    } else {
+                        throw new Error(response.error);
+                    }
+                    
+                case 'connect':
+                    const connectResponse = await this.serverFetch('/connect', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            source: args.sourceId,
+                            target: args.targetId,
+                            weight: args.weight || 1.0
+                        })
+                    });
+                    
+                    if (connectResponse.success) {
+                        return { success: true, connection: connectResponse.connection };
+                    } else {
+                        throw new Error(connectResponse.error);
+                    }
+                    
+                default:
+                    return { success: false, error: 'Unknown command' };
+            }
+        } catch (error) {
+            console.error(`Server command ${command} failed:`, error);
+            // Fallback to mock if available
+            return await this.executeMockCommand(command, args);
+        }
+    }
+    
+    /**
+     * Execute mock command - ORIGINAL METHOD (renamed for clarity)
+     */
+    async executeMockCommand(command, args) {
+        console.log(`🔧 NodeBridge: Mock executing ${command}`, args);
         
         switch (command) {
             case 'find':
-                return this.searchNodes(args.query, args.options);
+                return this.searchLocally(args.query, args.options);
                 
             case 'add':
                 const newNode = new FractalNode({
@@ -295,7 +514,60 @@ export class NodeBridge {
         }
     }
     
-    // Event emitter methods
+    /**
+     * Get server status - NEW METHOD
+     */
+    async getServerStatus() {
+        if (!this.serverConnected) {
+            return {
+                connected: false,
+                local_nodes: this.nodeCollection.nodes.size
+            };
+        }
+        
+        try {
+            const status = await this.serverFetch('/status');
+            return {
+                connected: true,
+                ...status
+            };
+        } catch (error) {
+            this.serverConnected = false;
+            throw error;
+        }
+    }
+    
+    /**
+     * Check if server is connected - NEW METHOD
+     */
+    isServerConnected() {
+        return this.serverConnected;
+    }
+    
+    /**
+     * Server fetch helper - NEW METHOD
+     */
+    async serverFetch(endpoint, options = {}) {
+        const url = `${this.serverUrl}${endpoint}`;
+        const config = {
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            },
+            ...options
+        };
+        
+        const response = await fetch(url, config);
+        
+        if (!response.ok) {
+            const error = await response.text();
+            throw new Error(`HTTP ${response.status}: ${error}`);
+        }
+        
+        return await response.json();
+    }
+    
+    // Event emitter methods - ORIGINAL METHODS
     on(event, callback) {
         if (!this.listeners.has(event)) {
             this.listeners.set(event, []);
@@ -321,7 +593,7 @@ export class NodeBridge {
         }
     }
     
-    // Helper methods
+    // Helper methods - ORIGINAL METHODS
     generateMarkdownContent(node) {
         const lines = [];
         lines.push(`# ${node.metadata.label}`);
@@ -402,7 +674,7 @@ export class NodeBridge {
     
     async checkFileChanged(filepath) {
         // This would check file modification time
-        // For now, return false (no change)
+        // For now, return false (no change detected)
         return false;
     }
 }
@@ -418,13 +690,13 @@ if (typeof window !== 'undefined') {
         const cliExport = params.get('cli-export');
         
         if (cliExport) {
-            console.log('🔗 CLI Bridge: Found export parameter, loading...');
+            console.log('🔗 NodeBridge: Found export parameter, loading...');
             nodeBridge.loadFromCLI(cliExport)
                 .then(() => {
-                    console.log('✅ CLI Bridge: Ready');
+                    console.log('✅ NodeBridge: Ready');
                 })
                 .catch(error => {
-                    console.error('❌ CLI Bridge: Failed to load', error);
+                    console.error('❌ NodeBridge: Failed to load', error);
                 });
         }
     });
