@@ -4,37 +4,35 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Fractality Platform</title>
-  <script>
-    // Redirect mobile users to the mobile.html version
-    if (/Mobi|Android|iPhone/i.test(navigator.userAgent)) {
-      window.location.href = "mobile.html";
-    }
-  </script>
-  <style>
-    body {
-      font-family: sans-serif;
-      text-align: center;
-      padding: 3rem;
-      background-color: #f4f4f4;
-      color: #333;
-    }
-    a {
-      display: inline-block;
-      margin-top: 2rem;
-      padding: 0.75rem 1.5rem;
-      background: #1e1e3f;
-      color: white;
-      text-decoration: none;
-      border-radius: 0.5rem;
-    }
-    a:hover {
-      background: #292962;
-    }
-  </style>
+  <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
-  <h1>Welcome to The Fractality Platform</h1>
-  <p>This is the desktop interface. If you're on mobile, you'll be redirected automatically.</p>
-  <a href="mobile.html">Go to Mobile Interface Manually</a>
+  <div id="app">
+    <!-- Main Radial Menu Node -->
+    <div id="radial-menu" class="radial-menu"></div>
+
+    <!-- Consciousness State Indicator -->
+    <div id="state-indicator" class="state-indicator"></div>
+
+    <!-- Home Button (for submenus) -->
+    <button id="home-button" class="home-button hidden">Home</button>
+	
+	<!-- Mirror Toggle Button -->
+	<button id="mirror-toggle_
+	class="mirror-toggle">Mirror</button>
+
+    <!-- Content View Swapper -->
+    <div id="content-view" class="content-view">
+      <!-- Bubble View, Cone View, Node Manager, etc. dynamically injected here -->
+    </div>
+
+    <!-- Biometric Panel (hidden by default) -->
+    <div id="biometric-panel" class="biometric-panel hidden"></div>
+
+    <!-- Desktop Dock (mobile-hidden) -->
+    <div id="desktop-dock" class="desktop-dock desktop-only"></div>
+  </div>
+
+  <script type="module" src="./main.js"></script>
 </body>
 </html>

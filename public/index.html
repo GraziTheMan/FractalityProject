@@ -17,13 +17,15 @@
     <!-- Home Button (for submenus) -->
     <button id="home-button" class="home-button hidden">Home</button>
 	
-	<!-- Mirror Toggle Button -->
-	<button id="mirror-toggle_
-	class="mirror-toggle">Mirror</button>
+	<!-- Mirror Toggle Button (FIXED: added missing quote and closing tag) -->
+	<button id="mirror-toggle" class="mirror-toggle">Mirror</button>
 
     <!-- Content View Swapper -->
     <div id="content-view" class="content-view">
       <!-- Bubble View, Cone View, Node Manager, etc. dynamically injected here -->
+      
+      <!-- Canvas for FractalityEngine (add this if not created dynamically) -->
+      <canvas id="fractality-canvas" style="display: none;"></canvas>
     </div>
 
     <!-- Biometric Panel (hidden by default) -->
@@ -33,6 +35,7 @@
     <div id="desktop-dock" class="desktop-dock desktop-only"></div>
   </div>
 
+  <!-- CORRECT: Script points to main.js in same directory -->
   <script type="module" src="./main.js"></script>
 </body>
 </html>
