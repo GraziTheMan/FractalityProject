@@ -1,10 +1,16 @@
-import { RadialMenu } from './components/radialMenu.js';
-import { AppState } from './utils/appState.js';
-import { setupMirrorToggle } from './components/mirrorToggle.js';
-import { nodeBridge } from './bridge/NodeBridge.js';
-import { FractalityEngine } from './engine/FractalityEngine.js';
-import { DataLoader } from './data/DataLoader.js';
-import { TestDataGenerator } from './data/TestDataGenerator.js';
+// Enhanced main.js - Your existing code + SearchInterface integration
+// Corrected import paths for your file structure
+import { RadialMenu } from './components/radialMenu.js';              // ✅ ./public/components/
+import { AppState } from './utils/appState.js';                      // ✅ ./public/utils/
+import { setupMirrorToggle } from './components/mirrorToggle.js';     // ✅ ./public/components/
+import { nodeBridge } from '../src/bridge/NodeBridge.js';             // ✅ ./src/bridge/
+import { FractalityEngine } from '../src/engine/FractalityEngine.js'; // ✅ ./src/engine/
+import { DataLoader } from '../src/data/DataLoader.js';               // ✅ ./src/data/
+import { TestDataGenerator } from '../src/data/TestDataGenerator.js'; // ✅ ./src/data/
+
+// NEW: Import search interface and debug panel (to be created in ./src/ui/)
+import { SearchInterface } from '../src/ui/SearchInterface.js';
+import { NodeDebugPanel } from '../src/ui/NodeDebugPanel.js';
 
 // Initialize state indicator
 document.getElementById('state-indicator').innerText = 'State: Balanced';
@@ -14,6 +20,10 @@ document.getElementById('desktop-dock').innerText = 'Desktop Dock Placeholder';
 let fractalityEngine = null;
 const dataLoader = new DataLoader();
 const testGenerator = new TestDataGenerator();
+
+// NEW: Initialize search interface and debug panel
+const searchInterface = new SearchInterface();
+let nodeDebugPanel = null; // Initialize when CACE engine is available
 
 // Create radial menu with original items
 const menu = new RadialMenu('radial-menu', {
@@ -49,7 +59,7 @@ function addCLISyncStatus() {
   stateContainer.appendChild(syncStatus);
 }
 
-// Add CLI controls to desktop dock
+// ENHANCED: Add search button and debug toggle to CLI controls
 function addCLIControls() {
   const desktopDock = document.getElementById('desktop-dock');
   
@@ -59,9 +69,10 @@ function addCLIControls() {
     <button id="cli-export" class="dock-button">📤 Export to CLI</button>
     <button id="cli-import" class="dock-button">📥 Import from CLI</button>
     <button id="cli-sync" class="dock-button">🔄 Auto-Sync Off</button>
-    <div class="cli-search-mini">
-      <input type="text" id="cli-search-input" placeholder="Search nodes...">
-      <button id="cli-search-btn">🔍</button>
+    <button id="open-search" class="dock-button">🔍 Search</button>
+    <button id="toggle-debug" class="dock-button">🧠 Debug</button>
+    <div class="cli-status-mini">
+      <span class="server-status-indicator" id="server-status-mini">🔗 Checking...</span>
     </div>
   `;
   
@@ -72,15 +83,15 @@ function addCLIControls() {
   setupCLIHandlers();
 }
 
-// Setup CLI control handlers
+// ENHANCED: Setup CLI control handlers with search integration
 function setupCLIHandlers() {
-  // Export handler
+  // Export handler (existing)
   document.getElementById('cli-export').addEventListener('click', exportToCLI);
   
-  // Import handler
+  // Import handler (existing)
   document.getElementById('cli-import').addEventListener('click', showImportDialog);
   
-  // Auto-sync toggle
+  // Auto-sync toggle (existing)
   let autoSyncEnabled = false;
   document.getElementById('cli-sync').addEventListener('click', (e) => {
     autoSyncEnabled = !autoSyncEnabled;
@@ -102,25 +113,45 @@ function setupCLIHandlers() {
     }
   });
   
-  // Search functionality
-  const searchInput = document.getElementById('cli-search-input');
-  const searchBtn = document.getElementById('cli-search-btn');
-  
-  const performSearch = async () => {
-    const query = searchInput.value.trim();
-    if (!query) return;
-    
-    const results = await nodeBridge.searchNodes(query);
-    displaySearchResults(results);
-  };
-  
-  searchBtn.addEventListener('click', performSearch);
-  searchInput.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') performSearch();
+  // NEW: Search interface integration
+  document.getElementById('open-search').addEventListener('click', () => {
+    searchInterface.show();
   });
+  
+  // NEW: Debug panel toggle
+  document.getElementById('toggle-debug').addEventListener('click', () => {
+    if (nodeDebugPanel) {
+      nodeDebugPanel.toggle();
+    } else {
+      showNotification('Debug panel not available (CACE engine not loaded)', 'warning');
+    }
+  });
+  
+  // Update server status periodically
+  setInterval(updateServerStatusMini, 5000);
 }
 
-// Setup bridge listeners
+// NEW: Update mini server status indicator
+async function updateServerStatusMini() {
+  const statusEl = document.getElementById('server-status-mini');
+  if (!statusEl) return;
+  
+  if (nodeBridge.isServerConnected()) {
+    try {
+      const status = await nodeBridge.getServerStatus();
+      statusEl.textContent = `🟢 Server (${status.total_nodes || 0} nodes)`;
+      statusEl.className = 'server-status-indicator connected';
+    } catch (error) {
+      statusEl.textContent = '🟡 Server Error';
+      statusEl.className = 'server-status-indicator error';
+    }
+  } else {
+    statusEl.textContent = '🔴 Server Offline';
+    statusEl.className = 'server-status-indicator disconnected';
+  }
+}
+
+// ENHANCED: Setup bridge listeners with search integration
 function setupBridgeListeners() {
   nodeBridge.on('nodesLoaded', (data) => {
     console.log('📊 Bridge: Nodes loaded', data.stats);
@@ -138,10 +169,58 @@ function setupBridgeListeners() {
   nodeBridge.on('energyUpdated', (data) => {
     console.log('⚡ Bridge: Energy updated', data);
     updateStateIndicator('Energy Updated');
+    
+    // Update debug panel if visible
+    if (nodeDebugPanel && nodeDebugPanel.isVisible) {
+      nodeDebugPanel.refreshFromServer();
+    }
+  });
+  
+  // NEW: Listen for server connection events
+  nodeBridge.on('serverConnected', (data) => {
+    console.log('🟢 Bridge: Server connected', data);
+    updateSyncStatus('connected');
+    updateServerStatusMini();
+  });
+  
+  nodeBridge.on('serverDisconnected', (error) => {
+    console.log('🔴 Bridge: Server disconnected', error);
+    updateSyncStatus('disconnected');
+    updateServerStatusMini();
   });
 }
 
-// Export to CLI
+// NEW: Setup search event listeners
+function setupSearchListeners() {
+  // Listen for node selection from search
+  window.addEventListener('nodeSelected', (e) => {
+    const nodeId = e.detail.nodeId;
+    console.log('🎯 Node selected from search:', nodeId);
+    
+    // Navigate to node if engine is available
+    if (fractalityEngine && AppState.currentView === 'bubble') {
+      fractalityEngine.navigateToNode(nodeId);
+      
+      // Update debug panel if available
+      if (nodeDebugPanel) {
+        const nodes = nodeBridge.getVisibleNodes({ id: nodeId });
+        if (nodes.length > 0) {
+          const nodeData = nodes[0];
+          const contextScore = fractalityEngine.caceEngine ? 
+            fractalityEngine.caceEngine.calculateContextScore(nodeData) : 0;
+          nodeDebugPanel.updateNode(nodeId, nodeData, contextScore);
+          nodeDebugPanel.show();
+        }
+      }
+    } else {
+      // Store for later navigation
+      AppState.pendingNavigation = nodeId;
+      AppState.setView('bubble');
+    }
+  });
+}
+
+// Export to CLI (existing)
 async function exportToCLI() {
   const exportData = nodeBridge.exportForCLI();
   
@@ -156,7 +235,7 @@ async function exportToCLI() {
   showNotification(`Exported ${exportData.metadata.totalNodes} nodes for CLI`);
 }
 
-// Show import dialog
+// Show import dialog (existing)
 function showImportDialog() {
   const input = document.createElement('input');
   input.type = 'file';
@@ -189,58 +268,9 @@ function showImportDialog() {
   input.click();
 }
 
-// Display search results
-function displaySearchResults(results) {
-  // Remove existing results panel if any
-  const existing = document.querySelector('.search-results-panel');
-  if (existing) existing.remove();
-  
-  const resultsPanel = document.createElement('div');
-  resultsPanel.className = 'search-results-panel';
-  resultsPanel.innerHTML = `
-    <h4>Search Results (${results.length})</h4>
-    <div class="results-list"></div>
-    <button class="close-results">Close</button>
-  `;
-  
-  const resultsList = resultsPanel.querySelector('.results-list');
-  
-  results.forEach(result => {
-    const item = document.createElement('div');
-    item.className = 'result-item';
-    item.innerHTML = `
-      <div class="result-header">
-        <span class="result-label">${result.node.metadata.label}</span>
-        <span class="result-score">${(result.score * 100).toFixed(0)}%</span>
-      </div>
-      <div class="result-matches">
-        ${result.matches.map(m => `<span class="match">${m.type}: ${m.text}</span>`).join('')}
-      </div>
-    `;
-    
-    item.addEventListener('click', () => {
-      // Navigate to node if engine is available
-      if (fractalityEngine && AppState.currentView === 'bubble') {
-        fractalityEngine.navigateToNode(result.node.id);
-      } else {
-        // Store for later navigation
-        AppState.pendingNavigation = result.node.id;
-        AppState.setView('bubble');
-      }
-      resultsPanel.remove();
-    });
-    
-    resultsList.appendChild(item);
-  });
-  
-  resultsPanel.querySelector('.close-results').addEventListener('click', () => {
-    resultsPanel.remove();
-  });
-  
-  document.body.appendChild(resultsPanel);
-}
+// REMOVED: displaySearchResults function (replaced by SearchInterface)
 
-// Update sync status indicator
+// Update sync status indicator (existing)
 function updateSyncStatus(status) {
   const statusDot = document.querySelector('.status-dot');
   const statusText = document.querySelector('.status-text');
@@ -264,7 +294,7 @@ function updateSyncStatus(status) {
   }
 }
 
-// Update state indicator
+// Update state indicator (existing)
 function updateStateIndicator(text) {
   const indicator = document.getElementById('state-indicator');
   if (indicator) {
@@ -272,11 +302,45 @@ function updateStateIndicator(text) {
   }
 }
 
-// Show notification
+// ENHANCED: Show notification with better styling
 function showNotification(message, type = 'info') {
   const notification = document.createElement('div');
   notification.className = `notification ${type}`;
-  notification.textContent = message;
+  notification.innerHTML = `
+    <span class="notification-icon">
+      ${type === 'error' ? '❌' : type === 'warning' ? '⚠️' : '✅'}
+    </span>
+    <span class="notification-text">${message}</span>
+  `;
+  
+  // Add notification styles if not present
+  if (!document.getElementById('notification-styles')) {
+    const style = document.createElement('style');
+    style.id = 'notification-styles';
+    style.textContent = `
+      .notification {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: rgba(0, 0, 0, 0.9);
+        color: white;
+        padding: 12px 16px;
+        border-radius: 8px;
+        border: 2px solid #4ade80;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        z-index: 1002;
+        backdrop-filter: blur(10px);
+        transition: all 0.3s ease;
+      }
+      .notification.error { border-color: #ef4444; }
+      .notification.warning { border-color: #f59e0b; }
+      .notification.fade-out { opacity: 0; transform: translateX(100px); }
+    `;
+    document.head.appendChild(style);
+  }
+  
   document.body.appendChild(notification);
   
   setTimeout(() => {
@@ -285,7 +349,7 @@ function showNotification(message, type = 'info') {
   }, 3000);
 }
 
-// Load bridge data into engine
+// Load bridge data into engine (existing)
 async function loadBridgeData() {
   const nodes = nodeBridge.getVisibleNodes();
   
@@ -310,7 +374,7 @@ async function loadBridgeData() {
   await fractalityEngine.loadData(nodeGraph);
 }
 
-// Check for CLI data on startup
+// Check for CLI data on startup (existing)
 async function checkForCLIData() {
   const params = new URLSearchParams(window.location.search);
   const cliExport = params.get('cli-export');
@@ -337,7 +401,7 @@ async function checkForCLIData() {
   return false;
 }
 
-// Initialize Fractality engine when bubble view is activated
+// ENHANCED: Initialize Fractality engine with debug panel integration
 AppState.on('viewChanged', async (view) => {
   if (view === 'bubble' && !fractalityEngine) {
     console.log('🌌 Initializing Fractality Engine...');
@@ -345,6 +409,13 @@ AppState.on('viewChanged', async (view) => {
     // Create engine
     fractalityEngine = new FractalityEngine('fractality-canvas');
     await fractalityEngine.init();
+    
+    // Initialize debug panel when CACE engine is available
+    if (fractalityEngine.caceEngine) {
+      nodeDebugPanel = new NodeDebugPanel(fractalityEngine.caceEngine);
+      nodeDebugPanel.init();
+      console.log('🧠 Debug panel initialized');
+    }
     
     // Check for CLI data first
     const hasCliData = await checkForCLIData();
@@ -366,10 +437,19 @@ AppState.on('viewChanged', async (view) => {
     
     // Start engine
     fractalityEngine.start();
+    
+    // Setup node selection handler for debug panel
+    if (nodeDebugPanel) {
+      fractalityEngine.on('nodeSelected', (nodeData) => {
+        const contextScore = fractalityEngine.caceEngine ? 
+          fractalityEngine.caceEngine.calculateContextScore(nodeData) : 0;
+        nodeDebugPanel.updateNode(nodeData.id, nodeData, contextScore);
+      });
+    }
   }
 });
 
-// Initialize on DOM ready
+// ENHANCED: Initialize on DOM ready with all new components
 document.addEventListener('DOMContentLoaded', () => {
   // Add CLI integration UI
   addCLISyncStatus();
@@ -378,9 +458,21 @@ document.addEventListener('DOMContentLoaded', () => {
   // Setup bridge listeners
   setupBridgeListeners();
   
-  console.log('✨ Fractality with CLI Bridge ready!');
+  // Setup search listeners
+  setupSearchListeners();
+  
+  // Initialize search interface
+  searchInterface.init();
+  searchInterface.loadHistory();
+  
+  // Initial server status check
+  updateServerStatusMini();
+  
+  console.log('✨ Fractality with full CLI Bridge + Search + Debug ready!');
 });
 
 // Export for debugging
 window.nodeBridge = nodeBridge;
 window.fractalityEngine = () => fractalityEngine;
+window.searchInterface = searchInterface;
+window.nodeDebugPanel = () => nodeDebugPanel;
