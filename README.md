@@ -1,4 +1,4 @@
-# The Fractality Project v0.13.0 Alpha
+# The Fractality Platform v0.13.0 Alpha
 
 > **A Social Mind Mapping Experiment**  
 > *Where mathematics becomes consciousness, and thoughts become living structures*
