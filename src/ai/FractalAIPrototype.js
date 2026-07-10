@@ -637,6 +637,12 @@ export class FractalAI {
             const textAgent = this.agentNetwork.getNode('agent-consciousness.text');
             results.text = await textAgent.process({ text: input.text });
         }
-        
+
         if (input.audio) {
-            const audioAgent = this.agentNetwork.getNode('age
+            const audioAgent = this.agentNetwork.getNode('agent-consciousness.audio');
+            results.audio = await audioAgent.process({ audio: input.audio });
+        }
+
+        return results;
+    }
+}

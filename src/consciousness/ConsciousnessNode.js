@@ -1,4 +1,6 @@
 // src/consciousness/ConsciousnessNode.js
+import * as THREE from 'three';
+
 export class ConsciousnessNode {
     constructor(nodeId, nodeData) {
         this.id = nodeId;
@@ -578,5 +580,3 @@ export class ConsciousnessVisualizer {
 
 // Integration with your existing main.js
 // Add this to your main.js after initializing the Fractiverse engine
-
-import { Consciousn
