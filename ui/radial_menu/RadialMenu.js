@@ -15,14 +15,14 @@ export class RadialMenu {
 
   render() {
     if (!this.root) return;
-    this.root.innerHTML = \`
+    this.root.innerHTML = `
       <div class="menu-node">☰</div>
-      <div class="menu-actions \${this.open ? 'open' : ''}">
-        \${this.actions.map((a, i) => \`
-          <button class="action-node" title="\${a.title}" style="--i:\${i}">\${a.label}</button>
-        \`).join('')}
+      <div class="menu-actions ${this.open ? 'open' : ''}">
+        ${this.actions.map((a, i) => `
+          <button class="action-node" title="${a.title}" style="--i:${i}">${a.label}</button>
+        `).join('')}
       </div>
-    \`;
+    `;
     this.attachListeners();
   }
 

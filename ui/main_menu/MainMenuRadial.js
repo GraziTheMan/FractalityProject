@@ -1,5 +1,5 @@
 import { menuContext } from './MenuContext.js';
-import config from './MainMenuConfig.json' assert { type: 'json' };
+import config from './MainMenuConfig.json' with { type: 'json' };
 
 export class MainMenuRadial {
   constructor(rootId = 'main-menu') {
@@ -10,14 +10,14 @@ export class MainMenuRadial {
   render() {
     if (!this.root) return;
     const items = config[menuContext.level] || [];
-    this.root.innerHTML = \`
+    this.root.innerHTML = `
       <div class="menu-node">☰</div>
       <div class="menu-actions open">
-        \${items.map((item, i) => \`
-          <button class="action-node" title="\${item.label}" style="--i:\${i}">\${item.icon}</button>
-        \`).join('')}
+        ${items.map((item, i) => `
+          <button class="action-node" title="${item.label}" style="--i:${i}">${item.icon}</button>
+        `).join('')}
       </div>
-    \`;
+    `;
     this.attachListeners(items);
   }
 

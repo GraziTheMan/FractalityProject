@@ -8,11 +8,11 @@ export class DashboardPanel {
 
   render(logs) {
     if (!this.root) return;
-    this.root.innerHTML = logs.map(entry => \`
+    this.root.innerHTML = logs.map(entry => `
       <div class='log-entry'>
-        <strong>[\${entry.timestamp}]</strong> – 
-        <em>\${entry.phase}</em>: \${JSON.stringify(entry.data)}
+        <strong>[${entry.timestamp}]</strong> – 
+        <em>${entry.phase}</em>: ${JSON.stringify(entry.data)}
       </div>
-    \`).join('');
+    `).join('');
   }
 }
