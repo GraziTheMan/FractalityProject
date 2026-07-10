@@ -10,10 +10,8 @@ const io = new Server(server, {
   cors: { origin: '*' }
 });
 
-// Serve static files from root directory
-app.use(express.static(path.join(__dirname)));
-
-// Add MIME type for JavaScript modules
+// Ensure JS modules are served with the correct MIME type
+// (must run before express.static so the header sticks).
 app.use((req, res, next) => {
   if (req.path.endsWith('.js')) {
     res.type('application/javascript');
@@ -21,21 +19,14 @@ app.use((req, res, next) => {
   next();
 });
 
-// Explicitly handle /chat route
-app.get('/chat', (req, res) => {
-  console.log('Serving chat.html from:', path.join(__dirname, 'chat.html'));
-  res.sendFile(path.join(__dirname, 'chat.html'));
-});
+// Serve all project files statically from the repo root so the app can
+// reach /public, /src and /vendor with the relative paths it already uses.
+app.use(express.static(path.join(__dirname)));
 
-// Handle other routes
-app.get('*', (req, res) => {
-  if (req.path.startsWith('/src/')) {
-    // Handle requests for files in src directory
-    res.sendFile(path.join(__dirname, req.path));
-  } else {
-    // Default to index.html for other routes
-    res.sendFile(path.join(__dirname, 'index.html'));
-  }
+// The canonical app entry lives in public/. Send the root URL there so its
+// relative asset paths (./main.js, ../src/*, ../vendor/*) resolve correctly.
+app.get('/', (req, res) => {
+  res.redirect('/public/index.html');
 });
 
 io.on('connection', socket => {

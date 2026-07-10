@@ -4,9 +4,19 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Fractality Platform</title>
-  <link rel="stylesheet" href="./src/styles/main.css" />
-  <link rel="stylesheet" href="./src/styles/mobile-menu.css" />
-  <link rel="stylesheet" href="./src/styles/mobile.css" />
+  <link rel="stylesheet" href="../src/styles/main.css" />
+  <link rel="stylesheet" href="../src/styles/mobile-menu.css" />
+  <link rel="stylesheet" href="../src/styles/mobile.css" />
+
+  <!-- Import map: resolve the bare "three" specifier to the vendored build.
+       Lets modules use `import * as THREE from 'three'` with no bundler. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "/vendor/three/three.module.js"
+    }
+  }
+  </script>
 </head>
 <body>
   <div id="app">
