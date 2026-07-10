@@ -32,12 +32,13 @@
 	<!-- Mirror Toggle Button (FIXED: added missing quote and closing tag) -->
 	<button id="mirror-toggle" class="mirror-toggle">Mirror</button>
 
+    <!-- Persistent 3D layer for the FractalityEngine. Kept OUTSIDE the
+         content-view swapper so view changes never destroy it. -->
+    <canvas id="fractality-canvas" class="fractality-canvas"></canvas>
+
     <!-- Content View Swapper -->
     <div id="content-view" class="content-view">
       <!-- Bubble View, Cone View, Node Manager, etc. dynamically injected here -->
-      
-      <!-- Canvas for FractalityEngine (add this if not created dynamically) -->
-      <canvas id="fractality-canvas" style="display: none;"></canvas>
     </div>
 
     <!-- Biometric Panel (hidden by default) -->

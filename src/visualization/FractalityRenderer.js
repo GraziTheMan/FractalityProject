@@ -1,4 +1,5 @@
 // src/visualization/FractalityRenderer.js
+import * as THREE from 'three';
 import { loadThreeJS, getEnvironmentInfo } from '../utils/ThreeJSLoader.js';
 import { config } from '../config/config.js';
 

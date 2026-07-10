@@ -1,5 +1,6 @@
 // src/engine/FractalityEngine.js
 
+import * as THREE from 'three';
 import { loadThreeJS, getEnvironmentInfo } from '../utils/ThreeJSLoader.js';
 import { FractalityState } from './FractalityState.js';
 import { PerformanceMonitor } from './PerformanceMonitor.js';
@@ -20,7 +21,17 @@ import { config } from '../config/config.js';
 export class FractalityEngine {
     constructor(canvasId) {
         this.canvas = document.getElementById(canvasId);
-        
+
+        // Defensive: the 3D canvas must exist for the renderer. If the host
+        // page swapped it out (e.g. a view change cleared its container),
+        // recreate it so the engine can never crash on a null canvas.
+        if (!this.canvas) {
+            this.canvas = document.createElement('canvas');
+            this.canvas.id = canvasId;
+            this.canvas.className = 'fractality-canvas';
+            document.body.appendChild(this.canvas);
+        }
+
         // Core Systems
         this.state = new FractalityState();
         this.performance = new PerformanceMonitor();

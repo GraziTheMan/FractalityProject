@@ -158,6 +158,12 @@ export class TestDataGenerator {
         switch (pattern) {
             case 'simple':
                 return this._generateSimpleTest();
+            case 'golden':
+                return this.generateGoldenSpiral();
+            case 'organic':
+                return this.generateOrganic();
+            case 'balanced':
+                return this.generateBalancedTree();
             case 'stress':
                 return this.generateBalancedTree({ 
                     depth: 5, 

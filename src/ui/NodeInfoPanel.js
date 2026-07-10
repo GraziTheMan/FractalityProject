@@ -639,7 +639,156 @@ export class NodeInfoPanel {
             
             const siblingCount = Math.min(3, node.siblingIds.length);
             for (let i = 0; i < siblingCount; i++) {
+                const siblingId = node.siblingIds[i];
                 const siblingEl = document.createElement('div');
                 siblingEl.className = 'tree-node';
-                siblingEl.textContent = '👥';
-                siblingEl.dataset.nodeId = node.s
+                siblingEl.textContent = '👥 Sibling';
+                siblingEl.dataset.nodeId = siblingId;
+                siblingEl.addEventListener('click', () => this._onTreeNodeClick(siblingId));
+                tree.appendChild(siblingEl);
+            }
+
+            if (node.siblingIds.length > siblingCount) {
+                const moreEl = document.createElement('div');
+                moreEl.className = 'tree-node more';
+                moreEl.textContent = `… +${node.siblingIds.length - siblingCount} more`;
+                tree.appendChild(moreEl);
+            }
+        }
+
+        // Children
+        if (node.childIds && node.childIds.length > 0) {
+            tree.appendChild(document.createElement('br'));
+
+            const childEl = document.createElement('div');
+            const n = node.childIds.length;
+            childEl.className = 'tree-node';
+            childEl.textContent = `👶 ${n} ${n === 1 ? 'child' : 'children'}`;
+            tree.appendChild(childEl);
+        }
+    }
+
+    /**
+     * Format a metadata value for compact display.
+     */
+    _formatValue(value) {
+        if (value === null || value === undefined) return '—';
+        if (typeof value === 'number') {
+            return Number.isInteger(value) ? String(value) : value.toFixed(3);
+        }
+        if (typeof value === 'boolean') return value ? 'yes' : 'no';
+        if (Array.isArray(value)) return `[${value.length}]`;
+        if (typeof value === 'object') {
+            try { return JSON.stringify(value); } catch { return '{…}'; }
+        }
+        const str = String(value);
+        return str.length > 40 ? str.slice(0, 37) + '…' : str;
+    }
+
+    /**
+     * Map a 0..1 context score to a readable color.
+     */
+    _getScoreColor(score) {
+        if (score >= 0.75) return '#4ade80'; // green  - highly relevant
+        if (score >= 0.5)  return '#facc15'; // yellow - relevant
+        if (score >= 0.25) return '#fb923c'; // orange - loosely related
+        return '#f87171';                     // red    - weak
+    }
+
+    /**
+     * Human-readable label describing the node's role in the graph.
+     */
+    _getRelationshipLabel(node) {
+        if (!node) return 'Unknown';
+        if (node.metadata?.relationship) return node.metadata.relationship;
+        if (!node.parentId) return 'Root';
+        if (node.childIds && node.childIds.length > 0) return 'Branch';
+        return 'Leaf';
+    }
+
+    /**
+     * Navigate to a node clicked in the family tree.
+     * Decoupled navigation: the app listens for this event and calls
+     * fractalityEngine.navigateToNode (see FractalityEngine's `fractality:`
+     * event convention and public/main.js).
+     */
+    _onTreeNodeClick(nodeId) {
+        if (!nodeId) return;
+        window.dispatchEvent(new CustomEvent('fractality:navigate', { detail: { nodeId } }));
+    }
+
+    /**
+     * Navigate to the currently displayed node.
+     */
+    _navigateToNode() {
+        if (this.currentNode) this._onTreeNodeClick(this.currentNode.id);
+    }
+
+    /**
+     * Request the app to expand the current node's children.
+     */
+    _expandNode() {
+        if (!this.currentNode) return;
+        window.dispatchEvent(new CustomEvent('fractality:expand', { detail: { nodeId: this.currentNode.id } }));
+    }
+
+    /**
+     * Wire up panel-level interactions (hover retention, pin toggle).
+     */
+    _setupEventListeners() {
+        if (!this.container) return;
+
+        // Keep the panel open while the pointer is over it.
+        this.container.addEventListener('mouseenter', () => {
+            if (this.hideTimer) {
+                clearTimeout(this.hideTimer);
+                this.hideTimer = null;
+            }
+        });
+        this.container.addEventListener('mouseleave', () => this.hide());
+
+        // Double-click pins the panel so it stays visible.
+        this.container.addEventListener('dblclick', () => {
+            this.isPinned = !this.isPinned;
+            this.container.classList.toggle('pinned', this.isPinned);
+        });
+    }
+
+    /**
+     * Animate the panel opacity toward a target, then run an optional callback.
+     */
+    _animateOpacity(target, onComplete) {
+        this.targetOpacity = target;
+        if (this.animationFrame) cancelAnimationFrame(this.animationFrame);
+
+        const step = () => {
+            const diff = this.targetOpacity - this.currentOpacity;
+            if (Math.abs(diff) < 0.01) {
+                this.currentOpacity = this.targetOpacity;
+                this.container.style.opacity = String(this.currentOpacity);
+                this.animationFrame = null;
+                if (typeof onComplete === 'function') onComplete();
+                return;
+            }
+            this.currentOpacity += diff * 0.2;
+            this.container.style.opacity = String(this.currentOpacity);
+            this.animationFrame = requestAnimationFrame(step);
+        };
+        this.animationFrame = requestAnimationFrame(step);
+    }
+
+    /**
+     * Tear down the panel and release timers / animation frames.
+     */
+    destroy() {
+        if (this.hoverTimer) clearTimeout(this.hoverTimer);
+        if (this.hideTimer) clearTimeout(this.hideTimer);
+        if (this.animationFrame) cancelAnimationFrame(this.animationFrame);
+        if (this.container && this.container.parentNode) {
+            this.container.parentNode.removeChild(this.container);
+        }
+        this.container = null;
+        this.isVisible = false;
+        this.currentNode = null;
+    }
+}

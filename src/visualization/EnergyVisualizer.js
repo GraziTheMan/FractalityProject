@@ -1,4 +1,5 @@
 // src/visualization/EnergyVisualizer.js
+import * as THREE from 'three';
 import { loadThreeJS, getEnvironmentInfo } from '../utils/ThreeJSLoader.js';
 
 /**

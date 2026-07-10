@@ -1,4 +1,5 @@
 // src/intelligence/AnimationSystem.js
+import * as THREE from 'three';
 import { loadThreeJS, getEnvironmentInfo } from '../utils/ThreeJSLoader.js';
 
 /**

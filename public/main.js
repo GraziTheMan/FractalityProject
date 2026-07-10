@@ -422,7 +422,7 @@ AppState.on('viewChanged', async (view) => {
     
     if (!hasCliData) {
       // Load default test data
-      const nodeGraph = testGenerator.generatePattern('golden');
+      const nodeGraph = testGenerator.generateTestPattern('golden');
       await fractalityEngine.loadData(nodeGraph);
     } else {
       // Load bridge data
