@@ -79,7 +79,10 @@ export class FractalityRenderer {
         
         // Create instanced mesh
         this._createInstancedMesh();
-        
+
+        // Create connection lines (hierarchy + wikilink edges)
+        this._createConnectionLines();
+
         // Setup lighting
         this._createLighting();
         
@@ -315,6 +318,60 @@ export class FractalityRenderer {
     /**
      * Update instances with node data
      */
+    /**
+     * Create the line layer used to draw edges between nodes. A single
+     * LineSegments with a dynamic, pre-allocated buffer and per-vertex colors
+     * (so hierarchy and wikilink edges can differ) — one draw call.
+     */
+    _createConnectionLines() {
+        this.maxConnections = 4000;
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position',
+            new THREE.BufferAttribute(new Float32Array(this.maxConnections * 2 * 3), 3));
+        geo.setAttribute('color',
+            new THREE.BufferAttribute(new Float32Array(this.maxConnections * 2 * 3), 3));
+        geo.setDrawRange(0, 0);
+
+        const mat = new THREE.LineBasicMaterial({
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.55,
+            depthWrite: false,
+        });
+
+        this.connectionLines = new THREE.LineSegments(geo, mat);
+        this.connectionLines.frustumCulled = false; // endpoints move every frame
+        this.scene.add(this.connectionLines);
+    }
+
+    /**
+     * Update the edge lines from a list of segments.
+     * @param {{from:{x,y,z}, to:{x,y,z}, color:{r,g,b}}[]} segments
+     * @returns {number} segments drawn
+     */
+    updateConnections(segments) {
+        if (!this.connectionLines) return 0;
+        const geo = this.connectionLines.geometry;
+        const pos = geo.attributes.position.array;
+        const col = geo.attributes.color.array;
+
+        const n = Math.min(segments.length, this.maxConnections);
+        for (let i = 0; i < n; i++) {
+            const s = segments[i];
+            const o = i * 6;
+            pos[o] = s.from.x;     pos[o + 1] = s.from.y; pos[o + 2] = s.from.z;
+            pos[o + 3] = s.to.x;   pos[o + 4] = s.to.y;   pos[o + 5] = s.to.z;
+            const c = s.color;
+            col[o] = c.r;     col[o + 1] = c.g; col[o + 2] = c.b;
+            col[o + 3] = c.r; col[o + 4] = c.g; col[o + 5] = c.b;
+        }
+
+        geo.setDrawRange(0, n * 2);
+        geo.attributes.position.needsUpdate = true;
+        geo.attributes.color.needsUpdate = true;
+        return n;
+    }
+
     updateInstances(nodes) {
         let instanceIndex = 0;
         
@@ -558,6 +615,12 @@ export class FractalityRenderer {
         
         // Dispose of materials
         if (this.nodeMaterial) this.nodeMaterial.dispose();
+
+        // Dispose connection lines
+        if (this.connectionLines) {
+            this.connectionLines.geometry.dispose();
+            this.connectionLines.material.dispose();
+        }
         
         // Dispose of textures
         // ...

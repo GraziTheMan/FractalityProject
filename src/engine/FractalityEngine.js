@@ -169,7 +169,10 @@ export class FractalityEngine {
         
         // 8. Update renderer
         const renderCount = this.renderer.updateInstances(visibleNodes);
-        
+
+        // 8b. Update connection lines (hierarchy + wikilink edges)
+        this._updateConnections(visibleNodes);
+
         // 9. Render frame
         this.renderer.render();
         
@@ -182,7 +185,60 @@ export class FractalityEngine {
         // 12. Adaptive quality
         this.quality.update();
     }
-    
+
+    /**
+     * Build edge segments among the currently-visible nodes and hand them to
+     * the renderer. Two kinds of edges, colored differently:
+     *   - hierarchy (parent <-> child): the structural tree
+     *   - wikilinks (node.metadata.links): cross-references from e.g. Obsidian
+     * Only edges whose BOTH endpoints are visible are drawn, so lines always
+     * connect nodes actually on screen in the Family View.
+     */
+    _updateConnections(visibleNodes) {
+        if (!this.renderer.updateConnections) return;
+
+        const visible = new Map(visibleNodes.map(n => [n.id, n]));
+        const segments = [];
+        const seen = new Set();
+        const HIERARCHY = { r: 0.35, g: 0.5, b: 0.85 }; // structural blue
+        const WIKILINK = { r: 0.9, g: 0.3, b: 0.75 };   // magenta
+
+        const edgeKey = (a, b) => (a < b ? a + '|' + b : b + '|' + a);
+
+        for (const node of visibleNodes) {
+            // hierarchy edge to a visible parent
+            if (node.parentId && visible.has(node.parentId)) {
+                const key = 'h:' + edgeKey(node.id, node.parentId);
+                if (!seen.has(key)) {
+                    seen.add(key);
+                    segments.push({
+                        from: node.position,
+                        to: visible.get(node.parentId).position,
+                        color: HIERARCHY,
+                    });
+                }
+            }
+
+            // wikilink edges to visible targets
+            const links = node.metadata && node.metadata.links;
+            if (Array.isArray(links)) {
+                for (const targetId of links) {
+                    if (!visible.has(targetId)) continue;
+                    const key = 'l:' + edgeKey(node.id, targetId);
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    segments.push({
+                        from: node.position,
+                        to: visible.get(targetId).position,
+                        color: WIKILINK,
+                    });
+                }
+            }
+        }
+
+        this.renderer.updateConnections(segments);
+    }
+
     /**
      * Apply CACE context scores to visual properties
      */
@@ -222,9 +278,17 @@ export class FractalityEngine {
         
         this.state.setFocus(nodeId);
         this.state.needsLayout = true;
-        
+
         // Emit focus change event
         this._emitEvent('focusChanged', { nodeId });
+    }
+
+    /**
+     * Navigate to a node — focuses it and re-centers the Family View.
+     * Alias used by the UI (node clicks, "Navigate Here", pending navigation).
+     */
+    navigateToNode(nodeId) {
+        this.setFocus(nodeId);
     }
     
     /**
