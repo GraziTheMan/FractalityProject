@@ -12,6 +12,9 @@ import { TestDataGenerator } from '../src/data/TestDataGenerator.js'; // ✅ ./s
 import { SearchInterface } from '../src/ui/SearchInterface.js';
 import { NodeDebugPanel } from '../src/ui/NodeDebugPanel.js';
 
+// NEW: Obsidian vault import
+import { filesFromFileList, importVaultToGraph } from '../src/data/obsidian/VaultLoader.js';
+
 // Initialize state indicator
 document.getElementById('state-indicator').innerText = 'State: Balanced';
 document.getElementById('desktop-dock').innerText = 'Desktop Dock Placeholder';
@@ -401,25 +404,51 @@ async function checkForCLIData() {
   return false;
 }
 
+// Create + initialize the engine once (idempotent). Shared by the view-change
+// boot path and the Obsidian vault import.
+let engineStarted = false;
+async function ensureEngine() {
+  if (fractalityEngine) return fractalityEngine;
+  console.log('🌌 Initializing Fractality Engine...');
+
+  fractalityEngine = new FractalityEngine('fractality-canvas');
+  await fractalityEngine.init();
+
+  // Initialize debug panel when CACE engine is available
+  if (fractalityEngine.caceEngine) {
+    nodeDebugPanel = new NodeDebugPanel(fractalityEngine.caceEngine);
+    nodeDebugPanel.init();
+    console.log('🧠 Debug panel initialized');
+  }
+
+  // Setup node selection handler for debug panel
+  if (nodeDebugPanel) {
+    fractalityEngine.on('nodeSelected', (nodeData) => {
+      const contextScore = fractalityEngine.caceEngine ?
+        fractalityEngine.caceEngine.calculateContextScore(nodeData) : 0;
+      nodeDebugPanel.updateNode(nodeData.id, nodeData, contextScore);
+    });
+  }
+
+  return fractalityEngine;
+}
+
+// Start the render loop once.
+function startEngineOnce() {
+  if (!engineStarted && fractalityEngine) {
+    fractalityEngine.start();
+    engineStarted = true;
+  }
+}
+
 // ENHANCED: Initialize Fractality engine with debug panel integration
 AppState.on('viewChanged', async (view) => {
   if (view === 'bubble' && !fractalityEngine) {
-    console.log('🌌 Initializing Fractality Engine...');
-    
-    // Create engine
-    fractalityEngine = new FractalityEngine('fractality-canvas');
-    await fractalityEngine.init();
-    
-    // Initialize debug panel when CACE engine is available
-    if (fractalityEngine.caceEngine) {
-      nodeDebugPanel = new NodeDebugPanel(fractalityEngine.caceEngine);
-      nodeDebugPanel.init();
-      console.log('🧠 Debug panel initialized');
-    }
-    
+    await ensureEngine();
+
     // Check for CLI data first
     const hasCliData = await checkForCLIData();
-    
+
     if (!hasCliData) {
       // Load default test data
       const nodeGraph = testGenerator.generateTestPattern('golden');
@@ -428,32 +457,61 @@ AppState.on('viewChanged', async (view) => {
       // Load bridge data
       await loadBridgeData();
     }
-    
+
     // Check for pending navigation
     if (AppState.pendingNavigation) {
       fractalityEngine.navigateToNode(AppState.pendingNavigation);
       AppState.pendingNavigation = null;
     }
-    
-    // Start engine
-    fractalityEngine.start();
-    
-    // Setup node selection handler for debug panel
-    if (nodeDebugPanel) {
-      fractalityEngine.on('nodeSelected', (nodeData) => {
-        const contextScore = fractalityEngine.caceEngine ? 
-          fractalityEngine.caceEngine.calculateContextScore(nodeData) : 0;
-        nodeDebugPanel.updateNode(nodeData.id, nodeData, contextScore);
-      });
-    }
+
+    startEngineOnce();
   }
 });
+
+// Import an Obsidian vault (array of { path, content }) and render it.
+// Also exposed as window.fractalityImportVaultFiles for automation/testing.
+async function importObsidianVault(files) {
+  await ensureEngine();
+  const { nodeGraph, stats } = await importVaultToGraph(files);
+  await fractalityEngine.loadData(nodeGraph);
+  startEngineOnce();
+  console.log(`📁 Vault imported: ${stats.notes} notes, ${stats.folders} folders, ` +
+    `${stats.links} links (${stats.unresolvedLinks} unresolved) → ${stats.totalNodes} nodes`);
+  return stats;
+}
+window.fractalityImportVaultFiles = importObsidianVault;
+
+// Folder-picker UI button (added to the desktop dock toolbar).
+function addVaultImportControl() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.webkitdirectory = true;
+  input.multiple = true;
+  input.style.display = 'none';
+  input.addEventListener('change', async (e) => {
+    const files = await filesFromFileList(e.target.files);
+    if (files.length) await importObsidianVault(files);
+    e.target.value = '';
+  });
+  document.body.appendChild(input);
+
+  const dock = document.querySelector('.cli-controls') || document.getElementById('desktop-dock');
+  if (dock) {
+    const btn = document.createElement('button');
+    btn.id = 'import-vault';
+    btn.className = 'dock-button';
+    btn.textContent = '📁 Import Vault';
+    btn.addEventListener('click', () => input.click());
+    dock.insertBefore(btn, dock.firstChild);
+  }
+}
 
 // ENHANCED: Initialize on DOM ready with all new components
 document.addEventListener('DOMContentLoaded', () => {
   // Add CLI integration UI
   addCLISyncStatus();
   addCLIControls();
+  addVaultImportControl();
   
   // Setup bridge listeners
   setupBridgeListeners();
