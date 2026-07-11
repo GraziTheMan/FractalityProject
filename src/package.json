@@ -1,0 +1,4 @@
+{
+  "//": "The src/ tree is browser ES modules. This scoping marker lets Node (tests, tooling) parse them as ESM without changing the CommonJS server.js at the repo root.",
+  "type": "module"
+}
