@@ -15,13 +15,30 @@ body {
     user-select: none;
 }
 
-/* Canvas */
-#canvas {
-    position: absolute;
+/* Canvas — persistent 3D background layer for the FractalityEngine.
+   Sits behind the interactive UI (radial menu, panels), which carry their
+   own higher stacking order. */
+#canvas,
+#fractality-canvas {
+    position: fixed;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
+    display: block;
+    z-index: -1;
+}
+
+/* Keep the app's interactive UI above the background canvas. */
+#app > #radial-menu,
+#app > #state-indicator,
+#app > #home-button,
+#app > #mirror-toggle,
+#app > #content-view,
+#app > #biometric-panel,
+#app > #desktop-dock {
+    position: relative;
+    z-index: 1;
 }
 
 /* UI Overlay */

@@ -156,8 +156,9 @@ export class FractalityRenderer {
         this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
         this.renderer.toneMappingExposure = 1.2;
         
-        // Enable color management
-        this.renderer.outputEncoding = THREE.sRGBEncoding;
+        // Enable color management (three r152+: outputColorSpace replaces the
+        // removed outputEncoding/sRGBEncoding API).
+        this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     }
     
     /**
