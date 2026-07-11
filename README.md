@@ -68,40 +68,29 @@ FractalityProject/
 
 ## 🎮 Quick Start
 
-### Option 1: Direct Browser (Recommended for Testing)
+The app is a **no-build static ES-module app served by a small Express +
+Socket.IO server** (the same server provides the realtime layer for chat/feeds).
+Three.js is vendored (`vendor/three/`) and resolved via an import map, so there
+is **no bundler/build step**.
 
 ```bash
 # Clone the repository
 git clone https://github.com/GraziTheMan/FractalityProject.git
 cd FractalityProject
 
-# Serve with any HTTP server
-python -m http.server 8000
-# OR
-npx serve public
-
-# Open http://localhost:8000
-```
-
-### Option 2: Full Development Setup
-
-```bash
-# Install dependencies
+# Install dependencies (express + socket.io)
 npm install
 
-# Start development server
-npm run dev
+# Start the server
+npm start          # or: npm run dev  (nodemon, auto-reload)
 
-# Open http://localhost:5173
+# Open http://localhost:3000   (redirects to the app entry, public/index.html)
 ```
 
-### Option 3: Data Console Interface
-
-```bash
-# Open the data management console
-open public/data-console.html
-# OR navigate to http://localhost:8000/data-console.html
-```
+The server honors `PORT` (defaults to 3000) and is what `Procfile` /
+`render.yaml` deploy. `git ls-files` also contains several archived/experimental
+trees (`public/legacy/`, `src/legacy/`, `json/`) that are not part of the running
+app.
 
 ## 🎯 Core Features
 
