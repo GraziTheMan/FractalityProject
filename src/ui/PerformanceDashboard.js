@@ -253,6 +253,16 @@ export class PerformanceDashboard {
                 user-select: none;
             }
             .perf-caret { display: inline-block; width: 1em; color: #6ee7b7; }
+
+            /* On phones, move the HUD to the bottom so it never covers the
+               radial menu / graph, and start it collapsed (handled in JS). */
+            @media (max-width: 767px) {
+                .perf-dashboard {
+                    top: auto !important;
+                    bottom: 12px;
+                    right: 12px;
+                }
+            }
             
             .metrics-container {
                 margin-bottom: 10px;

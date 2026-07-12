@@ -15,9 +15,9 @@ body {
     user-select: none;
 }
 
-/* Canvas — persistent 3D background layer for the FractalityEngine.
-   Sits behind the interactive UI (radial menu, panels), which carry their
-   own higher stacking order. */
+/* Canvas — the 3D layer. It sits at the base stacking level but MUST receive
+   taps/clicks (node selection), so it stays interactive while the UI floats
+   above it. */
 #canvas,
 #fractality-canvas {
     position: fixed;
@@ -26,10 +26,11 @@ body {
     width: 100%;
     height: 100%;
     display: block;
-    z-index: -1;
+    z-index: 0;
+    pointer-events: auto;
 }
 
-/* Keep the app's interactive UI above the background canvas. */
+/* Keep the app's interactive UI above the canvas. */
 #app > #radial-menu,
 #app > #state-indicator,
 #app > #home-button,
@@ -39,6 +40,15 @@ body {
 #app > #desktop-dock {
     position: relative;
     z-index: 1;
+}
+
+/* The full-screen view-swapper must NOT eat taps meant for the canvas behind
+   it; only its actual injected content should be clickable. */
+#app > #content-view {
+    pointer-events: none;
+}
+#app > #content-view * {
+    pointer-events: auto;
 }
 
 /* UI Overlay */
