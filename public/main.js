@@ -18,6 +18,11 @@ import { filesFromFileList, importVaultToGraph } from '../src/data/obsidian/Vaul
 // NEW: note content viewer (reads bodies from the IndexedDB content tier)
 import { ContentViewer } from '../src/ui/ContentViewer.js';
 
+// NEW: remember the last-imported vault across reloads
+import { NodeGraph } from '../src/data/NodeData.js';
+import { VaultPersistence } from '../src/data/VaultPersistence.js';
+const vaultPersistence = new VaultPersistence();
+
 // Initialize state indicator
 document.getElementById('state-indicator').innerText = 'State: Balanced';
 document.getElementById('desktop-dock').innerText = 'Desktop Dock Placeholder';
@@ -475,10 +480,15 @@ AppState.on('viewChanged', async (view) => {
   if (view === 'bubble' && !fractalityEngine) {
     await ensureEngine();
 
-    // Check for CLI data first
-    const hasCliData = await checkForCLIData();
+    // Restore a remembered vault first, then CLI data, then default pattern.
+    let savedVault = null;
+    try { savedVault = await vaultPersistence.load(); } catch (_) { /* ignore */ }
+    const hasCliData = savedVault ? false : await checkForCLIData();
 
-    if (!hasCliData) {
+    if (savedVault && savedVault.graph) {
+      console.log(`📁 Restoring remembered vault (${savedVault.stats?.totalNodes ?? '?'} nodes)…`);
+      await fractalityEngine.loadData(NodeGraph.fromJSON(savedVault.graph));
+    } else if (!hasCliData) {
       // Load default test data
       const nodeGraph = testGenerator.generateTestPattern('golden');
       await fractalityEngine.loadData(nodeGraph);
@@ -501,14 +511,22 @@ AppState.on('viewChanged', async (view) => {
 // Also exposed as window.fractalityImportVaultFiles for automation/testing.
 async function importObsidianVault(files) {
   await ensureEngine();
-  const { nodeGraph, stats } = await importVaultToGraph(files);
+  const { nodeGraph, graph, stats } = await importVaultToGraph(files);
   await fractalityEngine.loadData(nodeGraph);
   startEngineOnce();
+  // Remember it so it reappears on reload (note bodies are already in IndexedDB).
+  try { await vaultPersistence.save(graph, stats); } catch (_) { /* non-fatal */ }
   console.log(`📁 Vault imported: ${stats.notes} notes, ${stats.folders} folders, ` +
     `${stats.links} links (${stats.unresolvedLinks} unresolved) → ${stats.totalNodes} nodes`);
   return stats;
 }
 window.fractalityImportVaultFiles = importObsidianVault;
+
+// Forget the remembered vault (next reload shows the default pattern).
+window.fractalityForgetVault = async () => {
+  await vaultPersistence.clear();
+  console.log('🗑️ Forgot remembered vault. Reload to see the default.');
+};
 
 // Folder-picker UI button (added to the desktop dock toolbar).
 function addVaultImportControl() {

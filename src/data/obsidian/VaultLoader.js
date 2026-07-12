@@ -34,5 +34,6 @@ export async function filesFromFileList(fileList) {
 export async function importVaultToGraph(files, { contentStore, vaultName = 'Obsidian Vault' } = {}) {
     const store = contentStore || new ContentStore();
     const { graph, stats } = await importVault(files, { contentStore: store, vaultName });
-    return { nodeGraph: NodeGraph.fromJSON(graph), stats, contentStore: store };
+    // `graph` is the portable JSON (persist this); `nodeGraph` is the live instance.
+    return { nodeGraph: NodeGraph.fromJSON(graph), graph, stats, contentStore: store };
 }
