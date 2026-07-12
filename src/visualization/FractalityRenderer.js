@@ -374,7 +374,7 @@ export class FractalityRenderer {
 
     updateInstances(nodes) {
         let instanceIndex = 0;
-        
+
         // Sort nodes by distance from camera for better transparency
         const cameraPos = this.camera.position;
         const sortedNodes = [...nodes].sort((a, b) => {
@@ -382,6 +382,10 @@ export class FractalityRenderer {
             const distB = b.position.distanceToSquared(cameraPos);
             return distB - distA; // Far to near
         });
+
+        // Map instance index -> node so raycast hits resolve to the right node
+        // (instances are drawn in sorted order and skip invisible nodes).
+        this.instanceNodes = [];
         
         // Update each instance
         sortedNodes.forEach(node => {
@@ -419,13 +423,20 @@ export class FractalityRenderer {
             
             // Set instance color
             this.instancedMesh.setColorAt(instanceIndex, this.tempColor);
-            
+
+            // Record which node this drawn instance corresponds to.
+            this.instanceNodes[instanceIndex] = node;
+
             instanceIndex++;
         });
         
         // Update instance count
         this.instancedMesh.count = instanceIndex;
         this.instancedMesh.instanceMatrix.needsUpdate = true;
+
+        // Recompute the bounding sphere so raycasting (node selection) tests the
+        // instances at their CURRENT positions, not a stale sphere around origin.
+        this.instancedMesh.computeBoundingSphere();
         
         if (this.instancedMesh.instanceColor) {
             this.instancedMesh.instanceColor.needsUpdate = true;

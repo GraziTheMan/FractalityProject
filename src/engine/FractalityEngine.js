@@ -9,6 +9,7 @@ import { LayoutEngine } from '../intelligence/LayoutEngine.js';
 import { AnimationSystem } from '../visualization/AnimationSystem.js';
 import { CACEEngine } from '../intelligence/CACEEngine.js';
 import { FractalityRenderer } from '../visualization/FractalityRenderer.js';
+import { CameraControls } from '../visualization/CameraControls.js';
 import { QualityManager } from '../visualization/QualityManager.js';
 import { PerformanceDashboard } from '../ui/PerformanceDashboard.js';
 import { NodeInfoPanel } from '../ui/NodeInfoPanel.js';
@@ -178,6 +179,10 @@ export class FractalityEngine {
 
         // 8c. Update floating node labels
         this.nodeLabels.update(visibleNodes, this.renderer.camera);
+
+        // 8d. Move the camera (follows focus; user orbit/zoom via CameraControls)
+        const focusNode = this.nodeGraph && this.nodeGraph.getNode(this.state.focusNode);
+        if (focusNode) this.renderer.updateCamera(focusNode.position, deltaTime);
 
         // 9. Render frame
         this.renderer.render();
@@ -382,38 +387,33 @@ export class FractalityEngine {
      * Setup event listeners
      */
     _setupEventListeners() {
-        // Mouse interactions
-        this.canvas.addEventListener('click', (e) => this._handleClick(e));
+        // Hover (desktop) still uses mousemove for node info.
         this.canvas.addEventListener('mousemove', (e) => this._handleMouseMove(e));
-        
-        // Touch interactions
-        this.canvas.addEventListener('touchstart', (e) => this._handleTouch(e));
-        
+
+        // Orbit/zoom (touch + mouse). Tap/click selection is routed through the
+        // controls so a drag orbits the camera instead of selecting a node.
+        this.cameraControls = new CameraControls(
+            this.renderer, this.canvas,
+            (x, y) => this._selectAt(x, y)
+        );
+
         // Window events
         window.addEventListener('resize', () => this.handleResize());
     }
-    
+
     /**
-     * Handle mouse click
+     * Select the node under a screen position (raycast into the instanced mesh).
      */
-    _handleClick(event) {
-        this.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-        this.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-        
+    _selectAt(clientX, clientY) {
+        this.mouse.x = (clientX / window.innerWidth) * 2 - 1;
+        this.mouse.y = -(clientY / window.innerHeight) * 2 + 1;
+
         this.raycaster.setFromCamera(this.mouse, this.renderer.camera);
         const intersects = this.raycaster.intersectObject(this.renderer.instancedMesh);
-        
+
         if (intersects.length > 0) {
-            const instanceId = intersects[0].instanceId;
-            const visibleNodes = this.familyView.getVisibleNodes(
-                this.state.focusNode,
-                this.state.viewConfig
-            );
-            
-            if (instanceId < visibleNodes.length) {
-                const clickedNode = visibleNodes[instanceId];
-                this.setFocus(clickedNode.id);
-            }
+            const clickedNode = this.renderer.instanceNodes?.[intersects[0].instanceId];
+            if (clickedNode) this.setFocus(clickedNode.id);
         }
     }
     
@@ -426,38 +426,19 @@ export class FractalityEngine {
         
         this.raycaster.setFromCamera(this.mouse, this.renderer.camera);
         const intersects = this.raycaster.intersectObject(this.renderer.instancedMesh);
-        
+
         if (intersects.length > 0) {
-            const instanceId = intersects[0].instanceId;
-            const visibleNodes = this.familyView.getVisibleNodes(
-                this.state.focusNode,
-                this.state.viewConfig
-            );
-            
-            if (instanceId < visibleNodes.length) {
-                const hoveredNode = visibleNodes[instanceId];
+            const hoveredNode = this.renderer.instanceNodes?.[intersects[0].instanceId];
+            if (hoveredNode) {
                 this.nodeInfo.show(hoveredNode);
                 this.canvas.style.cursor = 'pointer';
+                return;
             }
-        } else {
-            this.nodeInfo.hide();
-            this.canvas.style.cursor = 'default';
         }
+        this.nodeInfo.hide();
+        this.canvas.style.cursor = 'default';
     }
     
-    /**
-     * Handle touch events
-     */
-    _handleTouch(event) {
-        if (event.touches.length === 1) {
-            const touch = event.touches[0];
-            const mockEvent = {
-                clientX: touch.clientX,
-                clientY: touch.clientY
-            };
-            this._handleClick(mockEvent);
-        }
-    }
     
     /**
      * Update UI elements
@@ -489,5 +470,6 @@ export class FractalityEngine {
         this.dashboard.destroy();
         this.nodeInfo.destroy();
         this.nodeLabels.destroy();
+        if (this.cameraControls) this.cameraControls.destroy();
     }
 }
