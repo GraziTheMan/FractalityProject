@@ -535,6 +535,79 @@ window.fractalityForgetVault = async () => {
   console.log('🗑️ Forgot remembered vault. Reload to see the default.');
 };
 
+// Fractal drill-down navigation: a breadcrumb + "Up" button showing where you
+// are in the hierarchy. Hidden at the top level (only the root is shown there).
+function addDrillNav() {
+  if (document.getElementById('drill-nav-styles')) return;
+  const style = document.createElement('style');
+  style.id = 'drill-nav-styles';
+  style.textContent = `
+    #drill-nav {
+      position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+      display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+      max-width: 92vw; padding: 6px 10px; z-index: 15;
+      background: rgba(10,10,14,0.82); border: 1px solid #333; border-radius: 999px;
+      backdrop-filter: blur(8px);
+      font-family: 'Inter', -apple-system, system-ui, sans-serif; font-size: 13px;
+    }
+    #drill-nav.hidden { display: none; }
+    #drill-nav button { background: none; border: none; color: #c4b5fd; cursor: pointer;
+      font-size: 13px; padding: 2px 6px; border-radius: 6px; max-width: 40vw;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #drill-nav button:hover { background: rgba(139,92,246,0.25); color: #fff; }
+    #drill-nav .drill-up { color: #6ee7b7; font-weight: 600; }
+    #drill-nav .crumb.current { color: #fff; font-weight: 600; }
+    #drill-nav .sep { color: #52525b; }
+  `;
+  document.head.appendChild(style);
+
+  const bar = document.createElement('div');
+  bar.id = 'drill-nav';
+  bar.className = 'drill-nav hidden';
+  document.body.appendChild(bar);
+
+  const render = (containerId) => {
+    const eng = fractalityEngine;
+    if (!eng || !eng.nodeGraph || !containerId) { bar.classList.add('hidden'); return; }
+
+    // Build the path from the current container up to the root.
+    const path = [];
+    let id = containerId;
+    while (id) {
+      const n = eng.nodeGraph.getNode(id);
+      if (!n) break;
+      path.unshift(n);
+      id = n.parentId;
+    }
+
+    bar.innerHTML = '';
+    const up = document.createElement('button');
+    up.className = 'drill-up';
+    up.textContent = '⬆ Up';
+    up.addEventListener('click', () => eng.drillUp());
+    bar.appendChild(up);
+
+    const crumb = (label, targetId, current) => {
+      const b = document.createElement('button');
+      b.className = 'crumb' + (current ? ' current' : '');
+      b.textContent = label;
+      b.addEventListener('click', () => eng.drillTo(targetId));
+      return b;
+    };
+    const sep = () => { const s = document.createElement('span'); s.className = 'sep'; s.textContent = '›'; return s; };
+
+    bar.appendChild(crumb('◆ Top', null, false));
+    path.forEach((n, i) => {
+      bar.appendChild(sep());
+      bar.appendChild(crumb(n.metadata.label || n.id, n.id, i === path.length - 1));
+    });
+    bar.classList.remove('hidden');
+  };
+
+  window.addEventListener('fractality:drillChanged', (e) => render(e.detail.container));
+  render(null);
+}
+
 // Folder-picker UI button (added to the desktop dock toolbar).
 function addVaultImportControl() {
   const input = document.createElement('input');
@@ -566,6 +639,7 @@ document.addEventListener('DOMContentLoaded', () => {
   addCLISyncStatus();
   addCLIControls();
   addVaultImportControl();
+  addDrillNav();
 
   // Content viewer (reads note bodies from IndexedDB on focus)
   contentViewer.init();

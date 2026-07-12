@@ -115,9 +115,14 @@ export class LayoutEngine {
     _calculateFamilyLayout(visibleNodes, focusNodeId, positions, config) {
         const layoutConfig = { ...this.layouts.family, ...config };
         const focusNode = visibleNodes.find(n => n.id === focusNodeId);
-        
-        if (!focusNode) return;
-        
+
+        // Drill-down "inside" view: the focus (container) isn't rendered, so
+        // arrange ALL the visible nodes (its children) around the origin.
+        if (!focusNode) {
+            this._positionChildrenInSpiral(visibleNodes, positions, layoutConfig.children);
+            return;
+        }
+
         // Focus node at origin
         positions.set(focusNodeId, new THREE.Vector3(0, 0, 0));
         

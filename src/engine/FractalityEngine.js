@@ -64,6 +64,45 @@ export class FractalityEngine {
         this.clock = new THREE.Clock();
         this.running = false;
         this.paused = false;
+
+        // Fractal drill-down: the node we're currently "inside". null = top level
+        // (only the root is shown). Entering a node shows ONLY its children.
+        this.drillContainer = null;
+    }
+
+    /**
+     * Compute the drill-down view: the set of nodes to show and the node the
+     * layout/camera should center on.
+     *   - top level (drillContainer null): just the root node(s)
+     *   - inside a container: that container's direct children (container hidden)
+     */
+    _getDrillView() {
+        const roots = this.nodeGraph ? this.nodeGraph.getNodesAtDepth(0) : [];
+        if (!this.drillContainer) {
+            const top = roots.slice(0, 1);
+            return { nodes: top, focusId: top[0] ? top[0].id : null };
+        }
+        const children = this.nodeGraph.getChildren(this.drillContainer);
+        return { nodes: children, focusId: this.drillContainer };
+    }
+
+    /**
+     * Climb one level out of the current container. Returns false at the top.
+     */
+    drillUp() {
+        if (!this.drillContainer) return false;
+        const cur = this.nodeGraph.getNode(this.drillContainer);
+        this.drillContainer = (cur && cur.parentId) ? cur.parentId : null;
+        this.state.needsLayout = true;
+        this._emitEvent('drillChanged', { container: this.drillContainer });
+        return true;
+    }
+
+    /** Jump directly to a container (breadcrumb click). null = top. */
+    drillTo(containerId) {
+        this.drillContainer = containerId || null;
+        this.state.needsLayout = true;
+        this._emitEvent('drillChanged', { container: this.drillContainer });
     }
     
     /**
@@ -98,9 +137,11 @@ export class FractalityEngine {
         this.nodeGraph = nodeGraph;
         this.familyView.setNodeGraph(nodeGraph);
         this.cace.analyzeGraph(nodeGraph);
-        
-        // Reset state
+
+        // Reset state and start at the top of the drill-down (root only)
         this.state.reset();
+        this.drillContainer = null;
+        this._emitEvent('drillChanged', { container: null });
         
         // Find root node (depth 0)
         const rootNodes = nodeGraph.getNodesAtDepth(0);
@@ -127,30 +168,30 @@ export class FractalityEngine {
             this.quality.decreaseQuality();
         }
         
-        // 2. Update visible nodes based on focus
-        const visibleNodes = this.familyView.getVisibleNodes(
-            this.state.focusNode,
-            this.state.viewConfig
-        );
-        
+        // 2. Fractal drill-down: show only the current level (root, or the
+        //    children of the container we're inside).
+        const drill = this._getDrillView();
+        const visibleNodes = drill.nodes;
+        const layoutFocusId = drill.focusId;
+
         // 3. Calculate CACE context scores
         const contextScores = this.cace.calculateContext(
             visibleNodes,
-            this.state.focusNode
+            layoutFocusId
         );
-        
+
         // 4. Apply context to nodes
         visibleNodes.forEach(node => {
             const context = contextScores.get(node.id) || 0;
             node.contextScore = context;
-            node.priority = this.familyView.getNodePriority(node.id, this.state.focusNode);
+            node.priority = this.familyView.getNodePriority(node.id, layoutFocusId);
         });
-        
+
         // 5. Calculate layout if needed
         if (this.state.needsLayout) {
             const layoutPositions = this.layout.calculateLayout(
                 visibleNodes,
-                this.state.focusNode,
+                layoutFocusId,
                 this.state.layoutConfig
             );
             
@@ -180,8 +221,8 @@ export class FractalityEngine {
         // 8c. Update floating node labels
         this.nodeLabels.update(visibleNodes, this.renderer.camera);
 
-        // 8d. Move the camera (follows focus; user orbit/zoom via CameraControls)
-        const focusNode = this.nodeGraph && this.nodeGraph.getNode(this.state.focusNode);
+        // 8d. Move the camera (follows the current level; user orbit/zoom too)
+        const focusNode = this.nodeGraph && layoutFocusId && this.nodeGraph.getNode(layoutFocusId);
         if (focusNode) this.renderer.updateCamera(focusNode.position, deltaTime);
 
         // 9. Render frame
@@ -295,11 +336,29 @@ export class FractalityEngine {
     }
 
     /**
-     * Navigate to a node — focuses it and re-centers the Family View.
-     * Alias used by the UI (node clicks, "Navigate Here", pending navigation).
+     * Navigate to a node: always opens its content, and if it has children,
+     * descends INTO it (fractal drill-down) so only its children are shown.
+     * Leaves just show their content without descending.
      */
     navigateToNode(nodeId) {
-        this.setFocus(nodeId);
+        const node = this.nodeGraph && this.nodeGraph.getNode(nodeId);
+        if (!node) return;
+
+        this.state.setFocus(nodeId);
+        const hasChildren = node.childIds && node.childIds.length > 0;
+
+        if (hasChildren) {
+            // Container -> travel inside (show its children). Don't pop the
+            // reader open, which would cover the children you just entered.
+            if (this.drillContainer !== nodeId) {
+                this.drillContainer = nodeId;
+                this.state.needsLayout = true;
+                this._emitEvent('drillChanged', { container: nodeId });
+            }
+        } else {
+            // Leaf -> open its note to read.
+            this._emitEvent('focusChanged', { nodeId });
+        }
     }
     
     /**
@@ -413,7 +472,7 @@ export class FractalityEngine {
 
         if (intersects.length > 0) {
             const clickedNode = this.renderer.instanceNodes?.[intersects[0].instanceId];
-            if (clickedNode) this.setFocus(clickedNode.id);
+            if (clickedNode) this.navigateToNode(clickedNode.id);
         }
     }
     
