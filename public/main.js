@@ -90,18 +90,26 @@ function addCLIControls() {
   const cliControls = document.createElement('div');
   cliControls.className = 'cli-controls';
   cliControls.innerHTML = `
-    <button id="cli-export" class="dock-button">📤 Export to CLI</button>
-    <button id="cli-import" class="dock-button">📥 Import from CLI</button>
-    <button id="cli-sync" class="dock-button">🔄 Auto-Sync Off</button>
-    <button id="open-search" class="dock-button">🔍 Search</button>
-    <button id="toggle-debug" class="dock-button">🧠 Debug</button>
-    <div class="cli-status-mini">
-      <span class="server-status-indicator" id="server-status-mini">🔗 Checking...</span>
+    <button id="dock-toggle" class="dock-button dock-toggle" title="Show/hide tools">☰ Tools</button>
+    <div class="dock-group">
+      <button id="cli-export" class="dock-button">📤 Export to CLI</button>
+      <button id="cli-import" class="dock-button">📥 Import from CLI</button>
+      <button id="cli-sync" class="dock-button">🔄 Auto-Sync Off</button>
+      <button id="open-search" class="dock-button">🔍 Search</button>
+      <button id="toggle-debug" class="dock-button">🧠 Debug</button>
+      <div class="cli-status-mini">
+        <span class="server-status-indicator" id="server-status-mini">🔗 Checking...</span>
+      </div>
     </div>
   `;
-  
+
   desktopDock.innerHTML = ''; // Clear placeholder text
   desktopDock.appendChild(cliControls);
+
+  // Collapse/expand the tool group (starts collapsed on small screens).
+  const toggle = cliControls.querySelector('#dock-toggle');
+  toggle.addEventListener('click', () => cliControls.classList.toggle('collapsed'));
+  if (window.innerWidth < 768) cliControls.classList.add('collapsed');
   
   // Setup CLI control handlers
   setupCLIHandlers();

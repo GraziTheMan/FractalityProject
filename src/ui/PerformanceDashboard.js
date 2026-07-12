@@ -101,10 +101,22 @@ export class PerformanceDashboard {
      * Create metrics display
      */
     _createMetricsDisplay() {
-        // Title
+        // Title — click to collapse/expand the whole HUD.
         const title = document.createElement('h3');
-        title.textContent = 'Performance';
+        title.className = 'perf-title';
+        title.innerHTML = '<span class="perf-caret">▾</span> Performance';
+        title.title = 'Click to collapse';
+        title.addEventListener('click', () => {
+            const collapsed = this.container.classList.toggle('collapsed');
+            title.querySelector('.perf-caret').textContent = collapsed ? '▸' : '▾';
+        });
         this.container.appendChild(title);
+
+        // Start collapsed on small screens so the HUD doesn't cover the app.
+        if (window.innerWidth < 768) {
+            this.container.classList.add('collapsed');
+            title.querySelector('.perf-caret').textContent = '▸';
+        }
         
         // Metrics container
         const metricsContainer = document.createElement('div');
@@ -216,7 +228,20 @@ export class PerformanceDashboard {
                 opacity: 0;
                 pointer-events: none;
             }
-            
+
+            /* Collapsed: show only the title bar. */
+            .perf-dashboard.collapsed {
+                min-width: 0;
+                padding: 8px 12px;
+            }
+            .perf-dashboard.collapsed .metrics-container,
+            .perf-dashboard.collapsed .charts-container {
+                display: none;
+            }
+            .perf-dashboard.collapsed h3 {
+                margin: 0;
+            }
+
             .perf-dashboard h3 {
                 margin: 0 0 10px 0;
                 color: #0ff;
@@ -224,7 +249,10 @@ export class PerformanceDashboard {
                 font-weight: 600;
                 text-transform: uppercase;
                 letter-spacing: 1px;
+                cursor: pointer;
+                user-select: none;
             }
+            .perf-caret { display: inline-block; width: 1em; color: #6ee7b7; }
             
             .metrics-container {
                 margin-bottom: 10px;

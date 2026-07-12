@@ -345,6 +345,21 @@ input[type="text"]:focus {
   flex-wrap: wrap;
 }
 
+/* The tool group folds away behind the ☰ Tools toggle. */
+.cli-controls .dock-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.cli-controls.collapsed .dock-group {
+  display: none;
+}
+.dock-toggle {
+  background: rgba(139, 92, 246, 0.25);
+  border-color: #8b5cf6;
+}
+
 .dock-button {
   background: rgba(30, 30, 30, 0.9);
   border: 1px solid #444;
