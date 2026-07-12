@@ -12,6 +12,7 @@ import { FractalityRenderer } from '../visualization/FractalityRenderer.js';
 import { QualityManager } from '../visualization/QualityManager.js';
 import { PerformanceDashboard } from '../ui/PerformanceDashboard.js';
 import { NodeInfoPanel } from '../ui/NodeInfoPanel.js';
+import { NodeLabels } from '../ui/NodeLabels.js';
 import { config } from '../config/config.js';
 
 /**
@@ -52,6 +53,7 @@ export class FractalityEngine {
         // UI Layer
         this.dashboard = new PerformanceDashboard(this.performance);
         this.nodeInfo = new NodeInfoPanel();
+        this.nodeLabels = new NodeLabels();
         
         // Interaction
         this.raycaster = new THREE.Raycaster();
@@ -75,6 +77,7 @@ export class FractalityEngine {
         // Initialize UI
         this.dashboard.init();
         this.nodeInfo.init();
+        this.nodeLabels.init();
         
         // Setup event listeners
         this._setupEventListeners();
@@ -172,6 +175,9 @@ export class FractalityEngine {
 
         // 8b. Update connection lines (hierarchy + wikilink edges)
         this._updateConnections(visibleNodes);
+
+        // 8c. Update floating node labels
+        this.nodeLabels.update(visibleNodes, this.renderer.camera);
 
         // 9. Render frame
         this.renderer.render();
@@ -482,5 +488,6 @@ export class FractalityEngine {
         this.renderer.destroy();
         this.dashboard.destroy();
         this.nodeInfo.destroy();
+        this.nodeLabels.destroy();
     }
 }
