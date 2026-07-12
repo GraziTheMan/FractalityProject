@@ -24,9 +24,11 @@ export class NodeBridge {
         
         // Event emitter for updates
         this.listeners = new Map();
-        
-        // Initialize server connection
-        this.initializeServer();
+
+        // NOTE: do NOT auto-connect. The CLI/Chimera backend (localhost:8001)
+        // is optional and not always running; auto-fetching it on load spammed
+        // failed requests and status flicker. Callers connect explicitly via
+        // initializeServer()/enableAutoSync() when the feature is turned on.
     }
     
     /**

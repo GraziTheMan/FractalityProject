@@ -27,6 +27,11 @@ const vaultPersistence = new VaultPersistence();
 document.getElementById('state-indicator').innerText = 'State: Balanced';
 document.getElementById('desktop-dock').innerText = 'Desktop Dock Placeholder';
 
+// The CLI/Chimera backend (localhost:8001) is optional and not wired up yet.
+// Leave OFF to avoid connection spam, status flicker, and "Server Offline" /
+// "CLI Disconnected" noise. Flip to true once that backend exists.
+const CLI_BRIDGE_ENABLED = false;
+
 // Initialize core systems
 let fractalityEngine = null;
 const dataLoader = new DataLoader();
@@ -74,7 +79,8 @@ setupMirrorToggle(menu);
 
 // Add CLI sync status to UI
 function addCLISyncStatus() {
-  const stateContainer = document.querySelector('.state-container') || 
+  if (!CLI_BRIDGE_ENABLED) return; // Chimera/CLI bridge disabled — no indicator
+  const stateContainer = document.querySelector('.state-container') ||
                         document.getElementById('state-indicator').parentElement;
   
   const syncStatus = document.createElement('div');
@@ -102,9 +108,10 @@ function addCLIControls() {
       <button id="cli-sync" class="dock-button">🔄 Auto-Sync Off</button>
       <button id="open-search" class="dock-button">🔍 Search</button>
       <button id="toggle-debug" class="dock-button">🧠 Debug</button>
+      ${CLI_BRIDGE_ENABLED ? `
       <div class="cli-status-mini">
         <span class="server-status-indicator" id="server-status-mini">🔗 Checking...</span>
-      </div>
+      </div>` : ''}
     </div>
   `;
 
@@ -164,8 +171,8 @@ function setupCLIHandlers() {
     }
   });
   
-  // Update server status periodically
-  setInterval(updateServerStatusMini, 5000);
+  // Update server status periodically (only when the CLI/Chimera bridge is on)
+  if (CLI_BRIDGE_ENABLED) setInterval(updateServerStatusMini, 5000);
 }
 
 // NEW: Update mini server status indicator
