@@ -15,6 +15,9 @@ import { NodeDebugPanel } from '../src/ui/NodeDebugPanel.js';
 // NEW: Obsidian vault import
 import { filesFromFileList, importVaultToGraph } from '../src/data/obsidian/VaultLoader.js';
 
+// NEW: note content viewer (reads bodies from the IndexedDB content tier)
+import { ContentViewer } from '../src/ui/ContentViewer.js';
+
 // Initialize state indicator
 document.getElementById('state-indicator').innerText = 'State: Balanced';
 document.getElementById('desktop-dock').innerText = 'Desktop Dock Placeholder';
@@ -27,6 +30,24 @@ const testGenerator = new TestDataGenerator();
 // NEW: Initialize search interface and debug panel
 const searchInterface = new SearchInterface();
 let nodeDebugPanel = null; // Initialize when CACE engine is available
+
+// NEW: note content viewer. Wikilinks resolve to a node by label and navigate.
+const contentViewer = new ContentViewer({
+  onNavigate: (targetLabel) => {
+    if (!fractalityEngine || !fractalityEngine.nodeGraph) return;
+    const want = String(targetLabel).toLowerCase();
+    const match = [...fractalityEngine.nodeGraph.nodes.values()]
+      .find(n => (n.metadata?.label || '').toLowerCase() === want);
+    if (match) fractalityEngine.navigateToNode(match.id);
+  },
+});
+
+// Show a node's note when it becomes the focus.
+window.addEventListener('fractality:focusChanged', (e) => {
+  const node = fractalityEngine && fractalityEngine.nodeGraph
+    && fractalityEngine.nodeGraph.getNode(e.detail.nodeId);
+  if (node) contentViewer.show(node);
+});
 
 // Create radial menu with original items
 const menu = new RadialMenu('radial-menu', {
@@ -512,6 +533,10 @@ document.addEventListener('DOMContentLoaded', () => {
   addCLISyncStatus();
   addCLIControls();
   addVaultImportControl();
+
+  // Content viewer (reads note bodies from IndexedDB on focus)
+  contentViewer.init();
+  window.contentViewer = contentViewer;
   
   // Setup bridge listeners
   setupBridgeListeners();
