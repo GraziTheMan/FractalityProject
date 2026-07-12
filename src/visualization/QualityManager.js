@@ -32,7 +32,7 @@ export class QualityManager {
             minFPS: 30,
             sampleWindow: 60,      // frames
             adjustmentRate: 0.05,
-            adjustmentDelay: 1000, // ms between adjustments
+            adjustmentDelay: 3000, // ms between adjustments (slow, avoids flicker)
             lastAdjustment: 0
         };
         
@@ -85,19 +85,22 @@ export class QualityManager {
         const recentSamples = this.fpsHistory.slice(-this.adaptive.sampleWindow);
         const averageFPS = recentSamples.reduce((a, b) => a + b, 0) / recentSamples.length;
         
-        // Determine quality adjustment
+        // Determine quality adjustment. A WIDE hysteresis dead-zone (≈42–58 fps)
+        // keeps quality stable instead of ping-ponging every cycle, which was the
+        // source of the ~1Hz flashing.
         let adjustment = 0;
-        
+
         if (averageFPS < this.adaptive.minFPS) {
             // Critical performance - larger decrease
             adjustment = -this.adaptive.adjustmentRate * 2;
-        } else if (averageFPS < this.adaptive.targetFPS * 0.9) {
-            // Below target - decrease quality
+        } else if (averageFPS < 42) {
+            // Clearly struggling - decrease quality
             adjustment = -this.adaptive.adjustmentRate;
-        } else if (averageFPS > this.adaptive.targetFPS * 0.95 && this.currentQuality < 1.0) {
-            // Above target with headroom - increase quality
+        } else if (averageFPS > 58 && this.currentQuality < 1.0) {
+            // Clear headroom - increase quality
             adjustment = this.adaptive.adjustmentRate;
         }
+        // 42..58 fps: leave quality alone (stable).
         
         if (adjustment !== 0) {
             this._adjustQuality(adjustment);
@@ -259,12 +262,9 @@ export class QualityManager {
                 break;
                 
             case 'highPolyGeometry':
-                // Trigger geometry update in renderer
-                if (!enabled) {
-                    this.renderer._createLowPolyGeometry();
-                } else {
-                    this.renderer._createGeometry();
-                }
+                // No-op: the renderer swaps geometry inside setQuality (only on a
+                // real low/high boundary crossing). Doing it here too caused a
+                // second rebuild per adjustment and visible flashing.
                 break;
                 
             case 'postProcessing':

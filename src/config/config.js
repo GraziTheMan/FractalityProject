@@ -82,8 +82,8 @@ export const config = {
     layout: {
         // Family view constraints
         familyView: {
-            maxSiblings: 5,
-            maxChildren: 7,
+            maxSiblings: 24,
+            maxChildren: 40,
             showParent: true,
             showGrandparent: false
         },

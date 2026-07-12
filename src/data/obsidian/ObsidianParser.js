@@ -67,12 +67,19 @@ function stripQuotes(s) {
     return s.replace(/^["']/, '').replace(/["']$/, '');
 }
 
-/** Derive a human label: frontmatter title -> first `# H1` -> filename. */
+/**
+ * Derive a human label. The FILENAME is the identity of a node (Obsidian links
+ * by filename too), so it wins over an in-body H1 — a note titled `GLYPH.md`
+ * whose first heading is "# Summary" should label as "GLYPH". An explicit
+ * frontmatter `title` still overrides; H1 is only a last resort.
+ */
 export function deriveTitle(path, body, frontmatter = {}) {
     if (frontmatter.title) return String(frontmatter.title);
+    const filename = basename(path).replace(/\.md$/i, '').trim();
+    if (filename) return filename;
     const h1 = body.match(/^\s{0,3}#\s+(.+?)\s*$/m);
     if (h1) return h1[1].replace(/#+\s*$/, '').trim();
-    return basename(path).replace(/\.md$/i, '');
+    return path;
 }
 
 /**

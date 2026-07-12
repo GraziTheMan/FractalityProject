@@ -17,8 +17,8 @@ export class FractalityState {
         
         // View Configuration
         this.viewConfig = {
-            maxSiblings: 5,
-            maxChildren: 7,
+            maxSiblings: 24,
+            maxChildren: 40,
             showParent: true,
             showGrandparent: false,
             contextDepth: 2

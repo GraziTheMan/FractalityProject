@@ -10,10 +10,12 @@ export class FamilyViewController {
     constructor() {
         this.nodeGraph = null;
         
-        // Default view configuration
+        // Default view configuration. Real vaults have folders with many notes,
+        // so these caps are generous (a very large folder still caps, which a
+        // future "expand/paginate" mode can lift).
         this.defaultConfig = {
-            maxSiblings: 5,
-            maxChildren: 7,
+            maxSiblings: 24,
+            maxChildren: 40,
             showParent: true,
             showGrandparent: false,
             contextDepth: 2,

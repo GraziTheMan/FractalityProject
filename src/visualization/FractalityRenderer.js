@@ -48,6 +48,8 @@ export class FractalityRenderer {
         this.quality = 1.0;
         this.shadowsEnabled = true;
         this.antialias = true;
+        this._lowPoly = false;          // current geometry detail state
+        this._appliedPixelRatio = undefined;
         
         // Helper objects
         this.dummy = new THREE.Object3D();
@@ -501,40 +503,47 @@ export class FractalityRenderer {
      */
     setQuality(quality) {
         this.quality = Math.max(0.1, Math.min(1.0, quality));
-        
-        // Update pixel ratio
-        const basePixelRatio = config.rendering.pixelRatio === 'auto' ? 
+
+        // Pixel ratio — reallocating the drawing buffer is expensive and causes
+        // a visible flash, so only do it when the ratio meaningfully changes.
+        const basePixelRatio = config.rendering.pixelRatio === 'auto' ?
             window.devicePixelRatio : config.rendering.pixelRatio;
-        this.renderer.setPixelRatio(Math.min(basePixelRatio * this.quality, 2));
-        
+        const newRatio = Math.min(basePixelRatio * this.quality, 2);
+        if (this._appliedPixelRatio === undefined ||
+            Math.abs(this._appliedPixelRatio - newRatio) > 0.05) {
+            this.renderer.setPixelRatio(newRatio);
+            this._appliedPixelRatio = newRatio;
+        }
+
         // Update shadows
         this.shadowsEnabled = this.quality > 0.5 && config.rendering.shadowsEnabled;
         this.renderer.shadowMap.enabled = this.shadowsEnabled;
-        
-        // Update geometry detail
-        if (this.quality < 0.5) {
-            // Use lower poly geometry
-            this._createLowPolyGeometry();
-        } else {
-            // Use normal geometry
-            this._createGeometry();
+
+        // Geometry detail — only swap when crossing the low/high boundary, so we
+        // don't rebuild the mesh (and flash) on every quality tweak.
+        const wantLow = this.quality < 0.4;
+        if (this._lowPoly !== wantLow) {
+            this._lowPoly = wantLow;
+            if (wantLow) this._createLowPolyGeometry();
+            else this._createGeometry();
         }
-        
+
         // Update material quality
-        this.nodeMaterial.clearcoat = this.quality > 0.7 ? 0.3 : 0;
-        
+        if (this.nodeMaterial) this.nodeMaterial.clearcoat = this.quality > 0.7 ? 0.3 : 0;
+
         return this.quality;
     }
-    
+
     /**
-     * Create low poly geometry for performance
+     * Create low poly geometry for performance. An icosahedron (1 subdivision)
+     * still reads as a round bubble — much nicer than a faceted octahedron.
      */
     _createLowPolyGeometry() {
-        this.nodeGeometry = new THREE.OctahedronGeometry(
+        this.nodeGeometry = new THREE.IcosahedronGeometry(
             config.rendering.instances.geometry.radius,
-            0 // No subdivisions
+            1
         );
-        
+
         // Update instanced mesh geometry
         if (this.instancedMesh) {
             this.instancedMesh.geometry = this.nodeGeometry;

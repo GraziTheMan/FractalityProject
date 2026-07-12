@@ -45,7 +45,7 @@ const { graph, stats } = await importVault(files, { contentStore: store, vaultNa
 const byId = new Map(graph.nodes.map(n => [n.id, n]));
 const find = pred => graph.nodes.find(pred);
 const root = find(n => n.parentId === null);
-const welcome = find(n => n.metadata.label === 'Welcome to My Brain');
+const welcome = find(n => n.metadata.source?.path === 'Welcome.md');
 const daily = find(n => n.metadata.source?.path === 'daily-note-2024.md');
 const conceptsFolder = find(n => n.metadata.type === 'Container' && n.metadata.label === 'Concepts');
 const consciousness = find(n => n.metadata.label === 'Consciousness');
@@ -57,8 +57,9 @@ console.log('Import stats:', JSON.stringify(stats), '\n');
 console.log('Structure & derivation:');
 check('single root at depth 0', root && root.depth === 0 && root.metadata.label === 'My Vault');
 check('4 notes imported', stats.notes === 4, `got ${stats.notes}`);
-check('title from H1 (frontmatter-less)', welcome && welcome.metadata.label === 'Welcome to My Brain');
-check('title from FILENAME when no H1/frontmatter', daily && daily.metadata.label === 'daily-note-2024',
+check('label from FILENAME even when an H1 exists', welcome && welcome.metadata.label === 'Welcome',
+    welcome && welcome.metadata.label);
+check('label from FILENAME when no H1/frontmatter', daily && daily.metadata.label === 'daily-note-2024',
     daily && daily.metadata.label);
 check('inline #tags derived without frontmatter', welcome &&
     welcome.metadata.tags.includes('idea') && welcome.metadata.tags.includes('start'),
