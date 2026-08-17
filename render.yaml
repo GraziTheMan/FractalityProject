@@ -51,6 +51,12 @@ services:
       #   value: https://api.fractiverse.com
       # - key: VITE_AI_PROXY_URL
       #   value: https://api.fractiverse.com/ai
+      #
+      # Clerk PUBLISHABLE key. Safe here by design — publishable keys are meant
+      # to be public. Clerk's SECRET key must never be a VITE_ variable, and is
+      # not used by this project at all.
+      # - key: VITE_CLERK_PUBLISHABLE_KEY
+      #   sync: false
       - key: NODE_VERSION
         value: "22"
 

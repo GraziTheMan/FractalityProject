@@ -92,6 +92,25 @@
     transform: translate(-50%, -50%) scale(1.06);
 }
 
+/* --- desktop dock ----------------------------------------------------- */
+
+/* main.css styles the dock's appearance but never positions it, so it stayed in
+   static flow underneath #content-view (which is absolute, inset 0). The canvas
+   then covered it and swallowed every click — the Search, Debug and Maps buttons
+   were all unreachable. It needs both a position and a z-index above the
+   viewport.
+
+   Placed top-centre to stay clear of the radial fan at the bottom, the state
+   indicator top-left and the performance panel top-right. */
+.desktop-dock {
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 30;
+    max-width: min(760px, calc(100vw - 420px));
+}
+
 /* --- mirror toggle / home button -------------------------------------- */
 
 .mirror-toggle,

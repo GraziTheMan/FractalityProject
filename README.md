@@ -338,6 +338,8 @@ detail. The ones most likely to bite:
 
 ## 📖 Documentation
 
+- [`DEPLOYMENT.md`](docs/DEPLOYMENT.md) - Where every config value goes, and the setup order
+- [`api/README.md`](api/README.md) - The backend: endpoints, data model, authorization
 - [`AUDIT-2026-08.md`](docs/AUDIT-2026-08.md) - Full codebase audit: what was broken, what was fixed, what is still outstanding
 - [`AI-PROTOCOL.md`](docs/AI-PROTOCOL.md) - Complete guide to the Fractality AI Protocol v2.0
 - [`DATA-CONSOLE-README.md`](docs/DATA-CONSOLE-README.md) - Data Management Console user guide

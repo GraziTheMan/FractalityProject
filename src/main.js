@@ -11,6 +11,10 @@ import { SearchInterface } from './ui/SearchInterface.js';
 import { NodeDebugPanel } from './ui/NodeDebugPanel.js';
 import { AnimationSystem } from './visualization/AnimationSystem.js';
 
+import { MapsPanel } from './ui/MapsPanel.js';
+import { mindMapClient, MindMapClient } from './api/mindMapClient.js';
+import { getToken, hasAuth } from './auth/clerkClient.js';
+
 import { ECS } from './ecs/ECS.js';
 import { PositionComponent, RenderableComponent, KnowledgeComponent, InputComponent } from './ecs/components.js';
 import { RenderSystem } from './ecs/systems/RenderSystem.js';
@@ -78,6 +82,30 @@ const testGenerator = new TestDataGenerator();
 const searchInterface = new SearchInterface();
 let nodeDebugPanel = null; // Initialize when CACE engine is available
 
+// Cloud persistence. The client is inert until VITE_API_BASE is set, and the
+// token getter returns null until Clerk is configured and signed in, so this is
+// safe to construct unconditionally.
+mindMapClient.getToken = getToken;
+
+// Set from ?map=&token= at startup and consumed once the engine exists.
+let pendingShare = null;
+
+const mapsPanel = new MapsPanel({
+  client: mindMapClient,
+  getGraph: () => fractalityEngine?.nodeGraph ?? null,
+  notify: (message, type) => showNotification(message, type),
+  onLoadMap: async (graph) => {
+    if (!fractalityEngine) {
+      // The engine boots lazily on the first 'bubble' view; make sure it exists
+      AppState.setView('bubble');
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (fractalityEngine) {
+      await fractalityEngine.loadData(graph);
+    }
+  }
+});
+
 // Create radial menu with original items.
 // The radii must clear the width of the text labels: 9 items across a 180
 // degree fan gives 22.5 degrees of separation, so at the previous default of
@@ -129,6 +157,7 @@ function addCLIControls() {
     <button id="cli-sync" class="dock-button">🔄 Auto-Sync Off</button>
     <button id="open-search" class="dock-button">🔍 Search</button>
     <button id="toggle-debug" class="dock-button">🧠 Debug</button>
+    <button id="open-maps" class="dock-button">🗺 Maps</button>
     <div class="cli-status-mini">
       <span class="server-status-indicator" id="server-status-mini">🔗 Checking...</span>
     </div>
@@ -183,6 +212,11 @@ function setupCLIHandlers() {
     } else {
       showNotification('Debug panel not available (CACE engine not loaded)', 'warning');
     }
+  });
+
+  // Cloud maps panel
+  document.getElementById('open-maps').addEventListener('click', () => {
+    mapsPanel.toggle();
   });
   
   // Update server status periodically
@@ -364,13 +398,19 @@ function updateStateIndicator(text) {
 function showNotification(message, type = 'info') {
   const notification = document.createElement('div');
   notification.className = `notification ${type}`;
-  notification.innerHTML = `
-    <span class="notification-icon">
-      ${type === 'error' ? '❌' : type === 'warning' ? '⚠️' : '✅'}
-    </span>
-    <span class="notification-text">${message}</span>
-  `;
-  
+
+  const icon = document.createElement('span');
+  icon.className = 'notification-icon';
+  icon.textContent = type === 'error' ? '❌' : type === 'warning' ? '⚠️' : '✅';
+
+  // textContent, not innerHTML: messages now carry server-supplied error text
+  // (API `detail` fields), which must never be parsed as markup.
+  const text = document.createElement('span');
+  text.className = 'notification-text';
+  text.textContent = message;
+
+  notification.append(icon, text);
+
   // Add notification styles if not present
   if (!document.getElementById('notification-styles')) {
     const style = document.createElement('style');
@@ -475,16 +515,30 @@ AppState.on('viewChanged', async (view) => {
       console.log('🧠 Debug panel initialized');
     }
     
-    // Check for CLI data first
-    const hasCliData = await checkForCLIData();
-    
-    if (!hasCliData) {
-      // Load default test data
-      const nodeGraph = testGenerator.generateTestPattern('golden');
-      await fractalityEngine.loadData(nodeGraph);
+    // A share link takes precedence over both CLI data and the demo pattern, so
+    // a visitor following one never sees a flash of unrelated test nodes.
+    if (pendingShare) {
+      const share = pendingShare;
+      pendingShare = null;
+      const opened = await mapsPanel.loadMap(share.mapId, share.shareToken);
+
+      if (!opened) {
+        // Link was bad, revoked or expired; fall back to something to look at
+        showNotification('That shared map could not be opened', 'error');
+        await fractalityEngine.loadData(testGenerator.generateTestPattern('golden'));
+      }
     } else {
-      // Load bridge data
-      await loadBridgeData();
+      // Check for CLI data first
+      const hasCliData = await checkForCLIData();
+
+      if (!hasCliData) {
+        // Load default test data
+        const nodeGraph = testGenerator.generateTestPattern('golden');
+        await fractalityEngine.loadData(nodeGraph);
+      } else {
+        // Load bridge data
+        await loadBridgeData();
+      }
     }
     
     // Check for pending navigation
@@ -525,6 +579,16 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // Initial server status check
   updateServerStatusMini();
+
+  // A visitor may arrive on a share link. Record it before the first view is
+  // opened so the engine loads the shared map instead of the demo pattern.
+  const share = MindMapClient.readShareParams();
+  if (share && mindMapClient.available) {
+    pendingShare = share;
+    console.log('🔗 Opening shared map', share.mapId);
+  } else if (share) {
+    showNotification('This link points at a map, but no API is configured', 'warning');
+  }
 
   console.log('✨ Fractality with full CLI Bridge + Search + Debug ready!');
 

@@ -72,6 +72,16 @@ export const deployConfig = {
 
     /** Server-side proxy that holds the real AI provider credentials. */
     aiProxyUrl: normalizeBase(env('VITE_AI_PROXY_URL')),
+
+    /**
+     * Clerk publishable key.
+     *
+     * This is the one credential that legitimately belongs in a VITE_ variable:
+     * publishable keys are designed to be public, which is the entire point of
+     * the publishable/secret split. Clerk's SECRET key must never appear here or
+     * anywhere else in frontend code.
+     */
+    clerkPublishableKey: env('VITE_CLERK_PUBLISHABLE_KEY') || null,
 };
 
 /** True when a real backend is configured. */
