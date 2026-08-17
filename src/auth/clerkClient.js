@@ -53,9 +53,27 @@ export async function loadAuth() {
 
     loading = (async () => {
         try {
-            const { Clerk } = await import('@clerk/clerk-js');
+            // Two packages, both required. As of clerk-js v6 the core bundle does
+            // NOT contain the UI components: they live in @clerk/ui and must be
+            // handed to load(). Omit them and load() still succeeds, then throws
+            // "Clerk was not loaded with Ui components" the moment anything opens
+            // a modal — so the failure shows up on first sign-in, not at startup.
+            //
+            // Pass `ui` straight through. It is an object of the shape
+            // { __brand, version, ClerkUI }, and clerk-js reads `options.ui.ClerkUI`
+            // and calls `new` on it. Wrapping it again as `{ ClerkUI: ui }` makes
+            // that field the wrapper object instead of the class, which fails later
+            // and less helpfully with "is not a constructor".
+            const [{ Clerk }, { ui }] = await Promise.all([
+                import('@clerk/clerk-js'),
+                import('@clerk/ui')
+            ]);
+
             const instance = new Clerk(publishableKey);
-            await instance.load({ afterSignOutUrl: window.location.origin });
+            await instance.load({
+                afterSignOutUrl: window.location.origin,
+                ui
+            });
 
             clerk = instance;
 
