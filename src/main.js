@@ -1,4 +1,4 @@
-// Enhanced main.js - Your existing code + SearchInterface integration
+// src/main.js - application entry point (loaded by /index.html)
 import { RadialMenu } from './components/radialMenu.js';
 import { AppState } from './utils/appState.js';
 import { setupMirrorToggle } from './components/mirrorToggle.js';
@@ -7,12 +7,14 @@ import { FractalityEngine } from './engine/FractalityEngine.js';
 import { DataLoader } from './data/DataLoader.js';
 import { TestDataGenerator } from './data/TestDataGenerator.js';
 
-// NEW: Import search interface and debug panel
 import { SearchInterface } from './ui/SearchInterface.js';
 import { NodeDebugPanel } from './ui/NodeDebugPanel.js';
-
-// FIXED:
 import { AnimationSystem } from './visualization/AnimationSystem.js';
+
+import { ECS } from './ecs/ECS.js';
+import { PositionComponent, RenderableComponent, KnowledgeComponent, InputComponent } from './ecs/components.js';
+import { RenderSystem } from './ecs/systems/RenderSystem.js';
+import { InputSystem } from './ecs/systems/InputSystem.js';
 
 // Initialize state indicator
 document.getElementById('state-indicator').innerText = 'State: Balanced';
@@ -20,10 +22,6 @@ document.getElementById('desktop-dock').innerText = 'Desktop Dock Placeholder';
 
 
 // === ECS ENGINE INTEGRATION ===
-import { ECS } from './ecs/ECS.js';
-import { PositionComponent, RenderableComponent, KnowledgeComponent, InputComponent } from './ecs/components.js';
-import { RenderSystem } from './ecs/systems/RenderSystem.js';
-import { InputSystem } from './ecs/systems/InputSystem.js';
 
 // Initialize ECS and systems
 const ecs = new ECS();
@@ -42,12 +40,33 @@ tree.add("Position", PositionComponent(10, 0, 5));
 tree.add("Renderable", RenderableComponent("tree.glb"));
 tree.add("Knowledge", KnowledgeComponent("tree_001", "ENTITY", 0.8));
 
-// Update ECS each frame (hook into engine loop if needed)
-function updateECS() {
-  ecs.update(1 / 60); // run ECS update at 60fps timing
+// Drive the ECS from a single rAF loop using real elapsed time, so movement
+// is frame-rate independent rather than assuming a fixed 60fps.
+let ecsRunning = true;
+let ecsLastFrame = performance.now();
+
+function updateECS(now) {
+  if (!ecsRunning) return;
+
+  // Clamp so a backgrounded tab doesn't resume with one enormous step
+  const delta = Math.min((now - ecsLastFrame) / 1000, 0.1);
+  ecsLastFrame = now;
+
+  ecs.update(delta);
   requestAnimationFrame(updateECS);
 }
-updateECS();
+requestAnimationFrame(updateECS);
+
+// Pause the ECS while the tab is hidden
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    ecsRunning = false;
+  } else if (!ecsRunning) {
+    ecsRunning = true;
+    ecsLastFrame = performance.now();
+    requestAnimationFrame(updateECS);
+  }
+});
 
 
 // Initialize core systems

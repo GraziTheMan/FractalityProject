@@ -639,4 +639,156 @@ export class FractalAI {
         }
         
         if (input.audio) {
-            const audioAgent = this.agentNetwork.getNode('age
+            const audioAgent = this.agentNetwork.getNode('agent-consciousness.audio');
+            results.audio = await audioAgent.process({ audio: input.audio });
+        }
+
+        if (input.action) {
+            const actionAgent = this.agentNetwork.getNode('agent-consciousness.action');
+            results.action = await actionAgent.process({ action: input.action });
+        }
+
+        return results;
+    }
+
+    /**
+     * Turn per-modality agent output into cross-modal resonances.
+     * Each modality is fractally decomposed into a frequency signature, then
+     * handed to the ResonanceEngine to find harmonic relationships.
+     */
+    _findResonances(modalResults) {
+        const toFrequencies = (modalResult) =>
+            modalResult ? this.resonanceEngine.fractalTransform(modalResult) : [];
+
+        return this.resonanceEngine.findResonances(
+            toFrequencies(modalResults.vision),
+            toFrequencies(modalResults.text),
+            toFrequencies(modalResults.audio)
+        );
+    }
+
+    /**
+     * Reinforce the quantum field along resonant modalities.
+     * Resonance raises coherence for participating agents; everything else
+     * decoheres slightly, so attention is a zero-sum-ish resource.
+     */
+    _updateQuantumStates(resonances) {
+        // Baseline decoherence across the field
+        this.quantumInterface.quantumField.forEach(field => {
+            field.coherence = Math.max(0, field.coherence * 0.98);
+        });
+
+        resonances.forEach(resonance => {
+            resonance.modes.forEach(mode => {
+                const agentId = `agent-consciousness.${mode}`;
+                const field = this.quantumInterface.quantumField.get(agentId);
+                if (!field) return;
+
+                // Resonance strengthens coherence, capped at 1
+                field.coherence = Math.min(1, field.coherence + resonance.strength * 0.1);
+
+                // And amplifies the agent's active interpretations
+                field.agent.activeStates.forEach(state => {
+                    state.probability = Math.min(1, state.probability * (1 + resonance.strength * 0.1));
+                });
+            });
+        });
+
+        // Renormalise each agent's state distribution after amplification
+        this.quantumInterface.quantumField.forEach(field => {
+            const states = field.agent.activeStates;
+            if (!states || states.length === 0) return;
+
+            const total = states.reduce((sum, s) => sum + s.probability, 0);
+            if (total > 0) states.forEach(s => { s.probability /= total; });
+        });
+    }
+
+    /**
+     * Collect the network's current interpretations, most probable first.
+     */
+    async _propagateThoughts() {
+        const thoughts = [];
+
+        this.agentNetwork.nodes.forEach(agent => {
+            if (!agent.activeStates || agent.activeStates.length === 0) return;
+
+            const field = this.quantumInterface.quantumField.get(agent.id);
+            const coherence = field ? field.coherence : 1.0;
+
+            agent.activeStates.forEach(state => {
+                thoughts.push({
+                    agentId: agent.id,
+                    role: agent.role,
+                    depth: agent.depth,
+                    interpretation: state.interpretation,
+                    // Weight by coherence so decohered agents contribute less
+                    confidence: state.probability * coherence,
+                    energy: state.energy
+                });
+            });
+        });
+
+        return thoughts.sort((a, b) => b.confidence - a.confidence);
+    }
+
+    /**
+     * Entanglement pairs for the visualizer, de-duplicated.
+     */
+    _getEntanglementLines() {
+        const lines = [];
+        const seen = new Set();
+
+        this.quantumInterface.quantumField.forEach((field, agentId) => {
+            field.entanglements.forEach(otherId => {
+                // Undirected: only emit each pair once
+                const key = [agentId, otherId].sort().join('::');
+                if (seen.has(key)) return;
+                seen.add(key);
+
+                const other = this.quantumInterface.quantumField.get(otherId);
+                if (!other) return;
+
+                lines.push({
+                    from: agentId,
+                    to: otherId,
+                    strength: (field.coherence + other.coherence) / 2
+                });
+            });
+        });
+
+        return lines;
+    }
+
+    /**
+     * Colour an agent by its modality, dimmed by remaining energy.
+     */
+    _getAgentColor(agent) {
+        const palette = {
+            consciousness: '#a78bfa',
+            vision: '#60a5fa',
+            text: '#6ee7b7',
+            audio: '#fcd34d',
+            action: '#fb923c'
+        };
+
+        // role may be namespaced, e.g. "consciousness.vision"
+        const modality = agent.role.split('.').pop();
+        return palette[modality] || '#94a3b8';
+    }
+
+    /**
+     * Observer hook fired whenever a wave function collapses.
+     */
+    _handleConsciousnessEvent(event) {
+        const { agentId, collapsed, timestamp } = event;
+
+        // Collapse costs energy from the global budget
+        this.energyBudget = Math.max(0, this.energyBudget - 0.01);
+
+        console.log(
+            `⚡ Collapse @${new Date(timestamp).toISOString()} ` +
+            `[${agentId}] →`, collapsed
+        );
+    }
+}

@@ -1,4 +1,6 @@
 // src/consciousness/ConsciousnessNode.js
+import * as THREE from 'three';
+
 export class ConsciousnessNode {
     constructor(nodeId, nodeData) {
         this.id = nodeId;
@@ -576,7 +578,11 @@ export class ConsciousnessVisualizer {
     }
 }
 
-// Integration with your existing main.js
-// Add this to your main.js after initializing the Fractiverse engine
-
-import { Consciousn
+// Integration notes:
+// Construct a ConsciousnessLayer once the Fractality engine exists, then drive it
+// from the render loop. See src/consciousness/quickstart.js for a worked example.
+//
+//   import { ConsciousnessLayer, ConsciousnessVisualizer } from './consciousness/ConsciousnessNode.js';
+//
+//   const consciousness = new ConsciousnessLayer(engine.nodeGraph);
+//   const visualizer = new ConsciousnessVisualizer(consciousness, engine.scene);

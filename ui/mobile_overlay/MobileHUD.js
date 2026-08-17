@@ -18,14 +18,14 @@ export class MobileHUD {
 
   render() {
     if (!this.root) return;
-    this.root.innerHTML = \`
+    this.root.innerHTML = `
       <div class="hud-panel">
-        <div class="hud-phase">🌀 Phase: <strong>\${this.state.phase}</strong></div>
+        <div class="hud-phase">🌀 Phase: <strong>${this.state.phase}</strong></div>
         <button id="toggle-dashboard">Toggle Logs</button>
         <button id="pause-loop">Pause Loop</button>
         <button id="step-loop">Step Once</button>
       </div>
-    \`;
+    `;
     this.attachListeners();
   }
 

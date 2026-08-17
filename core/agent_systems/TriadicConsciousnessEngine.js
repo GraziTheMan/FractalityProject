@@ -1,3 +1,5 @@
+import { SharedConsciousContext } from './SharedConsciousContext.js';
+
 export class TriadicConsciousnessEngine {
   constructor({ executive, reflective, generative, cace, llmManager }) {
     this.executive = executive;

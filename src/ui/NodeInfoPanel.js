@@ -639,7 +639,246 @@ export class NodeInfoPanel {
             
             const siblingCount = Math.min(3, node.siblingIds.length);
             for (let i = 0; i < siblingCount; i++) {
+                const siblingId = node.siblingIds[i];
                 const siblingEl = document.createElement('div');
                 siblingEl.className = 'tree-node';
                 siblingEl.textContent = '👥';
-                siblingEl.dataset.nodeId = node.s
+                siblingEl.dataset.nodeId = siblingId;
+                siblingEl.title = `Sibling: ${siblingId}`;
+                siblingEl.addEventListener('click', () => this._onTreeNodeClick(siblingId));
+                tree.appendChild(siblingEl);
+            }
+
+            if (node.siblingIds.length > siblingCount) {
+                const more = document.createElement('span');
+                more.className = 'tree-node';
+                more.textContent = `+${node.siblingIds.length - siblingCount}`;
+                more.title = `${node.siblingIds.length - siblingCount} more siblings`;
+                tree.appendChild(more);
+            }
+        }
+
+        // Children
+        if (node.childIds && node.childIds.length > 0) {
+            tree.appendChild(document.createElement('br'));
+
+            const childCount = Math.min(5, node.childIds.length);
+            for (let i = 0; i < childCount; i++) {
+                const childId = node.childIds[i];
+                const childEl = document.createElement('div');
+                childEl.className = 'tree-node';
+                childEl.textContent = '👶';
+                childEl.dataset.nodeId = childId;
+                childEl.title = `Child: ${childId}`;
+                childEl.addEventListener('click', () => this._onTreeNodeClick(childId));
+                tree.appendChild(childEl);
+            }
+
+            if (node.childIds.length > childCount) {
+                const more = document.createElement('span');
+                more.className = 'tree-node';
+                more.textContent = `+${node.childIds.length - childCount}`;
+                more.title = `${node.childIds.length - childCount} more children`;
+                tree.appendChild(more);
+            }
+        }
+    }
+
+    /**
+     * Handle a click on a node in the family tree
+     */
+    _onTreeNodeClick(nodeId) {
+        if (!nodeId) return;
+        this._emitNavigation(nodeId);
+    }
+
+    /**
+     * Navigate to the currently displayed node
+     */
+    _navigateToNode() {
+        if (!this.currentNode) return;
+        this._emitNavigation(this.currentNode.id);
+    }
+
+    /**
+     * Ask the host app to focus a node.
+     * Matches the convention used by SearchInterface: a `nodeSelected`
+     * window event carrying `{ nodeId }`, which main.js forwards to
+     * FractalityEngine.setFocus().
+     */
+    _emitNavigation(nodeId) {
+        window.dispatchEvent(new CustomEvent('nodeSelected', {
+            detail: { nodeId }
+        }));
+    }
+
+    /**
+     * Request expansion of the current node's subtree
+     */
+    _expandNode() {
+        if (!this.currentNode) return;
+
+        window.dispatchEvent(new CustomEvent('fractality:expandNode', {
+            detail: {
+                nodeId: this.currentNode.id,
+                childIds: this.currentNode.childIds || []
+            }
+        }));
+    }
+
+    /**
+     * Toggle pinned state. A pinned panel ignores hover-out hides.
+     */
+    togglePin() {
+        this.isPinned = !this.isPinned;
+        this.container.classList.toggle('pinned', this.isPinned);
+
+        const pinButton = this.container.querySelector('.pin-button');
+        if (pinButton) {
+            pinButton.title = this.isPinned ? 'Unpin panel' : 'Pin panel';
+        }
+
+        // Unpinning while the pointer is elsewhere should let the panel go away
+        if (!this.isPinned) {
+            this.hide();
+        } else if (this.hideTimer) {
+            clearTimeout(this.hideTimer);
+            this.hideTimer = null;
+        }
+
+        return this.isPinned;
+    }
+
+    /**
+     * Wire up panel-level event listeners
+     */
+    _setupEventListeners() {
+        // Keep the panel alive while the pointer is inside it
+        this.container.addEventListener('mouseenter', () => {
+            if (this.hideTimer) {
+                clearTimeout(this.hideTimer);
+                this.hideTimer = null;
+            }
+        });
+
+        this.container.addEventListener('mouseleave', () => {
+            if (!this.isPinned) this.hide();
+        });
+
+        // Escape unpins and closes
+        this._onKeyDown = (e) => {
+            if (e.key === 'Escape' && this.isVisible) {
+                this.isPinned = false;
+                this.container.classList.remove('pinned');
+                this.hide();
+            }
+        };
+        window.addEventListener('keydown', this._onKeyDown);
+    }
+
+    /**
+     * Animate container opacity toward a target, then invoke onComplete.
+     */
+    _animateOpacity(target, onComplete) {
+        this.targetOpacity = target;
+
+        if (this.animationFrame) {
+            cancelAnimationFrame(this.animationFrame);
+            this.animationFrame = null;
+        }
+
+        const start = this.currentOpacity;
+        const delta = target - start;
+        const duration = Math.max(1, this.config.fadeTime);
+        const startTime = performance.now();
+
+        const step = (now) => {
+            const t = Math.min(1, (now - startTime) / duration);
+            // ease-out cubic
+            const eased = 1 - Math.pow(1 - t, 3);
+
+            this.currentOpacity = start + delta * eased;
+            this.container.style.opacity = String(this.currentOpacity);
+
+            if (t < 1) {
+                this.animationFrame = requestAnimationFrame(step);
+            } else {
+                this.animationFrame = null;
+                this.currentOpacity = target;
+                this.container.style.opacity = String(target);
+                if (onComplete) onComplete();
+            }
+        };
+
+        this.animationFrame = requestAnimationFrame(step);
+    }
+
+    /**
+     * Colour ramp for a 0..1 context score
+     */
+    _getScoreColor(score) {
+        if (score >= 0.75) return '#6ee7b7'; // high  - mint
+        if (score >= 0.5) return '#fcd34d';  // mid   - amber
+        if (score >= 0.25) return '#fb923c'; // low   - orange
+        return '#f87171';                    // very low - red
+    }
+
+    /**
+     * Human-readable label for a node's position in the current family view
+     */
+    _getRelationshipLabel(node) {
+        if (!node) return 'Unknown';
+        if (node.relationship) return node.relationship;
+        if (node.isFocus) return 'Focus';
+        if (!node.parentId) return 'Root';
+        if (node.childIds && node.childIds.length > 0) return 'Branch';
+        return 'Leaf';
+    }
+
+    /**
+     * Truncate/normalise a metadata value for single-line display
+     */
+    _formatValue(value) {
+        if (value === null || value === undefined) return '—';
+
+        if (typeof value === 'number') {
+            return Number.isInteger(value) ? String(value) : value.toFixed(3);
+        }
+
+        if (Array.isArray(value)) {
+            return value.length <= 3
+                ? value.join(', ')
+                : `${value.slice(0, 3).join(', ')} (+${value.length - 3})`;
+        }
+
+        if (typeof value === 'object') {
+            const keys = Object.keys(value);
+            return `{${keys.slice(0, 3).join(', ')}${keys.length > 3 ? ', …' : ''}}`;
+        }
+
+        const str = String(value);
+        return str.length > 40 ? str.slice(0, 37) + '…' : str;
+    }
+
+    /**
+     * Tear down the panel and release listeners
+     */
+    destroy() {
+        if (this.animationFrame) cancelAnimationFrame(this.animationFrame);
+        if (this.hoverTimer) clearTimeout(this.hoverTimer);
+        if (this.hideTimer) clearTimeout(this.hideTimer);
+
+        if (this._onKeyDown) {
+            window.removeEventListener('keydown', this._onKeyDown);
+            this._onKeyDown = null;
+        }
+
+        if (this.container && this.container.parentNode) {
+            this.container.parentNode.removeChild(this.container);
+        }
+
+        this.container = null;
+        this.currentNode = null;
+        this.isVisible = false;
+    }
+}

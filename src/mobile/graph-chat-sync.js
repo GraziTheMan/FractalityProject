@@ -1,5 +1,5 @@
 import { showNodeEditor } from './node-editor.js';
-import { nodeGraph } from './init.js';
+import { nodeGraph } from '../main/init.js';
 
 window.addEventListener('chat:message', e => {
   const { text } = e.detail;

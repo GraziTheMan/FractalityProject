@@ -13,7 +13,7 @@ const viewController = new FamilyViewController();
 const animation = new AnimationSystem();
 
 // === 🧪 Sample node graph (stub until dynamic loading) ===
-const nodeGraph = {
+export const nodeGraph = {
   nodes: new Map(),
   getNode: id => nodeGraph.nodes.get(id),
   getSiblings: id => [],

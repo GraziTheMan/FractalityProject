@@ -1,7 +1,11 @@
+// src/ecs/ECS.js
+// Minimal entity-component-system core.
+//
+// Components live in ./components.js and systems in ./systems/. This file
+// contains only the core types and must stay side-effect free: importing it
+// should never spawn entities or start a loop.
 
-// ======= ECS CORE =======
-
-class Entity {
+export class Entity {
   constructor(id) {
     this.id = id;
     this.components = new Map();
@@ -9,6 +13,7 @@ class Entity {
 
   add(name, data) {
     this.components.set(name, data);
+    return this;
   }
 
   get(name) {
@@ -18,9 +23,13 @@ class Entity {
   has(...names) {
     return names.every(n => this.components.has(n));
   }
+
+  remove(name) {
+    return this.components.delete(name);
+  }
 }
 
-class ECS {
+export class ECS {
   constructor() {
     this.entities = [];
     this.systems = [];
@@ -33,8 +42,22 @@ class ECS {
     return entity;
   }
 
+  destroyEntity(entity) {
+    const index = this.entities.indexOf(entity);
+    if (index !== -1) this.entities.splice(index, 1);
+    return index !== -1;
+  }
+
   addSystem(system) {
     this.systems.push(system);
+    return this;
+  }
+
+  /**
+   * Entities carrying all of the named components.
+   */
+  query(...names) {
+    return this.entities.filter(e => e.has(...names));
   }
 
   update(delta) {
@@ -43,63 +66,3 @@ class ECS {
     }
   }
 }
-
-// ======= COMPONENT EXAMPLES =======
-
-const PositionComponent = (x, y, z) => ({ x, y, z });
-const RenderableComponent = (model) => ({ model });
-const KnowledgeComponent = (id, type, energy = 1.0) => ({ id, type, energy });
-const InputComponent = () => ({ up: false, down: false, left: false, right: false });
-
-// ======= SYSTEM EXAMPLES =======
-
-class RenderSystem {
-  update(entities, delta) {
-    for (const e of entities) {
-      if (e.has("Position", "Renderable")) {
-        const pos = e.get("Position");
-        const rend = e.get("Renderable");
-        console.log(`[RenderSystem] Rendering ${rend.model} at (${pos.x},${pos.y},${pos.z})`);
-        // Here: use Three.js to position a mesh
-      }
-    }
-  }
-}
-
-class InputSystem {
-  update(entities, delta) {
-    for (const e of entities) {
-      if (e.has("Input", "Position")) {
-        const input = e.get("Input");
-        const pos = e.get("Position");
-
-        if (input.up) pos.z -= 0.1;
-        if (input.down) pos.z += 0.1;
-        if (input.left) pos.x -= 0.1;
-        if (input.right) pos.x += 0.1;
-      }
-    }
-  }
-}
-
-// ======= TEST WORLD SPAWN =======
-
-const ecs = new ECS();
-
-const player = ecs.createEntity();
-player.add("Position", PositionComponent(0, 0, 0));
-player.add("Renderable", RenderableComponent("avatar.glb"));
-player.add("Input", InputComponent());
-player.add("Knowledge", KnowledgeComponent("player", "ENTITY", 1.5));
-
-const tree = ecs.createEntity();
-tree.add("Position", PositionComponent(10, 0, 5));
-tree.add("Renderable", RenderableComponent("tree.glb"));
-tree.add("Knowledge", KnowledgeComponent("tree_001", "ENTITY", 0.8));
-
-// Add systems
-ecs.addSystem(new InputSystem());
-ecs.addSystem(new RenderSystem());
-
-// Simulate one update frame
-ecs.update(1 / 60);
