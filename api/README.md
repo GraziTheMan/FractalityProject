@@ -7,17 +7,22 @@ over Neo4j.
 
 | Feature | State |
 |---|---|
-| Mind map CRUD | implemented, unit-tested; Cypher untested against a live DB |
-| Share links (view/edit, expiry, revoke) | implemented, unit-tested |
+| Mind map CRUD | implemented; **Cypher verified against live AuraDB** |
+| Share links (view/edit, expiry, revoke) | implemented; **verified against live AuraDB** |
 | Clerk JWT verification | implemented, tested with real RS256 signing |
 | Newsfeed / pulses | not started (step 4) |
 | Chat + AI proxy | not started (step 5) |
 | Media uploads | not started — needs object storage, see below |
 
-**The Cypher in `repository.py` has not been run against a real Neo4j.** The
-sandbox this was written in has no Neo4j and cannot reach one. `api/tests/
-test_integration_neo4j.py` exists to close that gap — see below. Treat schema
-setup and the first round trip as unverified until you have run it.
+**The Cypher is verified.** All 16 integration tests in
+`api/tests/test_integration_neo4j.py` pass against a live AuraDB Free instance
+(32s, Neo4j 5 / Aura, Python 3.14 on Windows). That covers the full wire-shape
+round trip including the JSON-encoded nested objects, relationship derivation,
+per-map node id scoping, cascade delete, a 500-node bulk write, the complete
+share-link lifecycle, and schema idempotency.
+
+Re-run them after any change to `repository.py` — they are the only thing
+standing between a Cypher typo and silent data loss.
 
 ## Quick start
 
