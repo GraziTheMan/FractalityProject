@@ -148,6 +148,9 @@ for (const f of jsFiles) {
         report('error', f, `unresolved import "${spec}"`, `line ${line}`);
       }
     } else if (!/^(https?:|\/)/.test(spec)) {
+      // The node: prefix is unambiguously a built-in (node:test, node:assert)
+      if (spec.startsWith('node:')) continue;
+
       const pkgName = spec.startsWith('@')
         ? spec.split('/').slice(0, 2).join('/')
         : spec.split('/')[0];

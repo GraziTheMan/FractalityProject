@@ -1,1 +1,27 @@
- 
+# Python dependencies for the Fractality backend.
+#
+# Derived from the actual imports across consciousness_backend/, core/ and
+# src/ — this file was previously empty, so nothing was installable.
+# Install with:  pip install -r consciousness_backend/requirements.txt
+
+# --- consciousness_backend/ ------------------------------------------------
+numpy>=1.24                 # collapse engine, metabolism, quantum manager, FBIP
+fastapi>=0.110              # consciousness_api
+uvicorn[standard]>=0.29     # ASGI server for consciousness_api
+pydantic>=2.6               # consciousness_api request/response models
+jsonschema>=4.21            # validation_utility
+pyserial>=3.5               # sdc_consciousness_bridge (SDC chip UART)
+
+# --- core/ ----------------------------------------------------------------
+rich>=13.7                  # fractality_cli terminal UI
+python-frontmatter>=1.1     # markdown node parsing (cli, similarity engines)
+scikit-learn>=1.4           # tfidf_resonance
+joblib>=1.3                 # similarity_engine caching
+sentence-transformers>=2.6  # semantic_resonance (pulls in torch; large)
+PyJWT>=2.8                  # auth_wrapper
+aiofiles>=23.2              # user_storage
+
+# --- src/ (hardware + protocol + security layers) -------------------------
+msgpack>=1.0                # enhanced_fbip_v2 binary encoding
+pyusb>=1.2                  # consciousness_hardware_layer
+cryptography>=42.0          # consciousness_security

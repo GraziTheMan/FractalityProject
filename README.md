@@ -1,10 +1,10 @@
-# The Fractality Platform v0.13.0 Alpha
+# The Fractality Platform v0.13.1 Alpha
 
 > **A Social Mind Mapping Experiment**  
 > *Where mathematics becomes consciousness, and thoughts become living structures*
 
 [![Status](https://img.shields.io/badge/Status-Alpha-orange.svg)](https://github.com/GraziTheMan/FractalityProject)
-[![Version](https://img.shields.io/badge/Version-0.13.0-blue.svg)](https://github.com/GraziTheMan/FractalityProject/releases)
+[![Version](https://img.shields.io/badge/Version-0.13.1-blue.svg)](https://github.com/GraziTheMan/FractalityProject/releases)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 ## 🌌 Vision
@@ -27,80 +27,96 @@ This release represents a major architectural evolution from our initial Alpha r
 
 ```
 FractalityProject/
-├── 📊 Data Management & Storage
-│   ├── agent_memory/           # Agent state persistence
-│   ├── data/                   # Core data files and schemas
-│   ├── json/                   # Structured data exports
-│   ├── mindmaps/               # Mind map definitions
-│   └── models/                 # ML models and data structures
+├── index.html                  # ← the app entry point; loads src/main.js
+├── server.js                   # express + socket.io host (serves dist/)
+├── vite.config.js              # build config
 │
-├── 🧠 Intelligence & Processing
-│   ├── consciousness_backend/   # Triadic consciousness system
-│   ├── core/                   # Core processing engines
-│   ├── src/                    # Main application source
-│   └── server/                 # Backend services
+├── src/                        # Main application source (ES modules)
+│   ├── main.js                 # Entry: wires menu, engine, search, ECS
+│   ├── components/             # radialMenu, mirrorToggle
+│   ├── utils/                  # appState (view router + event bus), helpers
+│   ├── engine/                 # FractalityEngine, state, perf monitor
+│   ├── visualization/          # Three.js renderer, animation, particles
+│   ├── intelligence/           # CACE, layout, resonance, animation engines
+│   ├── ecs/                    # Entity-component-system core
+│   ├── consciousness/          # Consciousness layer + metabolism
+│   ├── chat/                   # Multi-AI chat (needs a server proxy — see audit)
+│   ├── data/                   # Node schema, loaders, test generators
+│   ├── ui/                     # Panels: search, debug, info, dashboards
+│   ├── styles/                 # main.css, shell.css (index.html's DOM)
+│   └── core/                   # EventBus
 │
-├── 🎨 User Interfaces
-│   ├── ui/                     # Web UI components
-│   ├── mobile/                 # Mobile interface
-│   ├── public/                 # Static web assets
-│   │   ├── assets/             # Images, icons, media
-│   │   ├── components/         # Reusable UI components
-│   │   ├── legacy/             # Previous interface versions
-│   │   ├── utils/              # Utility functions
-│   │   ├── index.html          # Main web interface
-│   │   ├── main.js             # Core JavaScript
-│   │   └── style.css           # Styling
-│   └── users/                  # User management
+├── core/                       # Python + JS engines
+│   ├── agent_systems/          # Triadic consciousness agents
+│   ├── field_engines/          # Superionic DB, glyphs, phase, collapse
+│   ├── similarity_engine/      # TF-IDF + semantic resonance
+│   ├── users/                  # Consciousness user model
+│   └── cli/                    # fractality_cli
 │
-├── 🔬 Testing & Development
-│   ├── tests/                  # Test suites
-│   ├── scripts/                # Build and deployment scripts
-│   ├── transfer/               # Data migration tools
-│   └── vendor/                 # Third-party dependencies
+├── consciousness_backend/      # FastAPI backend + hardware bridge
+│   └── requirements.txt        # Python dependencies
 │
-└── 📖 Documentation
-    ├── docs/                   # Technical documentation
-    ├── README.md               # This file
-    ├── LICENSE                 # MIT License
-    └── package.json            # Node.js dependencies
+├── ui/                         # Standalone UI widget modules
+├── mobile/                     # Mobile entry point
+├── public/                     # Static assets served verbatim
+├── data/  mindmaps/  users/    # Content and fixtures
+├── docs/                       # Technical documentation + audit
+├── tests/                      # node:test unit tests
+├── scripts/                    # health-check.mjs, export_logs.py
+├── vendor/                     # Vendored three.js (legacy; npm three is used)
+└── archive/                    # Superseded code, kept for reference only
 ```
+
+> `archive/` holds three previous generations of the app (`public-legacy`,
+> `src-legacy`, `cli-legacy`). Nothing there is wired up and its imports are
+> not expected to resolve — `npm run health` reports it as warnings only.
 
 ## 🎮 Quick Start
 
-### Option 1: Direct Browser (Recommended for Testing)
+> **A build step is required.** `src/` uses the bare specifier
+> `import * as THREE from 'three'`, which browsers cannot resolve on their own.
+> Serving the files with a plain static server gives you a blank canvas — use
+> Vite (below) for development and `npm run build` for deployment.
+
+### Option 1: Development server (recommended)
 
 ```bash
 # Clone the repository
 git clone https://github.com/GraziTheMan/FractalityProject.git
 cd FractalityProject
 
-# Serve with any HTTP server
-python -m http.server 8000
-# OR
-npx serve public
-
-# Open http://localhost:8000
-```
-
-### Option 2: Full Development Setup
-
-```bash
 # Install dependencies
 npm install
 
-# Start development server
+# Start the Vite dev server (hot reload)
 npm run dev
 
-# Open http://localhost:5173
+# Open http://localhost:3000
 ```
 
-### Option 3: Data Console Interface
+### Option 2: Production build
 
 ```bash
-# Open the data management console
-open public/data-console.html
-# OR navigate to http://localhost:8000/data-console.html
+npm install
+npm run build     # emits dist/
+npm run serve     # express + socket.io, serves dist/ on :3000
+```
+
+`server.js` serves `dist/` when it exists and falls back to the repo root
+otherwise, warning you that the visualizer will not work in that mode.
+
+### Option 3: Checks
+
+```bash
+npm run health    # static audit: parse errors, unresolved imports, dead refs
+npm test          # unit tests for the ECS and agent systems
+```
+
+The Python backend and CLI are separate:
+
+```bash
+pip install -r consciousness_backend/requirements.txt
+python -m core.cli.fractality_cli
 ```
 
 ## 🎯 Core Features
@@ -131,8 +147,12 @@ open public/data-console.html
 
 ## 🎮 User Interface Guide
 
-### 📊 Data Console (`data-console.html`)
-The primary interface for creating and managing nodes:
+### 📊 Data Console (`archive/public-legacy/data-console.html`)
+> ⚠️ Archived and not currently wired into the app. The file is also truncated
+> at 20,011 bytes by an old copy-paste, so it needs finishing before it can be
+> restored. Described here because the workflow is still the intended one.
+
+The interface for creating and managing nodes:
 
 **Human Interface:**
 - Manual form-based node creation
@@ -249,6 +269,8 @@ ChatGPT has been instrumental in this project's development, contributing:
 - Mobile-responsive components
 
 ### 🚧 In Progress
+- [ ] Server-side AI proxy so the chat module can be enabled safely
+- [ ] A real resonance network behind ResonanceEngine
 - [ ] Connection line visualization between nodes
 - [ ] Advanced selection and filtering modes
 - [ ] Search functionality across the knowledge graph
@@ -265,17 +287,32 @@ ChatGPT has been instrumental in this project's development, contributing:
 
 ## 🐛 Known Issues
 
-- File loading in browser environments needs refinement
-- Search functionality is currently placeholder
-- Mobile optimization requires additional testing
-- Large datasets (>1000 nodes) may impact performance
+See [`docs/AUDIT-2026-08.md`](docs/AUDIT-2026-08.md) for the full list with
+detail. The ones most likely to bite:
+
+- **Chat module is not usable as written.** `src/chat/` instantiates AI provider
+  SDKs directly, which would ship API keys to every visitor. It needs a
+  server-side proxy first, and its three SDKs are deliberately not installed.
+- **`ResonanceEngine` is local-only.** It persists to `localStorage` and seeds
+  sample pulses; there is no resonance network behind it yet.
+- **The mobile app is unverified.** `mobile/mobile-entry.js` and
+  `src/mobile/MobileApp.js` now resolve and parse, but the mobile UI has not
+  been run end to end.
+- **Two orphaned React files.** `ui/pages/app.tsx` and
+  `ui/components/consciousness/ConsciousnessPanel.tsx` import React,
+  `lucide-react` and a `@/components` alias. There is no React or JSX toolchain
+  in the project and nothing references them.
+- Large datasets (>1000 nodes) may impact performance.
+- `archive/cli-legacy/fractality_cli.py` does not compile; it is kept only as a
+  reference copy of the working `core/cli/fractality_cli.py`.
 
 ## 📖 Documentation
 
+- [`AUDIT-2026-08.md`](docs/AUDIT-2026-08.md) - Full codebase audit: what was broken, what was fixed, what is still outstanding
 - [`AI-PROTOCOL.md`](docs/AI-PROTOCOL.md) - Complete guide to the Fractality AI Protocol v2.0
 - [`DATA-CONSOLE-README.md`](docs/DATA-CONSOLE-README.md) - Data Management Console user guide
-- [`SETUP.md`](docs/SETUP.md) - Detailed setup and configuration instructions
-- [`FRACTALITY_CORES.md`](docs/FRACTALITY_CORES.md) - Original project vision and roadmap
+- [`SETUP.md`](docs/IntegrationGuides/SETUP.md) - Detailed setup and configuration instructions
+- [`FRACTALITY_CORES.md`](docs/archived/FRACTALITY_CORES.md) - Original project vision and roadmap
 
 ## 🙏 Acknowledgments
 
@@ -296,4 +333,4 @@ MIT License - See [LICENSE](LICENSE) file for details.
 
 ---
 
-*The Fractality Project v0.13.0 - Where consciousness meets code*
+*The Fractality Project v0.13.1 - Where consciousness meets code*
