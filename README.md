@@ -109,8 +109,38 @@ otherwise, warning you that the visualizer will not work in that mode.
 
 ```bash
 npm run health    # static audit: parse errors, unresolved imports, dead refs
-npm test          # unit tests for the ECS and agent systems
+npm test          # unit tests: ECS, agent systems, HTML/URL sanitizing
 ```
+
+### Configuration
+
+Copy `.env.example` to `.env.local` and fill in what you need:
+
+| Variable | Purpose | Unset behaviour |
+|---|---|---|
+| `VITE_API_BASE` | Fractality API base URL | runs standalone on local test data |
+| `VITE_SOCKET_URL` | realtime endpoint for chat | chat disabled |
+| `VITE_AI_PROXY_URL` | server-side AI proxy | AI participant disabled |
+| `VITE_CLI_BRIDGE_URL` | local Python CLI bridge | `localhost:8001` in dev, off in prod |
+
+> `VITE_*` values are inlined into the bundle **at build time** and are public.
+> Never put a provider API key or database password in one — those belong only
+> to the server. See `src/config/deploy.js`.
+
+## 🚢 Deploying
+
+The frontend is a fully client-side SPA, so it deploys as a **static site** —
+free tier, CDN, free TLS, and no idle spin-down.
+
+`render.yaml` is a ready Render Blueprint: build `npm ci && npm run build`,
+publish `./dist`. Add your domain under Settings → Custom Domains and point DNS
+at the target Render gives you; certificates are automatic. The blueprint also
+carries a commented-out API service definition for when the backend exists.
+
+A backend is only needed once you want persistence, accounts, chat, or a shared
+feed. See Part 4 of the [audit](docs/AUDIT-2026-08.md) for the ordering, and note
+that WebSockets require an always-on instance — the free tier's idle spin-down
+drops connections.
 
 The Python backend and CLI are separate:
 

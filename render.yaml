@@ -1,8 +1,87 @@
+# render.yaml — Render Blueprint for the Fractality Platform
+#
+# The frontend is a fully client-side SPA (Three.js rendering, localStorage
+# persistence), so it deploys as a Static Site: free tier, global CDN, free TLS,
+# and no idle spin-down. That is the right shape until there is a backend.
+#
+# Custom domain: add fractiverse.com to this service in the Render dashboard
+# (Settings -> Custom Domains) and point your DNS at the target Render shows.
+# Certificates are issued automatically.
+#
+# NOTE ON ENV VARS: Vite substitutes VITE_* at BUILD time, so changing one
+# requires a redeploy, not a restart. Never put a provider API key in a VITE_
+# var — it is compiled into the bundle that every visitor downloads.
+
 services:
   - type: web
-    name: fractality-platform
-    env: node
-    # The build step is required: browsers cannot resolve the bare `three`
-    # import in src/, so serving raw source yields a blank canvas.
-    buildCommand: npm install && npm run build
-    startCommand: node server.js
+    name: fractality-web
+    runtime: static
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+
+    # Single-page app: serve index.html for paths that aren't real files, so
+    # deep links and refreshes don't 404.
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+    headers:
+      # The bundle filenames are content-hashed, so they can be cached hard.
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+      # index.html must not be cached, or clients pin to an old bundle.
+      - path: /index.html
+        name: Cache-Control
+        value: no-cache
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+
+    envVars:
+      # Backend endpoints. Leave unset until the API exists; the app detects
+      # their absence and degrades rather than erroring.
+      # - key: VITE_API_BASE
+      #   value: https://api.fractiverse.com
+      # - key: VITE_SOCKET_URL
+      #   value: https://api.fractiverse.com
+      # - key: VITE_AI_PROXY_URL
+      #   value: https://api.fractiverse.com/ai
+      - key: NODE_VERSION
+        value: "22"
+
+# ---------------------------------------------------------------------------
+# Phase 2+: the API service.
+#
+# Uncomment when the FastAPI backend exists. Notes that matter:
+#   * WebSockets need an always-on instance — the free tier's idle spin-down
+#     drops connections, so this cannot be `plan: free`.
+#   * Neo4j is NOT hosted here. Use Neo4j AuraDB and set NEO4J_URI /
+#     NEO4J_USER / NEO4J_PASSWORD as secrets in the dashboard (sync: false).
+#   * Media goes to object storage (e.g. Cloudflare R2), not the database.
+#
+# - type: web
+#   name: fractality-api
+#   runtime: python
+#   plan: starter
+#   buildCommand: pip install -r consciousness_backend/requirements.txt
+#   startCommand: uvicorn consciousness_backend.consciousness.consciousness_api:app --host 0.0.0.0 --port $PORT
+#   healthCheckPath: /health
+#   envVars:
+#     - key: NEO4J_URI
+#       sync: false
+#     - key: NEO4J_USER
+#       sync: false
+#     - key: NEO4J_PASSWORD
+#       sync: false
+#     - key: ANTHROPIC_API_KEY
+#       sync: false
+#     - key: OPENAI_API_KEY
+#       sync: false
+#     - key: CORS_ORIGIN
+#       value: https://fractiverse.com
+# ---------------------------------------------------------------------------

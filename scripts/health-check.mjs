@@ -163,6 +163,70 @@ for (const f of jsFiles) {
   }
 }
 
+// --- 3b. Named imports exist in the target module ---------------------------
+//
+// Path resolution alone missed two real bugs: chat-ai-hub.js imported
+// { chatSocket } from a module that never exported it, and chat-ui.js imported
+// { initChatUI } from itself. Both resolved to a real file and to undefined.
+
+const NAMED_IMPORT_RE =
+  /import\s+(?:[\w$]+\s*,\s*)?\{([^}]+)\}\s*from\s*['"]([^'"]+)['"]/gm;
+
+/** Exported names of a module: `export function x`, `export const x`, `export { a, b }`. */
+function exportedNames(src) {
+  const names = new Set();
+
+  const direct = /export\s+(?:async\s+)?(?:function\*?|class|const|let|var)\s+([\w$]+)/g;
+  let m;
+  while ((m = direct.exec(src)) !== null) names.add(m[1]);
+
+  const braced = /export\s*\{([^}]+)\}/g;
+  while ((m = braced.exec(src)) !== null) {
+    for (const part of m[1].split(',')) {
+      const alias = part.trim().split(/\s+as\s+/).pop().trim();
+      if (alias) names.add(alias);
+    }
+  }
+
+  if (/export\s+default/.test(src)) names.add('default');
+  // `export * from` re-exports an unknown set; treat the module as opaque
+  if (/export\s*\*\s*from/.test(src)) names.add('*');
+
+  return names;
+}
+
+for (const f of jsFiles) {
+  const src = stripComments(fs.readFileSync(f, 'utf8'));
+  let m;
+  NAMED_IMPORT_RE.lastIndex = 0;
+
+  while ((m = NAMED_IMPORT_RE.exec(src)) !== null) {
+    const [, clause, spec] = m;
+    if (!spec.startsWith('.')) continue;
+
+    const target = resolveSpec(f, spec);
+    if (!target) continue; // already reported as unresolved above
+
+    const available = exportedNames(fs.readFileSync(target, 'utf8'));
+    if (available.has('*')) continue; // re-exports; can't verify statically
+
+    const line = src.slice(0, m.index).split('\n').length;
+
+    for (const part of clause.split(',')) {
+      const name = part.trim().split(/\s+as\s+/)[0].trim();
+      if (!name || name === 'default') continue;
+
+      if (!available.has(name)) {
+        report(
+          'error', f,
+          `imports { ${name} } from "${spec}", which does not export it`,
+          `line ${line}`
+        );
+      }
+    }
+  }
+}
+
 // --- 4. HTML references resolve --------------------------------------------
 
 const HTML_REF_RE = /(?:src|href)\s*=\s*["']([^"']+)["']/g;

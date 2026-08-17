@@ -97,12 +97,17 @@ export class ResonanceEngine {
         const pulse = pulses.find(p => p.id === pulseId);
         if (!pulse) throw new Error(`Unknown pulse: ${pulseId}`);
 
-        pulse.resonanceCount = (pulse.resonanceCount || 0) + 1;
+        pulse.resonators = (pulse.resonators || 0) + 1;
+        // `resonance` is the 0..1 strength the feed renders as a ring; derive it
+        // from the resonator count with diminishing returns so it saturates
+        // rather than clipping at 1 after a handful of votes.
+        pulse.resonance = 1 - Math.pow(0.9, pulse.resonators);
+
         this._resonated.add(pulseId);
         this._savePulses(pulses);
 
         this.eventBus?.emit('resonance:given', { pulseId });
-        return { pulseId, resonanceCount: pulse.resonanceCount };
+        return { pulseId, resonators: pulse.resonators, resonance: pulse.resonance };
     }
 
     /**
@@ -118,22 +123,42 @@ export class ResonanceEngine {
 
     /**
      * Publish a new pulse locally.
+     *
+     * The field names here are dictated by ResonanceFeedController, which
+     * renders them — see the schema note at the bottom of this file.
      */
-    async publishPulse({ content, author = 'local', tags = [] }) {
+    async publishPulse({ title, preview = '', author, tags = [], media = null }) {
         const pulses = this._loadPulses();
         const pulse = {
             id: `pulse-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            content,
-            author,
+            title,
+            preview,
+            author: this._normalizeAuthor(author),
             tags,
+            media,
             timestamp: Date.now(),
-            resonanceCount: 0
+            resonance: 0,
+            resonators: 0
         };
 
         pulses.push(pulse);
         this._savePulses(pulses);
         this.eventBus?.emit('pulse:published', pulse);
         return pulse;
+    }
+
+    /**
+     * Accept either a bare name or a full author object; the feed UI always
+     * reads `author.name` and `author.avatar`.
+     */
+    _normalizeAuthor(author) {
+        if (!author) return { id: 'local', name: 'You', avatar: null };
+        if (typeof author === 'string') return { id: author, name: author, avatar: null };
+        return {
+            id: author.id ?? author.name ?? 'unknown',
+            name: author.name ?? 'Unknown',
+            avatar: author.avatar ?? null
+        };
     }
 
     enterLowPowerMode() {
@@ -188,20 +213,62 @@ export class ResonanceEngine {
 
     _generateSeedPulses() {
         const seeds = [
-            { content: 'Consciousness may be what recursion feels like from the inside.', tags: ['consciousness', 'recursion'] },
-            { content: 'Every mind map is a compression of a life.', tags: ['mindmap'] },
-            { content: 'Resonance is cheaper than agreement.', tags: ['social', 'resonance'] },
-            { content: 'The golden angle shows up wherever growth avoids its own history.', tags: ['math', 'fractal'] }
+            {
+                title: 'Recursion from the inside',
+                preview: 'Consciousness may be what recursion feels like from the inside.',
+                tags: ['consciousness', 'recursion']
+            },
+            {
+                title: 'Maps as compression',
+                preview: 'Every mind map is a compression of a life.',
+                tags: ['mindmap']
+            },
+            {
+                title: 'Resonance over agreement',
+                preview: 'Resonance is cheaper than agreement, and travels further.',
+                tags: ['social', 'resonance']
+            },
+            {
+                title: 'The golden angle',
+                preview: 'It shows up wherever growth needs to avoid its own history.',
+                tags: ['math', 'fractal']
+            }
         ];
 
         const now = Date.now();
         return seeds.map((seed, i) => ({
             id: `pulse-seed-${i}`,
-            content: seed.content,
-            author: 'fractality',
+            title: seed.title,
+            preview: seed.preview,
+            author: { id: 'fractality', name: 'Fractality', avatar: null },
             tags: seed.tags,
+            media: null,
             timestamp: now - i * 3600_000,
-            resonanceCount: 0
+            resonance: 0,
+            resonators: 0
         }));
     }
 }
+
+// --- Pulse schema ----------------------------------------------------------
+//
+// Defined by what ResonanceFeedController._createPulseElement() renders. When
+// this moves to a real backend, this is the shape the API must return, and a
+// reasonable basis for the Neo4j (:Pulse) node plus its [:POSTED_BY] and
+// [:RESONATED_WITH] relationships.
+//
+//   id         string   stable identifier
+//   title      string   headline, rendered as <h3>
+//   preview    string   body text / excerpt
+//   author     object   { id, name, avatar }  — avatar may be null
+//   tags       string[] rendered as clickable #tag filters
+//   media      object   null, or { type: 'image', url, alt }
+//                             or { type: 'glyph', glyphId, render }
+//   timestamp  number   epoch ms, rendered as "time ago"
+//   resonance  number   0..1 strength, drawn as a progress ring
+//   resonators number   count of users who resonated
+//
+// Server-side additions to expect: visibility (see PrivacyLevel in
+// core/users/consciousness_user.py), a moderation/report state, and an
+// edited/deleted marker.
+

@@ -5,34 +5,50 @@
 
 import { FractalNode, NodeCollection, NodeMigration } from '../shared/NodeSchema.js';
 import { DataLoader } from '../data/DataLoader.js';
+import { deployConfig } from '../config/deploy.js';
 
 /**
  * NodeBridge - Unified bridge for CLI integration
  * Handles server communication, file sync, data conversion, and live updates
  */
 export class NodeBridge {
-    constructor(serverUrl = 'http://localhost:8001') {
+    /**
+     * @param {string|null} [serverUrl] CLI bridge base URL. Defaults to the
+     *   deploy config, which only supplies one during local development.
+     *   Pass null to disable server mode outright.
+     */
+    constructor(serverUrl = deployConfig.cliBridgeUrl) {
         this.nodeCollection = new NodeCollection();
         this.dataLoader = new DataLoader();
         this.syncInterval = null;
         this.watchedFiles = new Set();
-        
+
         // Server connection
-        this.serverUrl = serverUrl;
+        this.serverUrl = serverUrl || null;
         this.serverConnected = false;
         this.lastHealthCheck = null;
-        
+
         // Event emitter for updates
         this.listeners = new Map();
-        
+
         // Initialize server connection
         this.initializeServer();
     }
-    
+
     /**
-     * Initialize connection to Flask server
+     * Initialize connection to the CLI bridge server.
+     *
+     * The bridge is a local developer tool. On a deployed site there is no
+     * localhost to reach, and an http:// URL would be blocked as mixed content
+     * on an https page — so when no URL is configured we skip the request
+     * entirely rather than making every visitor pay for a failed fetch.
      */
     async initializeServer() {
+        if (!this.serverUrl) {
+            this.serverConnected = false;
+            return false;
+        }
+
         try {
             const response = await fetch(`${this.serverUrl}/health`);
             if (response.ok) {
@@ -548,6 +564,12 @@ export class NodeBridge {
      * Server fetch helper - NEW METHOD
      */
     async serverFetch(endpoint, options = {}) {
+        // Guard rather than templating a null base into the URL, which would
+        // produce a request to "null/nodes" against the current origin.
+        if (!this.serverUrl) {
+            throw new Error('NodeBridge: no CLI bridge configured (set VITE_CLI_BRIDGE_URL)');
+        }
+
         const url = `${this.serverUrl}${endpoint}`;
         const config = {
             headers: {

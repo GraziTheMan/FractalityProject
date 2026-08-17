@@ -7,7 +7,10 @@ logs
 *.log
 
 # Environment
+# .env.example IS tracked; real values never are.
 .env
+.env.local
+.env.*.local
 
 # Build output
 dist/

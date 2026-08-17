@@ -1,3 +1,5 @@
+import { initChatUI } from './chat-client.js';
+
 document.getElementById('toggleDrawer').addEventListener('click', () => {
   const drawer = document.getElementById('menuDrawer');
   drawer.classList.toggle('visible');
@@ -28,7 +30,6 @@ function renderBubbleView(container) {
   container.innerHTML = '<h2>🧠 Bubble View</h2><p>This will render the dynamic node graph.</p>';
 }
 
-import { initChatUI } from './chat-ui.js';
 function renderChatView(container) {
   initChatUI("moduleContainer");
 }

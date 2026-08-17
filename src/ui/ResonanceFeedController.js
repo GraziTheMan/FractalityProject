@@ -4,6 +4,7 @@ import { EventBus } from '../core/EventBus.js';
 import { HapticFeedback } from './HapticFeedback.js';
 import { AnimationEngine } from '../intelligence/AnimationEngine.js';
 import { ResonanceEngine } from '../intelligence/ResonanceEngine.js';
+import { escapeHtml, safeUrl } from '../utils/sanitize.js';
 
 export class ResonanceFeedController {
     constructor(options = {}) {
@@ -226,16 +227,23 @@ export class ResonanceFeedController {
         const element = document.createElement('article');
         element.className = 'pulse-item';
         element.dataset.pulseId = pulse.id;
-        
+
         const timeAgo = this._formatTimeAgo(pulse.timestamp);
-        const resonancePercent = Math.round(pulse.resonance * 100);
-        
+        const resonancePercent = Math.round((pulse.resonance || 0) * 100);
+
+        // Every interpolation below that carries user-authored text goes through
+        // esc(), and every URL through safeUrl(). This markup is assembled with
+        // innerHTML, so an unescaped title or display name is stored XSS: one
+        // post containing <img onerror=...> would run for every reader.
+        const esc = escapeHtml;
+        const author = pulse.author || {};
+
         element.innerHTML = `
             <div class="pulse-header">
                 <div class="pulse-author">
-                    <img class="author-avatar" src="${pulse.author.avatar || '/default-avatar.png'}" alt="${pulse.author.name}">
-                    <span class="author-name">${pulse.author.name}</span>
-                    <span class="pulse-time">${timeAgo}</span>
+                    <img class="author-avatar" src="${safeUrl(author.avatar) || '/default-avatar.png'}" alt="${esc(author.name)}">
+                    <span class="author-name">${esc(author.name)}</span>
+                    <span class="pulse-time">${esc(timeAgo)}</span>
                 </div>
                 <div class="pulse-resonance" title="Resonance strength">
                     <svg class="resonance-icon" width="16" height="16" viewBox="0 0 16 16">
@@ -249,26 +257,26 @@ export class ResonanceFeedController {
             </div>
             
             <div class="pulse-content">
-                <h3 class="pulse-title">${pulse.title}</h3>
-                <p class="pulse-preview">${pulse.preview}</p>
+                <h3 class="pulse-title">${esc(pulse.title)}</h3>
+                <p class="pulse-preview">${esc(pulse.preview)}</p>
                 ${pulse.media ? this._renderMedia(pulse.media) : ''}
             </div>
-            
+
             <div class="pulse-footer">
                 <div class="pulse-tags">
-                    ${pulse.tags.map(tag => `
-                        <button class="pulse-tag" data-tag="${tag}">#${tag}</button>
+                    ${(pulse.tags || []).map(tag => `
+                        <button class="pulse-tag" data-tag="${esc(tag)}">#${esc(tag)}</button>
                     `).join('')}
                 </div>
                 <div class="pulse-actions">
-                    <button class="action-resonate" data-pulse-id="${pulse.id}" title="Resonate">
+                    <button class="action-resonate" data-pulse-id="${esc(pulse.id)}" title="Resonate">
                         <span class="action-icon">🔄</span>
-                        <span class="action-count">${pulse.resonators || 0}</span>
+                        <span class="action-count">${Number(pulse.resonators) || 0}</span>
                     </button>
-                    <button class="action-amplify" data-pulse-id="${pulse.id}" title="Amplify">
+                    <button class="action-amplify" data-pulse-id="${esc(pulse.id)}" title="Amplify">
                         <span class="action-icon">📡</span>
                     </button>
-                    <button class="action-entangle" data-pulse-id="${pulse.id}" title="Quantum Entangle">
+                    <button class="action-entangle" data-pulse-id="${esc(pulse.id)}" title="Quantum Entangle">
                         <span class="action-icon">🔗</span>
                     </button>
                 </div>
@@ -318,9 +326,14 @@ export class ResonanceFeedController {
 
     _renderMedia(media) {
         if (media.type === 'image') {
-            return `<img class="pulse-media" src="${media.url}" alt="${media.alt || ''}" loading="lazy">`;
+            const url = safeUrl(media.url);
+            if (!url) return '';
+            return `<img class="pulse-media" src="${url}" alt="${escapeHtml(media.alt || '')}" loading="lazy">`;
         } else if (media.type === 'glyph') {
-            return `<div class="pulse-glyph" data-glyph-id="${media.glyphId}">${media.render}</div>`;
+            // media.render is server-generated glyph markup, not user prose, so
+            // it is intentionally not escaped. If glyph rendering ever becomes
+            // user-authored, this becomes an injection point — sanitize there.
+            return `<div class="pulse-glyph" data-glyph-id="${escapeHtml(media.glyphId)}">${media.render}</div>`;
         }
         return '';
     }
