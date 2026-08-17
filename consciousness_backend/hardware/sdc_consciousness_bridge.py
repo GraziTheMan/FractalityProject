@@ -255,7 +255,7 @@ class PersonalConsciousnessDevice:
             "sdc_chips": chip_data
         }
     
-    def 8x8x8_cube_preparation(self) -> Dict:
+    def cube_8x8x8_preparation(self) -> Dict:
         """Prepare for future 8x8x8 memristor cube integration"""
         
         # Current 4-SDC configuration as proof of concept
