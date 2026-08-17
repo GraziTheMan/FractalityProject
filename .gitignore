@@ -24,6 +24,9 @@ dist/
 # Python
 __pycache__/
 *.pyc
+.venv/
+venv/
+.pytest_cache/
 
 # Local models or large assets
 models/audio/*.onnx

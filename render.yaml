@@ -54,34 +54,43 @@ services:
       - key: NODE_VERSION
         value: "22"
 
-# ---------------------------------------------------------------------------
-# Phase 2+: the API service.
-#
-# Uncomment when the FastAPI backend exists. Notes that matter:
-#   * WebSockets need an always-on instance — the free tier's idle spin-down
-#     drops connections, so this cannot be `plan: free`.
-#   * Neo4j is NOT hosted here. Use Neo4j AuraDB and set NEO4J_URI /
-#     NEO4J_USER / NEO4J_PASSWORD as secrets in the dashboard (sync: false).
-#   * Media goes to object storage (e.g. Cloudflare R2), not the database.
-#
-# - type: web
-#   name: fractality-api
-#   runtime: python
-#   plan: starter
-#   buildCommand: pip install -r consciousness_backend/requirements.txt
-#   startCommand: uvicorn consciousness_backend.consciousness.consciousness_api:app --host 0.0.0.0 --port $PORT
-#   healthCheckPath: /health
-#   envVars:
-#     - key: NEO4J_URI
-#       sync: false
-#     - key: NEO4J_USER
-#       sync: false
-#     - key: NEO4J_PASSWORD
-#       sync: false
-#     - key: ANTHROPIC_API_KEY
-#       sync: false
-#     - key: OPENAI_API_KEY
-#       sync: false
-#     - key: CORS_ORIGIN
-#       value: https://fractiverse.com
-# ---------------------------------------------------------------------------
+  # --- API service (api/) --------------------------------------------------
+  #
+  # Commented out until you have AuraDB and Clerk credentials to hand. Once you
+  # do, uncomment, set the secrets in the dashboard, then point VITE_API_BASE
+  # above at this service's URL and redeploy the static site.
+  #
+  # Things that are not optional:
+  #   * `plan: starter`, not free. Idle spin-down drops WebSocket connections,
+  #     and cold starts on a paused instance make the API look broken.
+  #   * Neo4j is NOT hosted on Render. Use Neo4j AuraDB (Free tier is fine to
+  #     start) and set the credentials as secrets — sync: false keeps them out
+  #     of this file and out of git.
+  #   * CORS_ORIGIN must be your real frontend origin. The app refuses to boot
+  #     in production on a wildcard, because browsers reject wildcard + credentials.
+  #
+  # - type: web
+  #   name: fractality-api
+  #   runtime: python
+  #   plan: starter
+  #   buildCommand: pip install -r api/requirements.txt
+  #   startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+  #   healthCheckPath: /health
+  #   envVars:
+  #     - key: ENVIRONMENT
+  #       value: production
+  #     - key: CORS_ORIGIN
+  #       value: https://fractiverse.com
+  #     - key: NEO4J_URI
+  #       sync: false
+  #     - key: NEO4J_USER
+  #       sync: false
+  #     - key: NEO4J_PASSWORD
+  #       sync: false
+  #     - key: CLERK_ISSUER
+  #       sync: false
+  #     # For the future AI proxy (step 5). Server-side only — never VITE_.
+  #     - key: ANTHROPIC_API_KEY
+  #       sync: false
+  #     - key: OPENAI_API_KEY
+  #       sync: false
