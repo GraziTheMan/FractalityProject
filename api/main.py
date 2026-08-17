@@ -85,10 +85,15 @@ async def health():
 
     if driver is not None:
         try:
-            await driver.verify_connectivity()
+            # Query the configured database rather than only checking
+            # connectivity: verify_connectivity() succeeds against a reachable
+            # server even when the target database does not exist, which would
+            # make this endpoint report "ok" for a service that cannot serve a
+            # single request.
+            await db.verify_database(settings)
             database = "ok"
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Health check: Neo4j unreachable: %s", exc)
+            logger.warning("Health check: database %r unusable: %s", settings.neo4j_database, exc)
             database = "unreachable"
 
     return {

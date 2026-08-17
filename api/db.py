@@ -41,9 +41,35 @@ async def init_driver(settings: Settings) -> Optional[AsyncDriver]:
         connection_acquisition_timeout=30,
     )
 
+    # verify_connectivity() only proves the server answered — it does NOT check
+    # that settings.neo4j_database exists. An Aura instance that is paused, still
+    # provisioning, or whose database has a different name passes this and then
+    # fails every query with DatabaseNotFound. Run a trivial query against the
+    # configured database so a misconfiguration is caught at startup.
     await _driver.verify_connectivity()
-    logger.info("Connected to Neo4j at %s", settings.neo4j_uri)
+    await verify_database(settings)
+
+    logger.info(
+        "Connected to Neo4j at %s (database %r)", settings.neo4j_uri, settings.neo4j_database
+    )
     return _driver
+
+
+async def verify_database(settings: Settings) -> None:
+    """
+    Prove the configured database is usable. Raises on failure.
+
+    Separate from verify_connectivity() because the two answer different
+    questions, and conflating them is how a service reports itself healthy while
+    being unable to serve a single request.
+    """
+    driver = get_driver()
+    if driver is None:
+        raise RuntimeError("Neo4j is not configured")
+
+    async with driver.session(database=settings.neo4j_database) as s:
+        result = await s.run("RETURN 1 AS ok")
+        await result.single()
 
 
 async def close_driver() -> None:
@@ -134,13 +160,27 @@ async def apply_schema(settings: Settings) -> int:
         return 0
 
     applied = 0
+    first_error: Optional[Exception] = None
+
     for statement in SCHEMA_STATEMENTS:
         try:
             async with session(settings) as s:
                 await s.run(statement)
             applied += 1
         except Exception as exc:  # noqa: BLE001 - report and continue
+            if first_error is None:
+                first_error = exc
             logger.warning("Schema statement failed: %s (%s)", statement.split()[2], exc)
+
+    # Every statement failing is not a partial degradation, it means the database
+    # is unusable — wrong name, paused instance, no write permission. Raise rather
+    # than logging warnings and returning 0, which reads like success to a caller
+    # that does not inspect the count.
+    if applied == 0 and SCHEMA_STATEMENTS:
+        raise RuntimeError(
+            f"No schema statements could be applied to database "
+            f"{settings.neo4j_database!r}. First error: {first_error}"
+        ) from first_error
 
     logger.info("Applied %d/%d schema statements", applied, len(SCHEMA_STATEMENTS))
     return applied

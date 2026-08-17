@@ -91,16 +91,34 @@ Your instance is **Fractality Platform**. When you created it:
 - The URI looks like `neo4j+s://xxxxxxxx.databases.neo4j.io`. The `+s` matters —
   it means TLS, and AuraDB requires it.
 
-Verify it works, and validate the Cypher at the same time:
+Verify it works. **On Windows PowerShell** (`export` is bash-only):
 
-```bash
-export NEO4J_URI='neo4j+s://xxxxxxxx.databases.neo4j.io'
-export NEO4J_USER='neo4j'
-export NEO4J_PASSWORD='...'
-
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
 pip install -r api/requirements.txt
+
+$env:NEO4J_URI = 'neo4j+s://xxxxxxxx.databases.neo4j.io'
+$env:NEO4J_USERNAME = 'neo4j'
+$env:NEO4J_PASSWORD = 'your-password'
+
+python scripts/check_neo4j.py      # do this FIRST
 pytest api/tests/test_integration_neo4j.py -v
 ```
+
+On macOS/Linux or Git Bash, use `export NAME='value'` instead of `$env:`.
+
+`check_neo4j.py` gives a one-line diagnosis instead of a pytest traceback, and
+prints the output of `SHOW DATABASES` so you can see what your database is
+actually called. Run it before the test suite every time.
+
+Two naming traps in Aura's credentials file:
+- It spells the user **`NEO4J_USERNAME`**, not `NEO4J_USER`. Both are accepted.
+- Its value is `neo4j`. The hex string in your URI (e.g. `1efeea86`) is the
+  **instance ID**, not the username.
+
+Also note the `$env:` variables exist only in the terminal window where you set
+them. A new tab means the tests silently skip.
 
 **This is the highest-value thing you can do right now.** Those 16 tests are the
 only check on the Cypher in `api/repository.py`, which has never run against a

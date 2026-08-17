@@ -11,7 +11,7 @@ src/config/deploy.js and may only contain public values.
 from functools import lru_cache
 from typing import List
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -36,8 +36,13 @@ class Settings(BaseSettings):
     # --- Neo4j ------------------------------------------------------------
     # AuraDB uses the neo4j+s:// scheme (TLS). A local instance uses bolt://.
     neo4j_uri: str = Field(default="")
-    neo4j_user: str = Field(default="neo4j")
+    # Aura's downloaded credentials file spells this NEO4J_USERNAME, so accept
+    # both spellings rather than silently defaulting to "neo4j" when someone
+    # pastes the file's variable names verbatim.
+    neo4j_user: str = Field(default="neo4j", validation_alias=AliasChoices("NEO4J_USER", "NEO4J_USERNAME"))
     neo4j_password: str = Field(default="")
+    # Aura's default database is "neo4j". Override only if SHOW DATABASES says
+    # otherwise — see scripts/check_neo4j.py.
     neo4j_database: str = Field(default="neo4j")
 
     # --- auth (Clerk) -----------------------------------------------------

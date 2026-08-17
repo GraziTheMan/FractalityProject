@@ -55,6 +55,26 @@ In `production`, the app **refuses to start** if Neo4j or Clerk is unconfigured,
 if `ALLOW_DEV_AUTH` is on, or if CORS is a wildcard. That is deliberate: each of
 those would leave a service that looks healthy while being open or useless.
 
+## Diagnosing a connection
+
+Before running anything else against a new database:
+
+```bash
+python scripts/check_neo4j.py
+```
+
+It checks, and stops at the first failure: env vars present → DNS → TCP/TLS →
+credentials accepted → target database exists and is online → write permission.
+It also runs `SHOW DATABASES` and prints what actually exists, which is the
+question a bare `DatabaseNotFound` error fails to answer. No secrets are printed.
+
+Use this instead of reading pytest tracebacks — a config problem produces pages
+of driver internals that say nothing useful.
+
+Note on variable names: Aura's downloaded credentials file spells the user
+`NEO4J_USERNAME`, not `NEO4J_USER`. Both are accepted. Its value is `neo4j`; the
+hex string in your URI is the **instance ID**, not the username.
+
 ## Setting up AuraDB Free
 
 1. Create an instance at <https://console.neo4j.io> (Free tier).

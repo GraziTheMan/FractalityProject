@@ -33,24 +33,41 @@ pytestmark = pytest.mark.skipif(
 SUBJECT = "itest-subject"
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def settings():
     return Settings(
         environment="test",
         neo4j_uri=os.environ["NEO4J_URI"],
-        neo4j_user=os.getenv("NEO4J_USER", "neo4j"),
+        # Aura's credentials file names it NEO4J_USERNAME; accept either.
+        neo4j_user=(
+            os.getenv("NEO4J_USER") or os.getenv("NEO4J_USERNAME") or "neo4j"
+        ),
         neo4j_password=os.environ["NEO4J_PASSWORD"],
-        neo4j_database=os.getenv("NEO4J_DATABASE", "neo4j"),
+        neo4j_database=os.getenv("NEO4J_DATABASE") or "neo4j",
     )
 
 
-@pytest.fixture(scope="module", autouse=True)
+# Function-scoped, NOT module-scoped, and deliberately so.
+#
+# pytest-asyncio gives each test function its own event loop by default
+# (asyncio_default_test_loop_scope=function). A module-scoped async fixture is
+# therefore created on a different loop from the tests that use it, and the
+# Neo4j driver holds sockets bound to that first loop. Every test then failed
+# with "got Future attached to a different loop" or "Event loop is closed" —
+# regardless of whether the database was reachable.
+#
+# Reconnecting per test costs a fraction of a second and removes the whole class
+# of problem. Do not "optimise" this back to module scope without also pinning
+# the loop scope for both fixtures and tests.
+@pytest.fixture(autouse=True)
 async def driver(settings):
     await db.init_driver(settings)
     await db.apply_schema(settings)
     yield
-    await _cleanup(settings)
-    await db.close_driver()
+    try:
+        await _cleanup(settings)
+    finally:
+        await db.close_driver()
 
 
 async def _cleanup(settings):
@@ -69,7 +86,9 @@ async def _cleanup(settings):
 
 
 @pytest.fixture
-async def user(settings):
+async def user(settings, driver):
+    # Depends on `driver` explicitly rather than relying on autouse ordering,
+    # so the connection definitely exists before this runs.
     await _cleanup(settings)
     return await repo.upsert_user(settings, SUBJECT, "itest", "itest@example.com")
 
