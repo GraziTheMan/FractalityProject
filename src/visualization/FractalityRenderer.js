@@ -25,6 +25,10 @@ export class FractalityRenderer {
         // Geometry and materials
         this.nodeGeometry = null;
         this.nodeMaterial = null;
+        // Which shape is currently on the mesh, and whether we are in the
+        // performance fallback. Tracked so quality changes are idempotent.
+        this.geometryMode = null;
+        this.lowPolyActive = false;
         
         // Lighting
         this.lights = {
@@ -73,9 +77,11 @@ export class FractalityRenderer {
         // Create renderer
         this._createRenderer();
         
-        // Create geometry and materials
+        // Create geometry and materials (material first: the mesh takes both,
+        // and the material is created once for the lifetime of the renderer)
+        this._createMaterial();
         this._createGeometry();
-        
+
         // Create instanced mesh
         this._createInstancedMesh();
         
@@ -162,48 +168,84 @@ export class FractalityRenderer {
     }
     
     /**
-     * Create node geometry
+     * Build the geometry for a given shape name.
      */
-    _createGeometry() {
+    _buildGeometry(type) {
         const geoConfig = config.rendering.instances.geometry;
-        
-        switch (geoConfig.type) {
-            case 'sphere':
-                this.nodeGeometry = new THREE.SphereGeometry(
-                    geoConfig.radius,
-                    geoConfig.segments,
-                    geoConfig.segments
-                );
-                break;
-                
+
+        switch (type) {
             case 'box':
-                this.nodeGeometry = new THREE.BoxGeometry(
+                return new THREE.BoxGeometry(
                     geoConfig.radius * 2,
                     geoConfig.radius * 2,
                     geoConfig.radius * 2
                 );
-                break;
-                
+
             case 'octahedron':
-                this.nodeGeometry = new THREE.OctahedronGeometry(
-                    geoConfig.radius,
-                    0
-                );
-                break;
-                
+                return new THREE.OctahedronGeometry(geoConfig.radius, 0);
+
+            case 'sphere':
             default:
-                // Default to sphere
-                this.nodeGeometry = new THREE.SphereGeometry(
+                return new THREE.SphereGeometry(
                     geoConfig.radius,
                     geoConfig.segments,
                     geoConfig.segments
                 );
         }
-        
-        // Calculate triangle count for performance metrics
+    }
+
+    /**
+     * Swap the node geometry, updating the live mesh and freeing the old one.
+     *
+     * Both of those steps used to be missing from the restore path, which is why
+     * nodes turned into octahedra ("pyramids") the first time the quality
+     * manager dropped below 50% and never turned back: the low-poly path
+     * assigned to instancedMesh.geometry, the normal path only reassigned the
+     * field and left the mesh rendering the octahedron forever.
+     */
+    _setGeometry(type) {
+        // Nothing to do if we are already showing this shape. Without this,
+        // an oscillating framerate rebuilds geometry every quality change.
+        if (this.geometryMode === type && this.nodeGeometry) return;
+
+        const previous = this.nodeGeometry;
+
+        this.nodeGeometry = this._buildGeometry(type);
+        this.geometryMode = type;
+
+        // Triangle count feeds the performance panel
         this.triangleCount = this.nodeGeometry.attributes.position.count / 3;
-        
-        // Create material
+
+        if (this.instancedMesh) {
+            this.instancedMesh.geometry = this.nodeGeometry;
+        }
+
+        // Free the GPU buffers of the geometry we just replaced. Skipping this
+        // leaked one geometry per quality change.
+        if (previous && previous !== this.nodeGeometry) {
+            previous.dispose();
+        }
+    }
+
+    /**
+     * Create node geometry at the configured detail level.
+     */
+    _createGeometry() {
+        this._setGeometry(config.rendering.instances.geometry.type || 'sphere');
+    }
+
+    /**
+     * Create the shared node material.
+     *
+     * Kept separate from geometry creation, and called exactly once. It used to
+     * live inside _createGeometry(), so every quality change built a NEW
+     * material while the mesh kept rendering the original — meaning the
+     * clearcoat adjustment in setQuality() silently applied to an orphan, and a
+     * material leaked on each change.
+     */
+    _createMaterial() {
+        if (this.nodeMaterial) return;
+
         this.nodeMaterial = new THREE.MeshPhysicalMaterial({
             color: 0xffffff,
             metalness: 0.2,
@@ -443,34 +485,30 @@ export class FractalityRenderer {
         this.shadowsEnabled = this.quality > 0.5 && config.rendering.shadowsEnabled;
         this.renderer.shadowMap.enabled = this.shadowsEnabled;
         
-        // Update geometry detail
-        if (this.quality < 0.5) {
-            // Use lower poly geometry
+        // Update geometry detail. Hysteresis: drop to low poly under 45% but
+        // only restore above 55%, so a framerate hovering at the threshold does
+        // not visibly flip the shapes back and forth every frame.
+        if (this.lowPolyActive) {
+            if (this.quality > 0.55) {
+                this._createGeometry();
+                this.lowPolyActive = false;
+            }
+        } else if (this.quality < 0.45) {
             this._createLowPolyGeometry();
-        } else {
-            // Use normal geometry
-            this._createGeometry();
+            this.lowPolyActive = true;
         }
-        
+
         // Update material quality
         this.nodeMaterial.clearcoat = this.quality > 0.7 ? 0.3 : 0;
-        
+
         return this.quality;
     }
-    
+
     /**
-     * Create low poly geometry for performance
+     * Drop to low poly geometry for performance.
      */
     _createLowPolyGeometry() {
-        this.nodeGeometry = new THREE.OctahedronGeometry(
-            config.rendering.instances.geometry.radius,
-            0 // No subdivisions
-        );
-        
-        // Update instanced mesh geometry
-        if (this.instancedMesh) {
-            this.instancedMesh.geometry = this.nodeGeometry;
-        }
+        this._setGeometry('octahedron');
     }
     
     /**
