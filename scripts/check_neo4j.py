@@ -163,25 +163,46 @@ def main() -> int:
 
         # Which databases actually exist? This is the question that a
         # DatabaseNotFound error should have answered for you directly.
-        available = []
+        # SHOW DATABASES returns one row per database PER SERVER, so on a
+        # clustered instance (Aura Free runs three) every name repeats. Collapse
+        # by name so the output reads as a list of databases, not of replicas.
+        by_name: dict[str, dict] = {}
         try:
             with driver.session(database="system") as s:
                 for record in s.run("SHOW DATABASES"):
-                    available.append({
-                        "name": record.get("name"),
-                        "status": record.get("currentStatus") or record.get("requestedStatus"),
-                        "default": record.get("default"),
-                    })
+                    name = record.get("name")
+                    status = record.get("currentStatus") or record.get("requestedStatus")
+                    entry = by_name.setdefault(
+                        name, {"name": name, "status": status, "default": False, "servers": 0}
+                    )
+                    entry["servers"] += 1
+                    # Any row flagging it default is enough
+                    if record.get("default"):
+                        entry["default"] = True
+                    # Prefer a non-online status so a degraded replica is visible
+                    if status and status.lower() != "online":
+                        entry["status"] = status
         except Exception as exc:  # noqa: BLE001 - best effort
             warn(f"Could not list databases ({type(exc).__name__}).")
+
+        available = list(by_name.values())
 
         if available:
             print()
             print("  Databases on this instance:")
-            for entry in available:
+            for entry in sorted(available, key=lambda e: e["name"]):
                 marker = " (default)" if entry["default"] else ""
-                print(f"    - {entry['name']}  [{entry['status']}]{marker}")
+                replicas = f" x{entry['servers']}" if entry["servers"] > 1 else ""
+                print(f"    - {entry['name']}  [{entry['status']}]{marker}{replicas}")
             print()
+
+            user_dbs = [e["name"] for e in available if e["name"] != "system"]
+            if not database and len(user_dbs) == 1:
+                # Aura names the database after the instance ID rather than
+                # "neo4j", which is exactly why hardcoding a name broke this.
+                print(f"  Your database is named {user_dbs[0]!r}.")
+                print("  Leaving NEO4J_DATABASE unset is correct — the server resolves it.")
+                print()
 
             names = {e["name"] for e in available}
             default_name = next((e["name"] for e in available if e["default"]), None)
