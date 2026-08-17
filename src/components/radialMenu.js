@@ -16,16 +16,28 @@ export class RadialMenu {
 
     this.options = options;
     this.menuItems = options.items || [];
+    // Treated as maxima: render() shrinks them to fit the container so the
+    // fan stays inside its box on narrow screens.
     this.radiusX = options.radiusX || 80;
     this.radiusY = options.radiusY || 60;
     this.angleRange = options.angleRange || Math.PI; // 180deg fan
     this.leftHanded = false;
+
+    // Item labels are absolutely positioned from the container's centre, so a
+    // resize has to trigger a re-layout.
+    this._onResize = () => this.render();
 
     this.init();
   }
 
   init() {
     this.render();
+    window.addEventListener('resize', this._onResize);
+  }
+
+  destroy() {
+    window.removeEventListener('resize', this._onResize);
+    this.container.innerHTML = '';
   }
 
   /**
@@ -60,12 +72,22 @@ export class RadialMenu {
     const originX = rect.width / 2;
     const originY = rect.height / 2;
 
+    // Clamp to the box so the fan never spills outside its container. Leaving
+    // margin for the button itself keeps labels from being clipped at the edge.
+    const margin = 56;
+    const radiusX = rect.width > 0
+      ? Math.min(this.radiusX, Math.max(40, rect.width / 2 - margin))
+      : this.radiusX;
+    const radiusY = rect.height > 0
+      ? Math.min(this.radiusY, Math.max(30, rect.height / 2 - 24))
+      : this.radiusY;
+
     this.menuItems.forEach((item, index) => {
       const angleOffset = this.leftHanded ? Math.PI : 0;
       const angle = -this.angleRange / 2 + index * angleStep + angleOffset;
 
-      const x = originX + this.radiusX * Math.cos(angle);
-      const y = originY - this.radiusY * Math.sin(angle);
+      const x = originX + radiusX * Math.cos(angle);
+      const y = originY - radiusY * Math.sin(angle);
 
       const button = document.createElement('button');
       button.className = 'radial-item';

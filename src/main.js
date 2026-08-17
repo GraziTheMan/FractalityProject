@@ -78,8 +78,13 @@ const testGenerator = new TestDataGenerator();
 const searchInterface = new SearchInterface();
 let nodeDebugPanel = null; // Initialize when CACE engine is available
 
-// Create radial menu with original items
+// Create radial menu with original items.
+// The radii must clear the width of the text labels: 9 items across a 180
+// degree fan gives 22.5 degrees of separation, so at the previous default of
+// 80x60 the buttons overlapped into an unreadable stack.
 const menu = new RadialMenu('radial-menu', {
+  radiusX: 240,
+  radiusY: 170,
   items: [
     { label: '🧠 Mindmap', onClick: () => AppState.setView('mindmap') },
     { label: '👥 Social', onClick: () => AppState.setView('social') },
@@ -475,7 +480,7 @@ AppState.on('viewChanged', async (view) => {
     
     if (!hasCliData) {
       // Load default test data
-      const nodeGraph = testGenerator.generatePattern('golden');
+      const nodeGraph = testGenerator.generateTestPattern('golden');
       await fractalityEngine.loadData(nodeGraph);
     } else {
       // Load bridge data
@@ -520,8 +525,13 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // Initial server status check
   updateServerStatusMini();
-  
+
   console.log('✨ Fractality with full CLI Bridge + Search + Debug ready!');
+
+  // Open the default view. This is what triggers the 'viewChanged' handler
+  // that lazily boots FractalityEngine, so without it the canvas stays empty
+  // until the user picks something from the radial menu.
+  AppState.setView('bubble');
 });
 
 // Export for debugging

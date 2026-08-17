@@ -1,5 +1,5 @@
 // src/visualization/FractalityRenderer.js
-import { loadThreeJS, getEnvironmentInfo } from '../utils/ThreeJSLoader.js';
+import * as THREE from 'three';
 import { config } from '../config/config.js';
 
 /**
@@ -155,8 +155,10 @@ export class FractalityRenderer {
         this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
         this.renderer.toneMappingExposure = 1.2;
         
-        // Enable color management
-        this.renderer.outputEncoding = THREE.sRGBEncoding;
+        // Enable color management.
+        // outputEncoding/sRGBEncoding were removed in three r152+; the
+        // replacement is outputColorSpace with SRGBColorSpace.
+        this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     }
     
     /**

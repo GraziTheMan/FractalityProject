@@ -158,6 +158,15 @@ export class TestDataGenerator {
         switch (pattern) {
             case 'simple':
                 return this._generateSimpleTest();
+            // Accept the same names DataLoader._loadTestData uses, so callers
+            // can reach every generator through one entry point.
+            case 'balanced':
+                return this.generateBalancedTree();
+            case 'golden':
+            case 'spiral':
+                return this.generateGoldenSpiral();
+            case 'organic':
+                return this.generateOrganic();
             case 'stress':
                 return this.generateBalancedTree({ 
                     depth: 5, 

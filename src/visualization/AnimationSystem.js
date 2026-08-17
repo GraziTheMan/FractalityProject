@@ -1,5 +1,5 @@
 // src/intelligence/AnimationSystem.js
-import { loadThreeJS, getEnvironmentInfo } from '../utils/ThreeJSLoader.js';
+import * as THREE from 'three';
 
 /**
  * AnimationSystem - Smooth, Living Transitions

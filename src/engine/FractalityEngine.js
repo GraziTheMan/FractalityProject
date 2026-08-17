@@ -1,6 +1,6 @@
 // src/engine/FractalityEngine.js
 
-import { loadThreeJS, getEnvironmentInfo } from '../utils/ThreeJSLoader.js';
+import * as THREE from 'three';
 import { FractalityState } from './FractalityState.js';
 import { PerformanceMonitor } from './PerformanceMonitor.js';
 import { FamilyViewController } from '../intelligence/FamilyViewController.js';

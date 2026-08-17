@@ -1,5 +1,5 @@
 // src/visualization/EnergyVisualizer.js
-import { loadThreeJS, getEnvironmentInfo } from '../utils/ThreeJSLoader.js';
+import * as THREE from 'three';
 
 /**
  * EnergyVisualizer - Visualizes mitochondrial-inspired energy flow

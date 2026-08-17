@@ -1,12 +1,46 @@
 // src/config/chatConfig.js
+
+// ---------------------------------------------------------------------------
+// SECURITY: do not put real provider API keys here.
+//
+// This module is imported by src/chat/FractalityChat.js, which runs in the
+// browser. Any key reachable from here is bundled into the client and served
+// to every visitor, who can read it in devtools and spend your quota.
+//
+// `process.env` also does not exist in a browser bundle. Vite exposes only
+// variables prefixed VITE_, via import.meta.env, so the previous
+// `process.env.ANTHROPIC_API_KEY` read would have thrown a ReferenceError at
+// module load and taken the chat down with it.
+//
+// The supported fix is to proxy provider calls through server.js, which can
+// read real keys from its own environment, and to point the client at that
+// endpoint. Until that exists, chat runs against `apiProxy` or not at all.
+// ---------------------------------------------------------------------------
+
+/**
+ * Read a build-time env var without assuming a Node global.
+ */
+function viteEnv(name) {
+    try {
+        return import.meta.env?.[name];
+    } catch {
+        return undefined;
+    }
+}
+
 export const chatConfig = {
-    // API Keys (use environment variables in production)
+    // Server-side proxy that holds the real credentials.
+    // Set VITE_AI_PROXY_URL to enable live chat.
+    apiProxy: viteEnv('VITE_AI_PROXY_URL') || null,
+
+    // Intentionally empty. Kept so downstream code that reads
+    // chatConfig.apis.* gets a clear undefined rather than a crash.
     apis: {
-        claudeKey: process.env.ANTHROPIC_API_KEY || 'your-claude-api-key',
-        openaiKey: process.env.OPENAI_API_KEY || 'your-openai-api-key',
-        geminiKey: process.env.GOOGLE_AI_KEY || 'your-gemini-api-key'
+        claudeKey: undefined,
+        openaiKey: undefined,
+        geminiKey: undefined
     },
-    
+
     // Default AI Personalities
     aiPersonalities: [
         {

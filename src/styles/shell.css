@@ -1,0 +1,188 @@
+/* src/styles/shell.css
+ *
+ * Layout for the elements that /index.html actually contains.
+ *
+ * main.css was written against a different markup (#canvas, #ui-overlay,
+ * #controls) and mobile-menu.css against MenuController's (#menu-root,
+ * #menu-container), so the shell in index.html — #radial-menu,
+ * #state-indicator, #mirror-toggle, #content-view — had no styling at all.
+ * Without a sized #radial-menu in particular, RadialMenu.render() reads a
+ * zero-width bounding box and stacks every button in one spot.
+ *
+ * Colours follow main.css: black ground, cyan accent, translucent panels.
+ */
+
+#app {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* --- 3D viewport ------------------------------------------------------- */
+
+#content-view {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+}
+
+#fractality-canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+/* --- state indicator -------------------------------------------------- */
+
+.state-indicator {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    z-index: 20;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: #0ff;
+    background: rgba(0, 0, 0, 0.85);
+    border: 1px solid #333;
+    border-radius: 6px;
+    backdrop-filter: blur(10px);
+}
+
+/* --- radial menu ------------------------------------------------------ */
+
+/* The fan is positioned from the centre of this box, so it needs real
+   dimensions. Height accommodates the full 180-degree sweep. */
+.radial-menu {
+    position: absolute;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    /* Must be at least 2x the radii passed in main.js (240 x 170), since the
+       fan is drawn outward from the centre of this box. */
+    width: 560px;
+    height: 380px;
+    z-index: 20;
+    pointer-events: none;
+}
+
+.radial-item {
+    /* left/top are set inline by RadialMenu.render() */
+    transform: translate(-50%, -50%);
+    pointer-events: auto;
+    white-space: nowrap;
+    padding: 7px 12px;
+    font-size: 12px;
+    font-family: inherit;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.85);
+    border: 1px solid #333;
+    border-radius: 999px;
+    cursor: pointer;
+    backdrop-filter: blur(10px);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.radial-item:hover {
+    border-color: #0ff;
+    box-shadow: 0 0 16px rgba(0, 255, 255, 0.35);
+    transform: translate(-50%, -50%) scale(1.06);
+}
+
+/* --- mirror toggle / home button -------------------------------------- */
+
+.mirror-toggle,
+.home-button {
+    position: absolute;
+    z-index: 20;
+    padding: 6px 14px;
+    font-size: 12px;
+    font-family: inherit;
+    color: #0ff;
+    background: rgba(0, 0, 0, 0.85);
+    border: 1px solid #333;
+    border-radius: 6px;
+    cursor: pointer;
+    backdrop-filter: blur(10px);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.mirror-toggle {
+    bottom: 24px;
+    right: 24px;
+}
+
+.home-button {
+    bottom: 24px;
+    left: 24px;
+}
+
+.mirror-toggle:hover,
+.home-button:hover {
+    border-color: #0ff;
+    box-shadow: 0 0 16px rgba(0, 255, 255, 0.3);
+}
+
+.mirror-toggle.active {
+    color: #000;
+    background: #0ff;
+    border-color: #0ff;
+}
+
+/* --- placeholder for non-3D views ------------------------------------- */
+
+#view-placeholder {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 5;
+    font-size: 18px;
+    color: #888;
+    text-align: center;
+}
+
+#view-placeholder strong {
+    color: #0ff;
+}
+
+/* --- biometric panel -------------------------------------------------- */
+
+.biometric-panel {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    margin-top: 44px;
+    z-index: 20;
+    min-width: 180px;
+    padding: 12px;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.85);
+    border: 1px solid #333;
+    border-radius: 8px;
+    backdrop-filter: blur(10px);
+}
+
+.hidden {
+    display: none !important;
+}
+
+/* --- responsive ------------------------------------------------------- */
+
+/* The desktop dock is dense; hide it on narrow screens, where the radial
+   menu is the primary navigation. */
+@media (max-width: 720px) {
+    .desktop-only {
+        display: none !important;
+    }
+
+    /* RadialMenu clamps its radii to this box, so a smaller box means a
+       smaller fan rather than a clipped one. */
+    .radial-menu {
+        width: 100vw;
+        height: 300px;
+    }
+}

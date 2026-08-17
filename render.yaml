@@ -2,9 +2,7 @@ services:
   - type: web
     name: fractality-platform
     env: node
-    buildCommand: npm install
+    # The build step is required: browsers cannot resolve the bare `three`
+    # import in src/, so serving raw source yields a blank canvas.
+    buildCommand: npm install && npm run build
     startCommand: node server.js
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /

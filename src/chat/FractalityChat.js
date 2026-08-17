@@ -1,4 +1,14 @@
 // src/chat/FractalityChat.js
+//
+// NOTE: this module is not currently loadable in the browser, by design.
+// It instantiates provider SDKs directly, which requires real API keys in
+// client code — see the security note in src/config/chatConfig.js. Route
+// provider calls through a server endpoint before wiring this into the app.
+//
+// The three provider SDKs and Node's `events` are also not installed as
+// dependencies, so importing this file will fail to resolve until either the
+// packages are added or (preferably) this is reworked against a proxy.
+
 import { EventEmitter } from 'events';
 import { OpenAI } from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
@@ -14,7 +24,19 @@ export class FractalityChat extends EventEmitter {
         super();
         this.sessions = new Map();
         this.activeSession = null;
-        
+
+        // Fail loudly rather than constructing SDK clients with undefined keys
+        // and only discovering it on the first request.
+        const missing = ['claudeKey', 'openaiKey', 'geminiKey']
+            .filter(key => !config?.[key]);
+        if (missing.length > 0) {
+            throw new Error(
+                `FractalityChat: missing credentials (${missing.join(', ')}). ` +
+                'Provider keys must not be shipped to the browser — supply them ' +
+                'to a server-side proxy instead. See src/config/chatConfig.js.'
+            );
+        }
+
         // Initialize API clients
         this.apis = {
             claude: new Anthropic({ apiKey: config.claudeKey }),
@@ -22,7 +44,7 @@ export class FractalityChat extends EventEmitter {
             gemini: new GoogleGenerativeAI(config.geminiKey),
             // Add more as needed
         };
-        
+
         // Context management
         this.contextManager = new ContextManager();
         this.memoryStore = new ChatMemoryStore();
