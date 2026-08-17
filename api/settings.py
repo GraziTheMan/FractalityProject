@@ -9,7 +9,7 @@ src/config/deploy.js and may only contain public values.
 """
 
 from functools import lru_cache
-from typing import List
+from typing import List, Optional
 
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -36,14 +36,28 @@ class Settings(BaseSettings):
     # --- Neo4j ------------------------------------------------------------
     # AuraDB uses the neo4j+s:// scheme (TLS). A local instance uses bolt://.
     neo4j_uri: str = Field(default="")
+
     # Aura's downloaded credentials file spells this NEO4J_USERNAME, so accept
-    # both spellings rather than silently defaulting to "neo4j" when someone
-    # pastes the file's variable names verbatim.
-    neo4j_user: str = Field(default="neo4j", validation_alias=AliasChoices("NEO4J_USER", "NEO4J_USERNAME"))
+    # both spellings — pasting the file's own variable names must work.
+    #
+    # Do NOT assume the username is "neo4j". Current Aura issues the instance ID
+    # as the username (e.g. 1efeea86, matching the URI subdomain and
+    # AURA_INSTANCEID). Older instances used "neo4j", hence the fallback, but
+    # treating that as the norm is wrong.
+    neo4j_user: str = Field(
+        default="neo4j",
+        validation_alias=AliasChoices("NEO4J_USER", "NEO4J_USERNAME"),
+    )
     neo4j_password: str = Field(default="")
-    # Aura's default database is "neo4j". Override only if SHOW DATABASES says
-    # otherwise — see scripts/check_neo4j.py.
-    neo4j_database: str = Field(default="neo4j")
+
+    # Empty means "let the server pick the default database for this user".
+    #
+    # This is deliberately NOT defaulted to "neo4j". Hardcoding that name and
+    # passing it to every session makes each query fail with DatabaseNotFound on
+    # any instance whose default database is named differently — which is a real
+    # configuration Aura hands out. Only set this if you specifically need a
+    # non-default database; scripts/check_neo4j.py will list what exists.
+    neo4j_database: str = Field(default="")
 
     # --- auth (Clerk) -----------------------------------------------------
     # The issuer is shown in the Clerk dashboard, e.g.
@@ -75,6 +89,20 @@ class Settings(BaseSettings):
     @property
     def neo4j_configured(self) -> bool:
         return bool(self.neo4j_uri and self.neo4j_password)
+
+    @property
+    def database_or_default(self) -> Optional[str]:
+        """
+        The database to open sessions against, or None to accept the server's
+        default. Always use this rather than reading neo4j_database directly:
+        passing an empty string to the driver is not the same as passing None.
+        """
+        return self.neo4j_database or None
+
+    @property
+    def database_label(self) -> str:
+        """Human-readable database name, for logs and health output."""
+        return self.neo4j_database or "<server default>"
 
     @property
     def auth_configured(self) -> bool:

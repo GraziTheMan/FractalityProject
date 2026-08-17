@@ -7,8 +7,9 @@ SKIPPED unless NEO4J_URI is set, so the default suite runs anywhere.
 Run them against AuraDB Free:
 
     export NEO4J_URI='neo4j+s://xxxxx.databases.neo4j.io'
-    export NEO4J_USER='neo4j'
+    export NEO4J_USERNAME='xxxxx'   # instance ID, per Aura's credentials file
     export NEO4J_PASSWORD='...'
+    # leave NEO4J_DATABASE unset
     pytest api/tests/test_integration_neo4j.py -v
 
 WARNING: these create and delete nodes. Point them at a scratch database, never
@@ -43,7 +44,8 @@ def settings():
             os.getenv("NEO4J_USER") or os.getenv("NEO4J_USERNAME") or "neo4j"
         ),
         neo4j_password=os.environ["NEO4J_PASSWORD"],
-        neo4j_database=os.getenv("NEO4J_DATABASE") or "neo4j",
+        # Empty = server default; do not force a name that may not exist
+        neo4j_database=os.getenv("NEO4J_DATABASE", ""),
     )
 
 

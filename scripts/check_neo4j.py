@@ -73,7 +73,10 @@ def main() -> int:
     # Aura's downloaded credentials file calls it NEO4J_USERNAME; accept both.
     user = (os.getenv("NEO4J_USER") or os.getenv("NEO4J_USERNAME") or "neo4j").strip()
     password = os.getenv("NEO4J_PASSWORD", "")
-    database = (os.getenv("NEO4J_DATABASE") or "neo4j").strip()
+    # Empty means "let the server choose". Deliberately NOT defaulted to "neo4j":
+    # forcing that name is what produced DatabaseNotFound on an instance whose
+    # default database is called something else.
+    database = (os.getenv("NEO4J_DATABASE") or "").strip()
 
     # --- 1. environment ---------------------------------------------------
     if not uri:
@@ -94,14 +97,12 @@ def main() -> int:
     print(f"  URI      {uri}")
     print(f"  user     {user}")
     print(f"  password {'*' * 8} ({len(password)} chars)")
-    print(f"  database {database}")
+    print(f"  database {database or '<server default>'}")
     print()
 
-    if user != "neo4j":
-        warn(
-            f"user is {user!r}, but on AuraDB it is almost always 'neo4j'. "
-            "The instance ID in your URI is not the username."
-        )
+    # Note: current AuraDB issues the INSTANCE ID as the username (matching the
+    # URI subdomain), not "neo4j". Both are valid depending on when the instance
+    # was created, so neither is warned about here.
 
     parsed = urlparse(uri)
     host = parsed.hostname
@@ -183,32 +184,40 @@ def main() -> int:
             print()
 
             names = {e["name"] for e in available}
-            if database not in names:
-                default_name = next(
-                    (e["name"] for e in available if e["default"]),
-                    sorted(names - {"system"})[0] if names - {"system"} else None,
-                )
+            default_name = next((e["name"] for e in available if e["default"]), None)
+
+            if database and database not in names:
                 fail(
                     f"Configured database {database!r} is not on this instance.",
-                    f"Set NEO4J_DATABASE to {default_name!r} instead."
-                    if default_name else "No usable database found.",
+                    f"Unset NEO4J_DATABASE to use the default ({default_name!r})."
+                    if default_name
+                    else "No usable database found.",
                 )
                 return 1
 
-            state = next(e["status"] for e in available if e["name"] == database)
-            if state and state.lower() != "online":
-                fail(f"Database {database!r} exists but its status is {state!r}.",
-                     "Wait for provisioning to finish, or resume it in the Aura console.")
-                return 1
+            if not database and default_name:
+                ok(f"Server default database is {default_name!r}")
+
+            target = database or default_name
+            if target:
+                state = next(
+                    (e["status"] for e in available if e["name"] == target), None
+                )
+                if state and state.lower() != "online":
+                    fail(
+                        f"Database {target!r} exists but its status is {state!r}.",
+                        "Wait for provisioning to finish, or resume it in the Aura console.",
+                    )
+                    return 1
 
         # Can we actually read?
         try:
-            with driver.session(database=database) as s:
+            with driver.session(database=database or None) as s:
                 value = s.run("RETURN 1 AS ok").single()["ok"]
-            ok(f"Read query against {database!r} returned {value}")
+            ok(f"Read query against {database or '<server default>'} returned {value}")
         except ClientError as exc:
             if "DatabaseNotFound" in str(exc.code or ""):
-                fail(f"Database {database!r} does not exist.",
+                fail(f"Database {database or '<server default>'} does not exist.",
                      "See the list above for the real name, then set NEO4J_DATABASE.",
                      "A still-provisioning or paused Aura instance also reports this.")
             else:
@@ -217,7 +226,7 @@ def main() -> int:
 
         # Can we write? Constraint creation on boot needs this.
         try:
-            with driver.session(database=database) as s:
+            with driver.session(database=database or None) as s:
                 s.run(
                     "MERGE (n:__FractalityConnectionCheck {id: 'probe'}) "
                     "SET n.at = timestamp()"

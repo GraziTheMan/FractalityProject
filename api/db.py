@@ -50,7 +50,7 @@ async def init_driver(settings: Settings) -> Optional[AsyncDriver]:
     await verify_database(settings)
 
     logger.info(
-        "Connected to Neo4j at %s (database %r)", settings.neo4j_uri, settings.neo4j_database
+        "Connected to Neo4j at %s (database %s)", settings.neo4j_uri, settings.database_label
     )
     return _driver
 
@@ -67,7 +67,7 @@ async def verify_database(settings: Settings) -> None:
     if driver is None:
         raise RuntimeError("Neo4j is not configured")
 
-    async with driver.session(database=settings.neo4j_database) as s:
+    async with driver.session(database=settings.database_or_default) as s:
         result = await s.run("RETURN 1 AS ok")
         await result.single()
 
@@ -90,7 +90,7 @@ async def session(settings: Settings):
     if driver is None:
         raise RuntimeError("Neo4j is not configured")
 
-    async with driver.session(database=settings.neo4j_database) as s:
+    async with driver.session(database=settings.database_or_default) as s:
         yield s
 
 
@@ -179,7 +179,7 @@ async def apply_schema(settings: Settings) -> int:
     if applied == 0 and SCHEMA_STATEMENTS:
         raise RuntimeError(
             f"No schema statements could be applied to database "
-            f"{settings.neo4j_database!r}. First error: {first_error}"
+            f"{settings.database_label}. First error: {first_error}"
         ) from first_error
 
     logger.info("Applied %d/%d schema statements", applied, len(SCHEMA_STATEMENTS))

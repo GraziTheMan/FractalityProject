@@ -93,7 +93,7 @@ async def health():
             await db.verify_database(settings)
             database = "ok"
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Health check: database %r unusable: %s", settings.neo4j_database, exc)
+            logger.warning("Health check: database %s unusable: %s", settings.database_label, exc)
             database = "unreachable"
 
     return {

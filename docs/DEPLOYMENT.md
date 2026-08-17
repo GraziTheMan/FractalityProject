@@ -50,8 +50,9 @@ Mark every one of these **secret / `sync: false`** so it is not written into
 ENVIRONMENT      = production
 CORS_ORIGIN      = https://fractiverse.com
 NEO4J_URI        = neo4j+s://xxxxxxxx.databases.neo4j.io
-NEO4J_USER       = neo4j
+NEO4J_USERNAME   = xxxxxxxx        # instance ID, exactly as the file gives it
 NEO4J_PASSWORD   = <from the AuraDB credentials file>
+# NEO4J_DATABASE deliberately NOT set — the server picks its default
 CLERK_ISSUER     = https://your-app-12.clerk.accounts.dev
 ```
 
@@ -98,9 +99,11 @@ python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r api/requirements.txt
 
+# Copy these three straight out of the Aura credentials file
 $env:NEO4J_URI = 'neo4j+s://xxxxxxxx.databases.neo4j.io'
-$env:NEO4J_USERNAME = 'neo4j'
+$env:NEO4J_USERNAME = 'xxxxxxxx'      # the instance ID, per the file
 $env:NEO4J_PASSWORD = 'your-password'
+# Leave NEO4J_DATABASE unset
 
 python scripts/check_neo4j.py      # do this FIRST
 pytest api/tests/test_integration_neo4j.py -v
@@ -112,10 +115,21 @@ On macOS/Linux or Git Bash, use `export NAME='value'` instead of `$env:`.
 prints the output of `SHOW DATABASES` so you can see what your database is
 actually called. Run it before the test suite every time.
 
-Two naming traps in Aura's credentials file:
+About Aura's credentials file — just paste the values it gives you:
+
+```
+NEO4J_USERNAME=1efeea86          <- yes, the instance ID IS the username now
+NEO4J_PASSWORD=...
+NEO4J_URI=neo4j+s://1efeea86.databases.neo4j.io
+AURA_INSTANCEID=1efeea86
+```
+
 - It spells the user **`NEO4J_USERNAME`**, not `NEO4J_USER`. Both are accepted.
-- Its value is `neo4j`. The hex string in your URI (e.g. `1efeea86`) is the
-  **instance ID**, not the username.
+- Current Aura issues the **instance ID as the username**, matching the URI
+  subdomain. Older instances used `neo4j`; do not "correct" the file to that.
+- **Do not set `NEO4J_DATABASE`.** Leave it unset and the server picks its own
+  default. Forcing the name `neo4j` fails with `DatabaseNotFound` on instances
+  whose default database is called something else.
 
 Also note the `$env:` variables exist only in the terminal window where you set
 them. A new tab means the tests silently skip.

@@ -40,9 +40,9 @@ server-side and secret — never expose any of it to the browser.
 | Variable | Required | Notes |
 |---|---|---|
 | `NEO4J_URI` | for DB routes | `neo4j+s://xxx.databases.neo4j.io` for AuraDB |
-| `NEO4J_USER` | | defaults to `neo4j` |
+| `NEO4J_USER` / `NEO4J_USERNAME` | for DB routes | the instance ID on current Aura, not `neo4j` |
 | `NEO4J_PASSWORD` | for DB routes | |
-| `NEO4J_DATABASE` | | defaults to `neo4j` |
+| `NEO4J_DATABASE` | | leave unset — server default. Only set for a non-default database |
 | `CLERK_ISSUER` | for auth | e.g. `https://your-app-12.clerk.accounts.dev` |
 | `CLERK_AUDIENCE` | | only if you configure one in Clerk |
 | `CORS_ORIGIN` | yes in prod | comma-separated; **never `*`** with credentials |
@@ -71,16 +71,21 @@ question a bare `DatabaseNotFound` error fails to answer. No secrets are printed
 Use this instead of reading pytest tracebacks — a config problem produces pages
 of driver internals that say nothing useful.
 
-Note on variable names: Aura's downloaded credentials file spells the user
-`NEO4J_USERNAME`, not `NEO4J_USER`. Both are accepted. Its value is `neo4j`; the
-hex string in your URI is the **instance ID**, not the username.
+Notes on Aura's credentials file — paste its values as-is:
+
+- It spells the user `NEO4J_USERNAME`, not `NEO4J_USER`. Both are accepted.
+- Current Aura issues the **instance ID as the username** (matching the URI
+  subdomain and `AURA_INSTANCEID`). Older instances used `neo4j`.
+- **Leave `NEO4J_DATABASE` unset** unless you need a specific non-default
+  database. Empty means "use the server's default", which is correct for Aura.
 
 ## Setting up AuraDB Free
 
 1. Create an instance at <https://console.neo4j.io> (Free tier).
 2. **Download the credentials file when it is shown — the password is displayed
    exactly once.**
-3. Set `NEO4J_URI` / `NEO4J_PASSWORD` from it.
+3. Set `NEO4J_URI`, `NEO4J_USERNAME` and `NEO4J_PASSWORD` from it verbatim.
+   Leave `NEO4J_DATABASE` unset.
 4. Start the API. Constraints and indexes are applied automatically on boot and
    are idempotent, so there is no separate migration step.
 
@@ -122,7 +127,7 @@ To exercise the Cypher, point it at a **scratch** database:
 
 ```bash
 export NEO4J_URI='neo4j+s://xxxxx.databases.neo4j.io'
-export NEO4J_USER='neo4j'
+export NEO4J_USERNAME='xxxxx'    # instance ID, per the Aura credentials file
 export NEO4J_PASSWORD='...'
 pytest api/tests/test_integration_neo4j.py -v
 ```
