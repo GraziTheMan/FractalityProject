@@ -34,6 +34,13 @@
  *     npm i -D playwright && npx playwright install chromium
  *
  * Set BROWSER_CHECK_URL to point at something other than the local preview.
+ *
+ * The whole run takes a few minutes. BROWSER_CHECK_ONLY narrows it to the
+ * sections whose names contain a substring, which is what you want while working
+ * on one surface:
+ *
+ *     BROWSER_CHECK_ONLY=feed npm run browser-check
+ *     BROWSER_CHECK_ONLY=cone,dock npm run browser-check
  */
 
 const URL = process.env.BROWSER_CHECK_URL || 'http://localhost:4173/';
@@ -63,6 +70,26 @@ let failures = 0;
 const pass = (msg) => console.log(`  ok  ${msg}`);
 const fail = (msg) => { failures++; console.log(`FAIL  ${msg}`); };
 
+/**
+ * Should a section run?
+ *
+ * Sections are skipped rather than removed, and a skip is printed, so a narrowed
+ * run cannot be mistaken for a clean full one.
+ */
+const ONLY = (process.env.BROWSER_CHECK_ONLY || '')
+    .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+
+function section(name) {
+    const wanted = ONLY.length === 0 || ONLY.some((needle) => name.toLowerCase().includes(needle));
+    const rule = '-'.repeat(Math.max(0, 61 - name.length));
+    if (!wanted) {
+        console.log(`\n--- ${name} ${rule}\n  -- skipped (BROWSER_CHECK_ONLY=${ONLY.join(',')})`);
+        return false;
+    }
+    console.log(`\n--- ${name} ${rule}`);
+    return true;
+}
+
 const browser = await chromium.launch(launchOptions);
 
 /** Open the site with the 3D view booted, which is what most checks need. */
@@ -88,9 +115,9 @@ async function openApp(viewport) {
 // 1. Layout: is every control on screen, and is it the topmost thing there?
 // ---------------------------------------------------------------------------
 
-console.log('\n--- layout ---------------------------------------------------');
+const run_layout = section('layout');
 
-for (const vp of VIEWPORTS) {
+if (run_layout) for (const vp of VIEWPORTS) {
     const { ctx, page, errors } = await openApp(vp);
 
     const report = await page.evaluate(() => {
@@ -175,9 +202,9 @@ for (const vp of VIEWPORTS) {
 // 2. Panels on a phone: do they open, fit, and close again?
 // ---------------------------------------------------------------------------
 
-console.log('\n--- panels (phone portrait) ----------------------------------');
+const run_panels = section('panels');
 
-{
+if (run_panels) {
     const { ctx, page } = await openApp(VIEWPORTS[0]);
 
     // Is the panel fully on screen, and is every control inside it reachable?
@@ -363,9 +390,9 @@ console.log('\n--- panels (phone portrait) ----------------------------------');
 // 3. Adaptive quality: the "bubbles turn into pyramids and don't turn back" bug
 // ---------------------------------------------------------------------------
 
-console.log('\n--- adaptive quality ----------------------------------------');
+const run_adaptive_quality = section('adaptive quality');
 
-{
+if (run_adaptive_quality) {
     const { ctx, page } = await openApp(VIEWPORTS[0]);
 
     // Run the WHOLE ladder inside one evaluate.
@@ -444,9 +471,9 @@ console.log('\n--- adaptive quality ----------------------------------------');
 // the success message — so a committed save read as a failed one, and Share was
 // unreachable because it only existed inside a list row that never rendered.
 
-console.log('\n--- cloud path (API stubbed) ---------------------------------');
+const run_cloud_path = section('cloud path');
 
-{
+if (run_cloud_path) {
     const { ctx, page } = await openApp(VIEWPORTS[0]);
 
     await page.evaluate(() => {
@@ -559,9 +586,9 @@ console.log('\n--- cloud path (API stubbed) ---------------------------------');
 // which is wrong precisely when CORS is the problem, because /health carries an
 // Authorization header and is blocked along with everything else.
 
-console.log('\n--- CORS vs unreachable -------------------------------------');
+const run__vs_unreachable = section('CORS vs unreachable');
 
-for (const scenario of [
+if (run__vs_unreachable) for (const scenario of [
     {
         name: 'server up, CORS blocking',
         // Every readable request fails; a no-cors probe resolves opaquely.
@@ -632,9 +659,9 @@ for (const scenario of [
 // entry either changes observable state, or declares itself unavailable and
 // explains why.
 
-console.log('\n--- every dock entry has an effect ---------------------------');
+const run_dock_entries = section('dock entries');
 
-{
+if (run_dock_entries) {
     const { ctx, page } = await openApp(VIEWPORTS[0]);
 
     // Enumerate the dock as the user meets it: top-level buttons, plus the rows
@@ -771,9 +798,9 @@ console.log('\n--- every dock entry has an effect ---------------------------');
 // dead button: an edit that half-applies leaves a graph whose depths and parent
 // links disagree, and that then gets saved to Neo4j.
 
-console.log('\n--- node manager --------------------------------------------');
+const run_node_manager = section('node manager');
 
-{
+if (run_node_manager) {
     const { ctx, page } = await openApp(VIEWPORTS[0]);
 
     // The panel drives prompt()/confirm(); answer them so the run is unattended.
@@ -926,9 +953,9 @@ console.log('\n--- node manager --------------------------------------------');
 // 8. Cone view: the gestures are the interface
 // ---------------------------------------------------------------------------
 
-console.log('\n--- cone view -----------------------------------------------');
+const run_cone_view = section('cone view');
 
-{
+if (run_cone_view) {
     const { ctx, page } = await openApp(VIEWPORTS[0]);
 
     await page.click('#app-dock [data-dock-id="view"]');
@@ -1029,6 +1056,252 @@ console.log('\n--- cone view -----------------------------------------------');
     if (closed.open) fail('the cone view did not close');
     else if (closed.enginePaused) fail('the 3D engine is left paused after the cone closes');
     else pass('closing the cone view resumes the 3D engine');
+
+    await ctx.close();
+}
+
+// ---------------------------------------------------------------------------
+// 9. The feed, with the API stood in for
+// ---------------------------------------------------------------------------
+//
+// The feed renders text written by strangers, which makes it the one surface
+// where a convenient template literal is a stored-XSS vector. So the hostile
+// cases are part of the fixture rather than a separate "security test": a post
+// whose title is an <img onerror>, whose body is a <script>, and whose link is a
+// javascript: URL.
+//
+// One of those found a real bug. safeUrl() returns NULL for a URL it will not
+// vouch for, and the first version of this panel compared against '#', so the
+// check never matched and `link.href = null` rendered the literal string "null".
+// Inert by luck rather than design.
+
+const run_feed = section('feed');
+
+if (run_feed) {
+    const { ctx, page } = await openApp(VIEWPORTS[0]);
+
+    await page.evaluate(() => {
+        const client = window.feedPanel.client;
+        client.baseUrl = 'https://api.test.invalid';
+        client.getToken = async () => 'tok';
+
+        window.__posted = [];
+        window.__pwned = null;
+
+        let pulses = [
+            {
+                id: 'p1', title: 'Recursion from the inside',
+                preview: 'Consciousness may be what recursion feels like from the inside.',
+                author: { id: 'u2', name: 'Ada' }, tags: ['consciousness'],
+                media: null, visibility: 'public', timestamp: Date.now() - 3600e3,
+                resonance: 0.5, resonators: 5, resonated: false, own: false,
+            },
+            {
+                id: 'p2', title: 'A link post', preview: '',
+                author: { id: 'u3', name: 'Bo' }, tags: ['links'],
+                media: { kind: 'link', url: 'https://example.com/thing?a=1&b=2', title: 'example.com' },
+                visibility: 'public', timestamp: Date.now() - 7200e3,
+                resonance: 0, resonators: 0, resonated: false, own: false,
+            },
+            {
+                id: 'p3', title: 'Mine', preview: 'my own post',
+                author: { id: 'u1', name: 'Nick' }, tags: [],
+                media: null, visibility: 'public', timestamp: Date.now() - 60e3,
+                resonance: 0, resonators: 0, resonated: false, own: true,
+            },
+            {
+                // Hostile on every field that reaches the DOM.
+                id: 'p4', title: '<img src=x onerror="window.__pwned=1">',
+                preview: '<script>window.__pwned=2<\/script>',
+                author: { id: 'u4', name: '<b>Evil</b>' }, tags: ['x'],
+                media: { kind: 'link', url: 'javascript:window.__pwned=3', title: 'click me' },
+                visibility: 'public', timestamp: Date.now(),
+                resonance: 0, resonators: 0, resonated: false, own: false,
+            },
+        ];
+
+        globalThis.fetch = async (url, opts = {}) => {
+            const u = String(url).replace('https://api.test.invalid', '');
+            const method = opts.method || 'GET';
+            const json = (body, status = 200) => ({
+                ok: status < 400, status, statusText: 'OK',
+                text: async () => JSON.stringify(body),
+            });
+
+            if (u.startsWith('/pulses?')) return json(pulses);
+            if (method === 'POST' && u === '/pulses') {
+                const body = JSON.parse(opts.body);
+                window.__posted.push(body);
+                pulses = [{
+                    id: 'new', title: body.title, preview: body.preview,
+                    author: { id: 'u1', name: 'Nick' }, tags: body.tags,
+                    media: body.media ?? null, visibility: body.visibility,
+                    timestamp: Date.now(), resonance: 0, resonators: 0,
+                    resonated: false, own: true,
+                }, ...pulses];
+                return json(pulses[0], 201);
+            }
+            if (method === 'PUT' && u.includes('/resonance')) {
+                const id = u.split('/')[2];
+                const on = u.includes('on=true');
+                const target = pulses.find((x) => x.id === id);
+                target.resonated = on;
+                target.resonators += on ? 1 : -1;
+                return json(target);
+            }
+            if (method === 'DELETE' && u.startsWith('/pulses/')) {
+                const id = u.split('/')[2];
+                pulses = pulses.filter((x) => x.id !== id);
+                return json(null, 204);
+            }
+            if (method === 'POST' && u.includes('/report')) return json({ reported: true, reports: 1 }, 202);
+            if (method === 'PUT' && u.includes('/block')) {
+                const authorId = u.split('/')[3];
+                pulses = pulses.filter((x) => x.author.id !== authorId);
+                return json({ blocked: true });
+            }
+            return json({});
+        };
+
+        window.prompt = () => '1';
+        window.confirm = () => true;
+    });
+
+    await page.click('#app-dock [data-dock-id="social"]');
+    await page.waitForTimeout(700);
+
+    const snapshot = () => page.evaluate(() => {
+        const panel = document.querySelector('.pulsefeed-panel');
+        const r = panel.getBoundingClientRect();
+        return {
+            cards: document.querySelectorAll('.pulsefeed-pulse').length,
+            clipped: r.left < -1 || r.top < -1 || r.right > innerWidth + 1 || r.bottom > innerHeight + 1,
+            pwned: window.__pwned,
+            // Any element the hostile markup would have created if it were parsed.
+            injected: document.querySelectorAll('.pulsefeed-pulse img, .pulsefeed-pulse script, .pulsefeed-pulse b').length,
+            links: [...document.querySelectorAll('.pulsefeed-link')].map((a) => a.getAttribute('href')),
+            relAttrs: [...document.querySelectorAll('.pulsefeed-link')].map((a) => a.getAttribute('rel')),
+            titles: [...document.querySelectorAll('.pulsefeed-title')].map((t) => t.textContent),
+            status: document.querySelector('.pulsefeed-status').textContent,
+            horizontalOverflow: document.documentElement.scrollWidth > innerWidth,
+        };
+    });
+
+    const view = await snapshot();
+
+    if (view.cards !== 4) fail(`the feed rendered ${view.cards} of 4 posts`);
+    else pass('the feed renders every post');
+
+    if (view.clipped) fail('the feed panel is clipped by the viewport');
+    else pass('the feed panel fits on screen');
+
+    if (view.horizontalOverflow) fail('a post pushed the page wider than the viewport');
+    else pass('long content does not widen the page');
+
+    // --- the security assertions
+    if (view.pwned !== null) fail(`hostile post content executed (window.__pwned = ${view.pwned})`);
+    else pass('hostile post content did not execute');
+
+    if (view.injected !== 0) fail(`${view.injected} element(s) were created from post markup`);
+    else pass('post markup is rendered as text, not parsed');
+
+    const hostileTitle = view.titles.find((t) => t.includes('img src'));
+    if (!hostileTitle) fail('the hostile title vanished instead of being shown as text');
+    else pass('the hostile title is displayed literally');
+
+    if (view.links.length !== 1) fail(`${view.links.length} links rendered; the javascript: URL should produce none`);
+    else if (!view.links[0].startsWith('https://example.com/thing')) {
+        fail(`the safe link was mangled: ${view.links[0]}`);
+    } else if (!view.links[0].includes('a=1&b=2')) {
+        // safeUrl HTML-escapes what it vouches for, which is wrong for a property:
+        // &amp; in an href is a different URL.
+        fail(`the link's query string was HTML-escaped into a different URL: ${view.links[0]}`);
+    } else {
+        pass('only the safe link renders, and its query string is intact');
+    }
+
+    if (!view.relAttrs.every((rel) => rel && rel.includes('noopener'))) {
+        // Without noopener the opened page can navigate this one through
+        // window.opener.
+        fail(`an outbound link is missing rel=noopener: ${view.relAttrs.join(', ')}`);
+    } else {
+        pass('outbound links carry rel=noopener');
+    }
+
+    // --- resonance comes from the server, not a local guess
+    const before = await page.evaluate(() =>
+        document.querySelector('.pulsefeed-resonate').textContent);
+    await page.click('.pulsefeed-resonate');
+    await page.waitForTimeout(400);
+    const after = await page.evaluate(() =>
+        document.querySelector('.pulsefeed-resonate').textContent);
+    if (before === after) fail(`resonating did not change the count (${before})`);
+    else pass(`resonating updates the count from the server (${before} -> ${after})`);
+
+    // --- composing
+    const composeCollapsed = await page.evaluate(() =>
+        document.querySelector('.pulsefeed-compose-extra')?.hidden);
+    if (composeCollapsed !== true) fail('the compose box is expanded before the user engages with it');
+    else pass('the compose box starts collapsed');
+
+    await page.fill('.pulsefeed-input-title', 'Hello from a test');
+    await page.fill('.pulsefeed-input-tags', 'Alpha, beta , Alpha, ');
+    await page.click('.pulsefeed-post');
+    await page.waitForTimeout(700);
+
+    const posted = await page.evaluate(() => window.__posted);
+    if (posted.length !== 1) fail(`the post was sent ${posted.length} times`);
+    else if (JSON.stringify(posted[0].tags) !== JSON.stringify(['alpha', 'beta'])) {
+        fail(`tags were not normalised before sending: ${JSON.stringify(posted[0].tags)}`);
+    } else {
+        pass('posting sends normalised, deduplicated tags exactly once');
+    }
+
+    const afterPost = await snapshot();
+    if (afterPost.cards !== 5) fail(`the new post did not appear (${afterPost.cards} cards)`);
+    else pass('a new post appears in the feed');
+
+    const cleared = await page.evaluate(() =>
+        document.querySelector('.pulsefeed-input-title').value);
+    if (cleared !== '') fail('the compose box kept its text after a successful post');
+    else pass('the compose box clears after a successful post');
+
+    // --- moderation is reachable
+    const controls = await page.evaluate(() => {
+        const cards = [...document.querySelectorAll('.pulsefeed-pulse')];
+        const mine = cards.find((c) => c.textContent.includes('Delete'));
+        const theirs = cards.find((c) => c.textContent.includes('Report'));
+        return {
+            ownHasDelete: Boolean(mine),
+            ownHasReport: mine ? mine.textContent.includes('Report') : null,
+            othersHaveReport: Boolean(theirs),
+            othersHaveBlock: theirs ? theirs.textContent.includes('Block') : false,
+        };
+    });
+    if (!controls.ownHasDelete) fail('your own post offers no delete');
+    else if (controls.ownHasReport) fail('your own post offers a report, which is noise');
+    else pass('your own post offers delete, and not report');
+
+    if (!controls.othersHaveReport || !controls.othersHaveBlock) {
+        fail('another author\'s post is missing report or block');
+    } else {
+        pass('another author\'s post offers both report and block');
+    }
+
+    // Blocking must remove that author's posts.
+    const cardsBeforeBlock = (await snapshot()).cards;
+    await page.evaluate(() => {
+        const card = [...document.querySelectorAll('.pulsefeed-pulse')]
+            .find((c) => c.textContent.includes('Block'));
+        [...card.querySelectorAll('button')].find((b) => b.textContent === 'Block').click();
+    });
+    await page.waitForTimeout(800);
+    const cardsAfterBlock = (await snapshot()).cards;
+    if (cardsAfterBlock >= cardsBeforeBlock) {
+        fail(`blocking removed nothing (${cardsBeforeBlock} -> ${cardsAfterBlock})`);
+    } else {
+        pass(`blocking hides that author's posts (${cardsBeforeBlock} -> ${cardsAfterBlock})`);
+    }
 
     await ctx.close();
 }

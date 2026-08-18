@@ -17,6 +17,7 @@ at production data. Everything created is prefixed `itest-` and removed in
 teardown, but a failed run can leave residue.
 """
 
+import asyncio
 import os
 import time
 
@@ -73,17 +74,23 @@ async def driver(settings):
 
 
 async def _cleanup(settings):
-    """Remove everything this module created."""
+    """Remove everything this module created.
+
+    Matches on the `itest-` prefix rather than one exact subject: several tests
+    need a second user, and a cleanup that only knew about the first would leave
+    it behind to pollute later runs.
+    """
     await db.run_write(
         settings,
         """
-        MATCH (u:User {subject: $subject})
+        MATCH (u:User)
+        WHERE u.subject STARTS WITH 'itest-'
         OPTIONAL MATCH (u)-[:OWNS]->(m:MindMap)
         OPTIONAL MATCH (m)-[:CONTAINS]->(n:MapNode)
         OPTIONAL MATCH (m)-[:SHARED_VIA]->(s:ShareLink)
-        DETACH DELETE n, s, m, u
+        OPTIONAL MATCH (u)-[:POSTED]->(p:Pulse)
+        DETACH DELETE n, s, m, p, u
         """,
-        subject=SUBJECT,
     )
 
 
@@ -399,3 +406,224 @@ async def test_schema_is_idempotent(settings):
     first = await db.apply_schema(settings)
     second = await db.apply_schema(settings)
     assert first == second == len(db.SCHEMA_STATEMENTS)
+
+
+# --- feed / pulses ---------------------------------------------------------
+#
+# These are the only check on the feed's Cypher. The unit tests in test_feed.py
+# stub the repository, so nothing there would notice a typo'd relationship name
+# or a WHERE clause that silently matches nothing.
+
+OTHER_SUBJECT = "itest-other"
+
+
+@pytest.fixture
+async def other_user(settings, user):
+    """A second account, for blocking and cross-author visibility."""
+    return await repo.upsert_user(settings, OTHER_SUBJECT, "itest-other", None)
+
+
+def pulse_create(title="itest pulse", preview="body", tags=("itest",), media=None,
+                 visibility=Visibility.PUBLIC):
+    from api.models import PulseCreate
+    return PulseCreate(
+        title=title, preview=preview, tags=list(tags),
+        media=media, visibility=visibility,
+    )
+
+
+async def test_create_and_read_a_pulse(settings, user):
+    created = await repo.create_pulse(settings, SUBJECT, pulse_create())
+
+    assert created is not None
+    assert created.title == "itest pulse"
+    assert created.author.name == "itest"
+    assert created.resonators == 0
+    assert created.own is True
+
+    fetched = await repo.get_pulse(settings, created.id, SUBJECT)
+    assert fetched.id == created.id
+    assert fetched.tags == ["itest"]
+
+
+async def test_media_round_trips_through_json(settings, user):
+    from api.models import PulseMedia
+
+    media = PulseMedia(url="https://example.com/a", title="A link", description="d")
+    created = await repo.create_pulse(settings, SUBJECT, pulse_create(media=media))
+
+    fetched = await repo.get_pulse(settings, created.id, SUBJECT)
+    assert fetched.media is not None
+    assert fetched.media.url == "https://example.com/a"
+    assert fetched.media.title == "A link"
+
+
+async def test_the_feed_is_newest_first(settings, user):
+    first = await repo.create_pulse(settings, SUBJECT, pulse_create(title="older"))
+    # created_at is millisecond-resolution, so two writes in the same millisecond
+    # would make the ordering assertion meaningless.
+    await asyncio.sleep(0.01)
+    second = await repo.create_pulse(settings, SUBJECT, pulse_create(title="newer"))
+
+    feed = await repo.list_feed(settings, SUBJECT, limit=10)
+    ids = [p.id for p in feed]
+    assert ids.index(second.id) < ids.index(first.id)
+
+
+async def test_private_pulses_stay_out_of_the_public_feed(settings, user):
+    public = await repo.create_pulse(settings, SUBJECT, pulse_create(title="public"))
+    private = await repo.create_pulse(
+        settings, SUBJECT, pulse_create(title="private", visibility=Visibility.PRIVATE)
+    )
+
+    feed_ids = [p.id for p in await repo.list_feed(settings, SUBJECT, limit=50)]
+    assert public.id in feed_ids
+    assert private.id not in feed_ids
+
+    # But the author still sees it in their own list.
+    own_ids = [p.id for p in await repo.list_own_pulses(settings, SUBJECT, limit=50)]
+    assert private.id in own_ids
+
+
+async def test_the_tag_filter_matches_and_excludes(settings, user):
+    tagged = await repo.create_pulse(settings, SUBJECT, pulse_create(tags=["itest", "fractal"]))
+    other = await repo.create_pulse(settings, SUBJECT, pulse_create(tags=["itest", "music"]))
+
+    ids = [p.id for p in await repo.list_feed(settings, SUBJECT, tag="fractal", limit=50)]
+    assert tagged.id in ids
+    assert other.id not in ids
+
+    # The filter normalises, so "#Fractal" finds the same pulse.
+    ids_hash = [p.id for p in await repo.list_feed(settings, SUBJECT, tag="#Fractal", limit=50)]
+    assert tagged.id in ids_hash
+
+
+async def test_resonance_counts_once_per_user_and_can_be_taken_back(settings, user, other_user):
+    pulse = await repo.create_pulse(settings, SUBJECT, pulse_create())
+
+    # MERGE, so pressing twice is still one resonance.
+    assert await repo.set_resonance(settings, OTHER_SUBJECT, pulse.id, True)
+    await repo.set_resonance(settings, OTHER_SUBJECT, pulse.id, True)
+
+    seen = await repo.get_pulse(settings, pulse.id, OTHER_SUBJECT)
+    assert seen.resonators == 1, "a double tap must not create two relationships"
+    assert seen.resonated is True
+    assert seen.resonance > 0
+
+    await repo.set_resonance(settings, OTHER_SUBJECT, pulse.id, False)
+    after = await repo.get_pulse(settings, pulse.id, OTHER_SUBJECT)
+    assert after.resonators == 0
+    assert after.resonated is False
+    assert after.resonance == 0
+
+
+async def test_resonance_is_per_viewer(settings, user, other_user):
+    pulse = await repo.create_pulse(settings, SUBJECT, pulse_create())
+    await repo.set_resonance(settings, OTHER_SUBJECT, pulse.id, True)
+
+    # The author has not resonated with it; the count is still 1.
+    as_author = await repo.get_pulse(settings, pulse.id, SUBJECT)
+    assert as_author.resonators == 1
+    assert as_author.resonated is False
+
+
+async def test_only_the_author_can_delete_a_pulse(settings, user, other_user):
+    pulse = await repo.create_pulse(settings, SUBJECT, pulse_create())
+
+    assert await repo.delete_pulse(settings, OTHER_SUBJECT, pulse.id) is False
+    assert await repo.get_pulse(settings, pulse.id) is not None, "it must survive"
+
+    assert await repo.delete_pulse(settings, SUBJECT, pulse.id) is True
+    assert await repo.get_pulse(settings, pulse.id) is None
+
+
+async def test_deleting_a_pulse_removes_its_resonance(settings, user, other_user):
+    """DETACH DELETE, so no relationship outlives the node it pointed at."""
+    pulse = await repo.create_pulse(settings, SUBJECT, pulse_create())
+    await repo.set_resonance(settings, OTHER_SUBJECT, pulse.id, True)
+    await repo.delete_pulse(settings, SUBJECT, pulse.id)
+
+    rows = await db.run_read(
+        settings,
+        "MATCH (:User {subject: $s})-[r:RESONATED_WITH]->() RETURN count(r) AS n",
+        s=OTHER_SUBJECT,
+    )
+    assert rows[0]["n"] == 0
+
+
+async def test_blocking_hides_an_author_from_the_feed(settings, user, other_user):
+    mine = await repo.create_pulse(settings, SUBJECT, pulse_create(title="mine"))
+    theirs = await repo.create_pulse(settings, OTHER_SUBJECT, pulse_create(title="theirs"))
+
+    before = [p.id for p in await repo.list_feed(settings, SUBJECT, limit=50)]
+    assert theirs.id in before
+
+    assert await repo.set_block(settings, SUBJECT, other_user["id"], True)
+
+    after = [p.id for p in await repo.list_feed(settings, SUBJECT, limit=50)]
+    assert theirs.id not in after, "a blocked author's pulses must not appear"
+    assert mine.id in after, "blocking must not hide your own pulses"
+
+    # And the block is only for the blocker: the other user still sees everything.
+    theirs_view = [p.id for p in await repo.list_feed(settings, OTHER_SUBJECT, limit=50)]
+    assert theirs.id in theirs_view
+    assert mine.id in theirs_view
+
+
+async def test_unblocking_restores_the_feed(settings, user, other_user):
+    theirs = await repo.create_pulse(settings, OTHER_SUBJECT, pulse_create())
+    await repo.set_block(settings, SUBJECT, other_user["id"], True)
+    await repo.set_block(settings, SUBJECT, other_user["id"], False)
+
+    ids = [p.id for p in await repo.list_feed(settings, SUBJECT, limit=50)]
+    assert theirs.id in ids
+
+
+async def test_you_cannot_block_yourself(settings, user):
+    """It would silently empty your own feed."""
+    me = await repo.upsert_user(settings, SUBJECT, "itest", None)
+    assert await repo.set_block(settings, SUBJECT, me["id"], True) is False
+
+
+async def test_blocked_list_reflects_the_blocks(settings, user, other_user):
+    assert await repo.list_blocked(settings, SUBJECT) == []
+    await repo.set_block(settings, SUBJECT, other_user["id"], True)
+
+    blocked = await repo.list_blocked(settings, SUBJECT)
+    assert [b["id"] for b in blocked] == [other_user["id"]]
+
+
+async def test_reports_count_once_per_reporter(settings, user, other_user):
+    pulse = await repo.create_pulse(settings, SUBJECT, pulse_create())
+
+    assert await repo.report_pulse(settings, OTHER_SUBJECT, pulse.id, "spam") == 1
+    # Same reporter again: still one.
+    assert await repo.report_pulse(settings, OTHER_SUBJECT, pulse.id, "abuse") == 1
+    # A different reporter increments it.
+    assert await repo.report_pulse(settings, SUBJECT, pulse.id, "other") == 2
+
+
+async def test_reporting_a_missing_pulse_reports_nothing(settings, user):
+    assert await repo.report_pulse(settings, SUBJECT, "pulse-nope", "spam") is None
+
+
+async def test_the_rate_limit_window_counts_only_recent_pulses(settings, user):
+    await repo.create_pulse(settings, SUBJECT, pulse_create())
+    await repo.create_pulse(settings, SUBJECT, pulse_create())
+
+    assert await repo.count_recent_pulses(settings, SUBJECT, 60 * 60 * 1000) == 2
+    # A window that ended before they were written sees none of them.
+    assert await repo.count_recent_pulses(settings, SUBJECT, 0) == 0
+
+
+async def test_feed_paging_does_not_repeat_or_skip(settings, user):
+    created = []
+    for i in range(5):
+        created.append(await repo.create_pulse(settings, SUBJECT, pulse_create(title=f"p{i}")))
+        await asyncio.sleep(0.005)
+
+    first = await repo.list_feed(settings, SUBJECT, skip=0, limit=2)
+    second = await repo.list_feed(settings, SUBJECT, skip=2, limit=2)
+
+    assert len(first) == 2 and len(second) == 2
+    assert set(p.id for p in first).isdisjoint(p.id for p in second)

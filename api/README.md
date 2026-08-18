@@ -10,9 +10,11 @@ over Neo4j.
 | Mind map CRUD | implemented; **Cypher verified against live AuraDB** |
 | Share links (view/edit, expiry, revoke) | implemented; **verified against live AuraDB** |
 | Clerk JWT verification | implemented, tested with real RS256 signing |
-| Newsfeed / pulses | not started (step 4) |
+| Newsfeed / pulses | implemented; **Cypher NOT yet verified against a live database** |
+| Moderation (report, block, rate limit, own-delete) | implemented |
 | Chat + AI proxy | not started (step 5) |
 | Media uploads | not started — needs object storage, see below |
+| Admin review queue | not started — needs a notion of an admin role |
 
 **The Cypher is verified.** All 16 integration tests in
 `api/tests/test_integration_neo4j.py` pass against a live AuraDB Free instance
@@ -23,6 +25,71 @@ share-link lifecycle, and schema idempotency.
 
 Re-run them after any change to `repository.py` — they are the only thing
 standing between a Cypher typo and silent data loss.
+
+**The feed's Cypher is the exception, and it matters.** The 17 feed tests in that
+file were written alongside the queries but have never been executed: the
+environment they were written in has no Neo4j and cannot reach one. So the feed's
+`repository.py` functions are covered by 35 router tests with the repository
+stubbed — which verify authorization, rate limiting and validation but would not
+notice a mistyped relationship name or a `WHERE` clause that quietly matches
+nothing.
+
+Run this before trusting the feed with anything:
+
+```bash
+pytest api/tests/test_integration_neo4j.py -v      # 33 tests, 17 of them feed
+```
+
+## The feed
+
+```
+(:User)-[:POSTED]->(:Pulse)
+(:User)-[:RESONATED_WITH]->(:Pulse)
+(:User)-[:REPORTED {reason, at}]->(:Pulse)
+(:User)-[:BLOCKED]->(:User)
+```
+
+Two values are derived rather than stored, deliberately:
+
+- **`resonators`** is a count of `RESONATED_WITH` relationships. A counter
+  property beside them could drift, and a like count that disagrees with who
+  liked it is worse than a slightly slower query.
+- **`resonance`** (0..1) is computed from that count with a saturating curve.
+  There is no meaningful denominator on a feed, and 10 resonators should read as
+  clearly stronger than 1 without needing 1000 to fill the ring.
+
+`MERGE` is used for resonance, reports and blocks, so all three are idempotent: a
+double tap cannot create two relationships, and one person cannot inflate a
+report count by pressing repeatedly.
+
+The block filter is **inside** the feed query rather than applied afterwards. In
+Python it would make `limit` mean "up to N, minus however many were blocked", so
+blocking a prolific poster would silently give you short pages.
+
+### Moderation
+
+Not a later phase — a public feed with no path to removal except a database
+console is not shippable, which is a legal position as much as a product one.
+
+| Control | Where |
+|---|---|
+| Author deletes their own post | ownership is in the Cypher `MATCH`, so there is no check-then-act window |
+| Report | `POST /pulses/{id}/report`, one per reporter, fixed reason list |
+| Block an author | `PUT /pulses/authors/{id}/block`, hides them from your feed only |
+| Posting rate limit | `MAX_PULSES_PER_HOUR`, default 20 |
+
+The rate limit counts stored pulses rather than using an in-process counter,
+because Render runs more than one instance and a per-process counter would hand
+each of them its own allowance.
+
+Report reasons are a fixed list, not free text: the reason is a routing signal
+for a human, and an open text field on an unauthenticated-adjacent endpoint is
+itself an abuse channel.
+
+**What is still missing, and should block opening this to strangers at scale:**
+an admin review queue (there is no admin role yet — reports currently go to the
+service log at warning level), and image scanning, which cannot exist before
+image uploads do.
 
 ## Quick start
 
@@ -55,6 +122,7 @@ server-side and secret — never expose any of it to the browser.
 | `ALLOW_DEV_AUTH` | | dev only; accepts `dev:<user_id>` tokens |
 | `MAX_NODES_PER_MAP` | | default 10000 |
 | `MAX_MAPS_PER_USER` | | default 500 |
+| `MAX_PULSES_PER_HOUR` | | default 20; the feed's posting rate limit |
 
 In `production`, the app **refuses to start** if Neo4j or Clerk is unconfigured,
 if `ALLOW_DEV_AUTH` is on, or if CORS is a wildcard. That is deliberate: each of

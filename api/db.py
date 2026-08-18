@@ -146,6 +146,18 @@ SCHEMA_STATEMENTS = [
 
     "CREATE INDEX map_visibility IF NOT EXISTS "
     "FOR (m:MindMap) ON (m.visibility)",
+
+    "CREATE CONSTRAINT pulse_id_unique IF NOT EXISTS "
+    "FOR (p:Pulse) REQUIRE p.id IS UNIQUE",
+
+    # The feed's default query is "public pulses, newest first". Without these
+    # two it degrades to a full scan of every pulse ever posted, which is fine
+    # at 10 pulses and not at 10,000.
+    "CREATE INDEX pulse_created_at IF NOT EXISTS "
+    "FOR (p:Pulse) ON (p.created_at)",
+
+    "CREATE INDEX pulse_visibility IF NOT EXISTS "
+    "FOR (p:Pulse) ON (p.visibility)",
 ]
 
 

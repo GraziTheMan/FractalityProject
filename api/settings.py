@@ -73,6 +73,11 @@ class Settings(BaseSettings):
     max_nodes_per_map: int = Field(default=10_000)
     max_maps_per_user: int = Field(default=500)
 
+    # Feed posting rate limit, per user per hour. Counted from stored pulses
+    # rather than in memory, because Render runs more than one instance and a
+    # per-process counter would give each of them its own allowance.
+    max_pulses_per_hour: int = Field(default=20)
+
     @field_validator("environment")
     @classmethod
     def _normalize_env(cls, v: str) -> str:

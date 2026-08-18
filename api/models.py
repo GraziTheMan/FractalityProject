@@ -198,6 +198,165 @@ class ShareLink(BaseModel):
         return self.expires_at is None or self.expires_at > _now_ms()
 
 
+# --- feed / pulses ---------------------------------------------------------
+#
+# A "pulse" is a feed post. The field names are set by what
+# ResonanceFeedController._createPulseElement() already renders, so the frontend
+# needed no reshaping to read real data.
+#
+# Media is accepted but not yet servable: images need object storage with
+# presigned uploads (Cloudflare R2 is the plan — see api/README.md), and image
+# bytes must never be proxied through this API or stored in Neo4j. Until that
+# exists, `media` only ever carries a link preview, and MEDIA_KINDS is the
+# whitelist that keeps a client from inventing something else.
+
+MEDIA_KINDS = {"link"}
+
+#: Cap on a pulse body. Long enough for a real thought, short enough that the
+#: feed stays scannable and one post cannot dominate a page of results.
+MAX_PULSE_TEXT = 2_000
+MAX_PULSE_TITLE = 200
+MAX_PULSE_TAGS = 8
+MAX_TAG_LENGTH = 40
+
+
+class PulseAuthor(BaseModel):
+    """Denormalised author, so rendering a feed needs no second lookup."""
+
+    id: str
+    name: str
+    avatar: Optional[str] = None
+
+
+class PulseMedia(BaseModel):
+    kind: str = Field(default="link")
+    url: str
+    title: Optional[str] = None
+    description: Optional[str] = None
+
+    @field_validator("kind")
+    @classmethod
+    def _known_kind(cls, value: str) -> str:
+        if value not in MEDIA_KINDS:
+            raise ValueError(f"media kind must be one of {sorted(MEDIA_KINDS)}")
+        return value
+
+    @field_validator("url")
+    @classmethod
+    def _safe_url(cls, value: str) -> str:
+        # http/https only. A javascript: or data: URL here would become a stored
+        # XSS the moment anything rendered it as a link, and the browser is not
+        # the only consumer of this API.
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("media url is required")
+        lowered = cleaned.lower()
+        if not (lowered.startswith("http://") or lowered.startswith("https://")):
+            raise ValueError("media url must be http or https")
+        if len(cleaned) > 2_000:
+            raise ValueError("media url is too long")
+        return cleaned
+
+
+class PulseCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=MAX_PULSE_TITLE)
+    preview: str = Field(default="", max_length=MAX_PULSE_TEXT)
+    tags: List[str] = Field(default_factory=list)
+    media: Optional[PulseMedia] = None
+    visibility: Visibility = Visibility.PUBLIC
+
+    @field_validator("title", "preview", mode="before")
+    @classmethod
+    def _strip(cls, value: Any) -> Any:
+        """Trim before the length constraints are applied.
+
+        mode="before" is the whole point: a plain validator runs AFTER
+        min_length, so a title of "   " satisfied min_length=1 as three
+        characters and was then stripped to empty. Trimming first means the
+        constraint sees what will actually be stored.
+        """
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("tags")
+    @classmethod
+    def _clean_tags(cls, value: List[str]) -> List[str]:
+        """Normalise tags to lowercase, deduplicated, and bounded.
+
+        Tags are used as filters, so "Fractal", "fractal" and "  fractal  "
+        being three different tags would quietly fragment the feed.
+        """
+        seen: List[str] = []
+        for raw in value:
+            tag = str(raw).strip().lstrip("#").lower()
+            if not tag:
+                continue
+            if len(tag) > MAX_TAG_LENGTH:
+                raise ValueError(f"tag longer than {MAX_TAG_LENGTH} characters")
+            if tag not in seen:
+                seen.append(tag)
+        if len(seen) > MAX_PULSE_TAGS:
+            raise ValueError(f"at most {MAX_PULSE_TAGS} tags")
+        return seen
+
+    @field_validator("visibility")
+    @classmethod
+    def _no_unlisted(cls, value: Visibility) -> Visibility:
+        # Unlisted exists for share-token maps. A pulse is either in the public
+        # feed or it is private to its author; a third state with no way to share
+        # it would just be a private pulse that looks public.
+        if value == Visibility.UNLISTED:
+            raise ValueError("pulses are public or private")
+        return value
+
+
+class Pulse(BaseModel):
+    """A feed post as returned to clients."""
+
+    id: str
+    title: str
+    preview: str
+    author: PulseAuthor
+    tags: List[str] = Field(default_factory=list)
+    media: Optional[PulseMedia] = None
+    visibility: Visibility = Visibility.PUBLIC
+
+    #: Epoch milliseconds, matching the frontend's "time ago" rendering.
+    timestamp: int
+
+    #: 0..1, drawn as a ring by the feed UI. Derived from resonators, not stored
+    #: independently, so the two can never disagree.
+    resonance: float = 0.0
+    resonators: int = 0
+
+    #: Whether the calling user has resonated with this pulse. Absent for
+    #: anonymous callers.
+    resonated: bool = False
+
+    #: True when the caller is the author, which is what the UI uses to decide
+    #: whether to offer a delete.
+    own: bool = False
+
+
+class PulseReport(BaseModel):
+    """A report against a pulse.
+
+    Free-text reasons are deliberately not accepted: a report is a signal for a
+    human to look, and an open text field on an unmoderated endpoint is itself a
+    channel for abuse.
+    """
+
+    reason: str = Field(default="other")
+
+    @field_validator("reason")
+    @classmethod
+    def _known_reason(cls, value: str) -> str:
+        allowed = {"spam", "abuse", "sexual", "violence", "illegal", "other"}
+        cleaned = value.strip().lower()
+        if cleaned not in allowed:
+            raise ValueError(f"reason must be one of {sorted(allowed)}")
+        return cleaned
+
+
 # --- graph validation ------------------------------------------------------
 
 

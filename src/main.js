@@ -13,6 +13,8 @@ import { AnimationSystem } from './visualization/AnimationSystem.js';
 import { MapsPanel } from './ui/MapsPanel.js';
 import { NodeManagerPanel } from './ui/NodeManagerPanel.js';
 import { ConeView } from './ui/ConeView.js';
+import { FeedPanel } from './ui/FeedPanel.js';
+import { feedClient } from './api/feedClient.js';
 import { mindMapClient, MindMapClient } from './api/mindMapClient.js';
 import { hasCliBridge } from './config/deploy.js';
 import { getToken, hasAuth } from './auth/clerkClient.js';
@@ -126,6 +128,21 @@ const nodeManagerPanel = new NodeManagerPanel({
 });
 
 /**
+ * The feed.
+ *
+ * A secondary surface on purpose. The intent for it is "a feature to help replace
+ * the scrolling of modern corporate social media", so it is strictly
+ * reverse-chronological with a Load-more button rather than infinite scroll —
+ * reaching the end should be possible, and continuing should be a decision.
+ */
+feedClient.getToken = getToken;
+
+const feedPanel = new FeedPanel({
+  client: feedClient,
+  notify: (message, type) => showNotification(message, type)
+});
+
+/**
  * The Cone view: a 2D side elevation of the whole map.
  *
  * A genuinely separate surface, not a layout of the 3D scene. Tier 0 is the apex,
@@ -233,6 +250,17 @@ function buildDockItems() {
       isActive: () => nodeManagerPanel.isOpen,
       disabledReason: needsEngine,
       onSelect: () => nodeManagerPanel.toggle()
+    },
+
+    // --- the social half ---------------------------------------------------
+    {
+      id: 'social',
+      icon: '\u{1f465}',
+      label: 'Feed',
+      isActive: () => feedPanel.isOpen,
+      // No engine needed: the feed is readable before anything 3D has booted,
+      // and it is the part a visitor can look at before signing up.
+      onSelect: () => feedPanel.toggle()
     },
 
     // --- finding things ----------------------------------------------------
@@ -863,3 +891,4 @@ window.nodeDebugPanel = () => nodeDebugPanel;
 window.mapsPanel = mapsPanel;
 window.nodeManagerPanel = nodeManagerPanel;
 window.coneView = coneView;
+window.feedPanel = feedPanel;

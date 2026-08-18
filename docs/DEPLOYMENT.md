@@ -191,7 +191,7 @@ real map list.
 ```bash
 npm run health     # 0 errors expected
 npm test           # 87 passing
-pytest api/tests   # 66 passing, 16 skipped without NEO4J_URI
+pytest api/tests   # 101 passing, 33 skipped without NEO4J_URI
 npm run build      # then check dist/ loads
 ```
 
@@ -201,7 +201,8 @@ above cannot see, since they only read files:
 ```bash
 npm i -D playwright && npx playwright install chromium   # one-time
 npm run preview &                 # serves the build on :4173
-npm run browser-check             # 82 checks at three viewports
+npm run browser-check             # 98 checks at three viewports
+                                  # BROWSER_CHECK_ONLY=feed narrows it
 ```
 
 It drives the real page at phone-portrait, phone-landscape and desktop sizes and

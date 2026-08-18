@@ -30,6 +30,7 @@ are stored as JSON strings and parsed on read. Fields worth querying or indexing
 """
 
 import json
+import logging
 import secrets
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -44,11 +45,17 @@ from .models import (
     NodeResonance,
     NodeTimestamps,
     NodeVisual,
+    Pulse,
+    PulseAuthor,
+    PulseCreate,
+    PulseMedia,
     SharePermission,
     ShareLink,
     Visibility,
 )
 from .settings import Settings
+
+logger = logging.getLogger(__name__)
 
 
 def now_ms() -> int:
@@ -571,3 +578,360 @@ RETURN count(m) AS total
 async def count_maps_for_owner(settings: Settings, subject: str) -> int:
     rows = await db.run_read(settings, COUNT_MAPS_FOR_OWNER, subject=subject)
     return rows[0]["total"] if rows else 0
+
+
+# --- feed / pulses ---------------------------------------------------------
+#
+# Data model:
+#
+#   (:User)-[:POSTED]->(:Pulse)
+#   (:User)-[:RESONATED_WITH]->(:Pulse)
+#   (:User)-[:REPORTED {reason, at}]->(:Pulse)
+#   (:User)-[:BLOCKED]->(:User)
+#
+# Two things are deliberately derived rather than stored:
+#
+#   * `resonators` is the count of RESONATED_WITH relationships. Keeping a
+#     counter property beside them would let the two drift, and a like count that
+#     disagrees with who liked it is worse than a slower query.
+#   * `resonance` (0..1) is computed from that count. It is a display value, so
+#     storing it would mean recomputing every row on every scale change anyway.
+#
+# Media is stored as a JSON string for the same reason node metadata is: Neo4j
+# properties must be primitives or arrays of primitives.
+
+
+def _row_to_pulse(row: Dict[str, Any], viewer_subject: Optional[str] = None) -> Pulse:
+    """Build a Pulse from a query row.
+
+    Resonance is a saturating curve rather than a ratio: there is no meaningful
+    denominator on a feed, and 10 resonators should read as clearly stronger than
+    1 without 1000 being needed to fill the ring.
+    """
+    resonators = int(row.get("resonators") or 0)
+    resonance = 1.0 - (1.0 / (1.0 + resonators / 5.0)) if resonators else 0.0
+
+    media_raw = row.get("media_json")
+    media = None
+    if media_raw:
+        try:
+            media = PulseMedia(**json.loads(media_raw))
+        except (ValueError, TypeError):
+            # A pulse whose media cannot be parsed is still a readable pulse.
+            # Dropping the attachment beats failing the whole feed request.
+            logger.warning("Pulse %s has unreadable media_json", row.get("id"))
+
+    return Pulse(
+        id=row["id"],
+        title=row.get("title") or "",
+        preview=row.get("preview") or "",
+        author=PulseAuthor(
+            id=row.get("author_id") or "unknown",
+            name=row.get("author_name") or "Anonymous",
+            avatar=row.get("author_avatar"),
+        ),
+        tags=list(row.get("tags") or []),
+        media=media,
+        visibility=Visibility(row.get("visibility") or "public"),
+        timestamp=int(row.get("created_at") or 0),
+        resonance=round(resonance, 4),
+        resonators=resonators,
+        resonated=bool(row.get("resonated")),
+        own=bool(viewer_subject) and row.get("author_subject") == viewer_subject,
+    )
+
+
+CREATE_PULSE = """
+MATCH (u:User {subject: $subject})
+CREATE (p:Pulse {
+    id: $id,
+    title: $title,
+    preview: $preview,
+    tags: $tags,
+    media_json: $media_json,
+    visibility: $visibility,
+    created_at: $now,
+    reports: 0
+})
+CREATE (u)-[:POSTED]->(p)
+RETURN p.id AS id, p.title AS title, p.preview AS preview, p.tags AS tags,
+       p.media_json AS media_json, p.visibility AS visibility,
+       p.created_at AS created_at,
+       0 AS resonators, false AS resonated,
+       u.id AS author_id, u.username AS author_name, u.subject AS author_subject,
+       null AS author_avatar
+"""
+
+
+async def create_pulse(
+    settings: Settings, subject: str, pulse: PulseCreate
+) -> Optional[Pulse]:
+    """Post a pulse. Returns None when the author has no User node."""
+    rows = await db.run_write(
+        settings,
+        CREATE_PULSE,
+        subject=subject,
+        id=new_id("pulse"),
+        title=pulse.title,
+        preview=pulse.preview,
+        tags=pulse.tags,
+        media_json=pulse.media.model_dump_json() if pulse.media else None,
+        visibility=pulse.visibility.value,
+        now=now_ms(),
+    )
+    if not rows:
+        return None
+    return _row_to_pulse(rows[0], subject)
+
+
+# Newest first, skipping anything from a blocked author.
+#
+# The block check is part of the query rather than a filter applied afterwards:
+# filtering in Python would make `limit` mean "up to N, minus however many were
+# blocked", so a user who blocks a prolific poster would get short pages.
+LIST_FEED = """
+MATCH (author:User)-[:POSTED]->(p:Pulse)
+WHERE p.visibility = 'public'
+  AND ($viewer IS NULL OR NOT EXISTS {
+      MATCH (v:User {subject: $viewer})-[:BLOCKED]->(author)
+  })
+  AND ($tag IS NULL OR $tag IN p.tags)
+OPTIONAL MATCH (p)<-[r:RESONATED_WITH]-(:User)
+WITH p, author, count(r) AS resonators
+OPTIONAL MATCH (p)<-[mine:RESONATED_WITH]-(:User {subject: $viewer})
+RETURN p.id AS id, p.title AS title, p.preview AS preview, p.tags AS tags,
+       p.media_json AS media_json, p.visibility AS visibility,
+       p.created_at AS created_at,
+       resonators,
+       mine IS NOT NULL AS resonated,
+       author.id AS author_id, author.username AS author_name,
+       author.subject AS author_subject, null AS author_avatar
+ORDER BY p.created_at DESC
+SKIP $skip LIMIT $limit
+"""
+
+
+async def list_feed(
+    settings: Settings,
+    viewer_subject: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 30,
+    tag: Optional[str] = None,
+) -> List[Pulse]:
+    rows = await db.run_read(
+        settings,
+        LIST_FEED,
+        viewer=viewer_subject,
+        skip=skip,
+        limit=limit,
+        tag=tag.lower().lstrip("#") if tag else None,
+    )
+    return [_row_to_pulse(row, viewer_subject) for row in rows]
+
+
+LIST_OWN_PULSES = """
+MATCH (author:User {subject: $subject})-[:POSTED]->(p:Pulse)
+OPTIONAL MATCH (p)<-[r:RESONATED_WITH]-(:User)
+WITH p, author, count(r) AS resonators
+OPTIONAL MATCH (p)<-[mine:RESONATED_WITH]-(:User {subject: $subject})
+RETURN p.id AS id, p.title AS title, p.preview AS preview, p.tags AS tags,
+       p.media_json AS media_json, p.visibility AS visibility,
+       p.created_at AS created_at,
+       resonators,
+       mine IS NOT NULL AS resonated,
+       author.id AS author_id, author.username AS author_name,
+       author.subject AS author_subject, null AS author_avatar
+ORDER BY p.created_at DESC
+SKIP $skip LIMIT $limit
+"""
+
+
+async def list_own_pulses(
+    settings: Settings, subject: str, skip: int = 0, limit: int = 30
+) -> List[Pulse]:
+    """Everything the caller posted, private pulses included."""
+    rows = await db.run_read(
+        settings, LIST_OWN_PULSES, subject=subject, skip=skip, limit=limit
+    )
+    return [_row_to_pulse(row, subject) for row in rows]
+
+
+GET_PULSE = """
+MATCH (author:User)-[:POSTED]->(p:Pulse {id: $pulse_id})
+OPTIONAL MATCH (p)<-[r:RESONATED_WITH]-(:User)
+WITH p, author, count(r) AS resonators
+OPTIONAL MATCH (p)<-[mine:RESONATED_WITH]-(:User {subject: $viewer})
+RETURN p.id AS id, p.title AS title, p.preview AS preview, p.tags AS tags,
+       p.media_json AS media_json, p.visibility AS visibility,
+       p.created_at AS created_at,
+       resonators,
+       mine IS NOT NULL AS resonated,
+       author.id AS author_id, author.username AS author_name,
+       author.subject AS author_subject, null AS author_avatar
+"""
+
+
+async def get_pulse(
+    settings: Settings, pulse_id: str, viewer_subject: Optional[str] = None
+) -> Optional[Pulse]:
+    rows = await db.run_read(
+        settings, GET_PULSE, pulse_id=pulse_id, viewer=viewer_subject
+    )
+    if not rows:
+        return None
+    return _row_to_pulse(rows[0], viewer_subject)
+
+
+DELETE_PULSE = """
+MATCH (u:User {subject: $subject})-[:POSTED]->(p:Pulse {id: $pulse_id})
+DETACH DELETE p
+RETURN count(*) AS deleted
+"""
+
+
+async def delete_pulse(settings: Settings, subject: str, pulse_id: str) -> bool:
+    """Delete one of the caller's own pulses.
+
+    Ownership is expressed in the MATCH rather than checked beforehand, so there
+    is no window between the check and the delete, and no way to reach this with
+    someone else's pulse id.
+    """
+    rows = await db.run_write(
+        settings, DELETE_PULSE, subject=subject, pulse_id=pulse_id
+    )
+    return bool(rows and rows[0].get("deleted"))
+
+
+RESONATE = """
+MATCH (u:User {subject: $subject})
+MATCH (p:Pulse {id: $pulse_id})
+MERGE (u)-[:RESONATED_WITH]->(p)
+RETURN count(*) AS ok
+"""
+
+UNRESONATE = """
+MATCH (:User {subject: $subject})-[r:RESONATED_WITH]->(:Pulse {id: $pulse_id})
+DELETE r
+RETURN count(*) AS ok
+"""
+
+
+async def set_resonance(
+    settings: Settings, subject: str, pulse_id: str, on: bool
+) -> bool:
+    """Add or remove the caller's resonance.
+
+    MERGE, not CREATE: resonating twice is the same as resonating once, and a
+    double tap on a phone must not produce two relationships.
+    """
+    rows = await db.run_write(
+        settings, RESONATE if on else UNRESONATE, subject=subject, pulse_id=pulse_id
+    )
+    return bool(rows and rows[0].get("ok"))
+
+
+# --- moderation ------------------------------------------------------------
+#
+# The minimum a feed open to strangers needs before it accepts their content.
+# None of this is optional: without it the first abusive post has no path to
+# removal except a database console.
+
+REPORT_PULSE = """
+MATCH (u:User {subject: $subject})
+MATCH (p:Pulse {id: $pulse_id})
+MERGE (u)-[r:REPORTED]->(p)
+ON CREATE SET r.reason = $reason, r.at = $now
+WITH p
+OPTIONAL MATCH (p)<-[all_reports:REPORTED]-(:User)
+WITH p, count(all_reports) AS total
+SET p.reports = total
+RETURN total
+"""
+
+
+async def report_pulse(
+    settings: Settings, subject: str, pulse_id: str, reason: str
+) -> Optional[int]:
+    """Record a report and return the pulse's total report count.
+
+    MERGE keyed on the reporter, so one person cannot inflate the count by
+    reporting repeatedly. `reports` is denormalised onto the pulse only because
+    an admin queue needs to sort by it.
+    """
+    rows = await db.run_write(
+        settings,
+        REPORT_PULSE,
+        subject=subject,
+        pulse_id=pulse_id,
+        reason=reason,
+        now=now_ms(),
+    )
+    if not rows:
+        return None
+    return int(rows[0].get("total") or 0)
+
+
+BLOCK_USER = """
+MATCH (me:User {subject: $subject})
+MATCH (them:User {id: $target_id})
+WHERE them.subject <> $subject
+MERGE (me)-[:BLOCKED]->(them)
+RETURN count(*) AS ok
+"""
+
+UNBLOCK_USER = """
+MATCH (:User {subject: $subject})-[b:BLOCKED]->(:User {id: $target_id})
+DELETE b
+RETURN count(*) AS ok
+"""
+
+
+async def set_block(
+    settings: Settings, subject: str, target_id: str, blocked: bool
+) -> bool:
+    """Block or unblock another user.
+
+    The `them.subject <> $subject` guard stops self-blocking, which would silently
+    empty the blocker's own feed.
+    """
+    rows = await db.run_write(
+        settings,
+        BLOCK_USER if blocked else UNBLOCK_USER,
+        subject=subject,
+        target_id=target_id,
+    )
+    return bool(rows and rows[0].get("ok"))
+
+
+LIST_BLOCKED = """
+MATCH (:User {subject: $subject})-[:BLOCKED]->(them:User)
+RETURN them.id AS id, them.username AS name
+ORDER BY them.username
+"""
+
+
+async def list_blocked(settings: Settings, subject: str) -> List[Dict[str, Any]]:
+    return await db.run_read(settings, LIST_BLOCKED, subject=subject)
+
+
+COUNT_RECENT_PULSES = """
+MATCH (:User {subject: $subject})-[:POSTED]->(p:Pulse)
+WHERE p.created_at > $since
+RETURN count(p) AS recent
+"""
+
+
+async def count_recent_pulses(settings: Settings, subject: str, window_ms: int) -> int:
+    """How many pulses the caller posted inside the window.
+
+    The rate limit is derived from stored data rather than an in-process counter
+    on purpose: Render runs more than one instance, and a per-process counter
+    would give each of them its own allowance.
+    """
+    rows = await db.run_read(
+        settings,
+        COUNT_RECENT_PULSES,
+        subject=subject,
+        since=now_ms() - window_ms,
+    )
+    return int(rows[0]["recent"]) if rows else 0
