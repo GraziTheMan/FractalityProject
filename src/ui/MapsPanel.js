@@ -252,9 +252,24 @@ export class MapsPanel {
         }
 
         if (health === null) {
-            return 'The API is not reachable at all — /health does not answer '
-                 + 'either. It is probably restarting or down; check the '
-                 + 'service logs.';
+            // /health failed too — but that is ambiguous, because it went out
+            // with an Authorization header and so is subject to CORS just like
+            // everything else. An earlier version stopped here and blamed the
+            // server, which was wrong whenever the real problem was CORS.
+            const reachable = await this.client.probeReachable();
+
+            if (reachable) {
+                // Something answered, so the network and the service are fine
+                // and the browser is refusing to hand us the response. Name the
+                // origin the API has to allow — reading it from the page removes
+                // the guesswork about www, http vs https, and ports.
+                return 'The server is up but the browser is blocking its '
+                     + `responses — a CORS problem. Set CORS_ORIGIN on the API `
+                     + `to include exactly: ${window.location.origin}`;
+            }
+
+            return 'Nothing is answering at the API address — it is down, '
+                 + 'restarting, or the URL is wrong. Check the service logs.';
         }
 
         // /health answered, so the service is up and the browser can reach it.

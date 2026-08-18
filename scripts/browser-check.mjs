@@ -492,6 +492,75 @@ console.log('\n--- cloud path (API stubbed) ---------------------------------');
     await ctx.close();
 }
 
+// ---------------------------------------------------------------------------
+// 5. Telling a CORS block apart from a dead server
+// ---------------------------------------------------------------------------
+//
+// These two are the same opaque TypeError in JavaScript, and the first version
+// of the diagnosis conflated them: it blamed the server whenever /health failed,
+// which is wrong precisely when CORS is the problem, because /health carries an
+// Authorization header and is blocked along with everything else.
+
+console.log('\n--- CORS vs unreachable -------------------------------------');
+
+for (const scenario of [
+    {
+        name: 'server up, CORS blocking',
+        // Every readable request fails; a no-cors probe resolves opaquely.
+        install: () => {
+            globalThis.fetch = async (_url, opts = {}) => {
+                if (opts.mode === 'no-cors') return { type: 'opaque', status: 0 };
+                throw new TypeError('Failed to fetch');
+            };
+        },
+        expect: /CORS/i,
+        reject: /down|restarting/i,
+    },
+    {
+        name: 'nothing listening',
+        install: () => {
+            globalThis.fetch = async () => { throw new TypeError('Failed to fetch'); };
+        },
+        expect: /down, restarting, or the URL is wrong/i,
+        reject: /CORS/i,
+    },
+]) {
+    const { ctx, page } = await openApp(VIEWPORTS[0]);
+
+    await page.evaluate(() => {
+        const client = window.mapsPanel.client;
+        client.baseUrl = 'https://api.test.invalid';
+        client.getToken = async () => 'test-token';
+    });
+    await page.evaluate(`(${scenario.install.toString()})()`);
+
+    await page.click('#open-maps');
+    await page.waitForFunction(() => {
+        const t = document.querySelector('.maps-status')?.textContent ?? '';
+        return t && !/retrying|Loading/i.test(t);
+    }, { timeout: 30000 });
+
+    const status = await page.evaluate(() => document.querySelector('.maps-status').textContent);
+
+    if (!scenario.expect.test(status)) {
+        fail(`${scenario.name}: status does not say what it should — "${status}"`);
+    } else if (scenario.reject.test(status)) {
+        fail(`${scenario.name}: status gives the OTHER diagnosis — "${status}"`);
+    } else {
+        pass(`${scenario.name}: diagnosed correctly`);
+    }
+
+    // The CORS message must name the origin to allow, since guessing between
+    // fractiverse.com and www.fractiverse.com is the actual difficulty.
+    if (scenario.expect.source.includes('CORS')) {
+        const origin = await page.evaluate(() => window.location.origin);
+        if (!status.includes(origin)) fail(`the CORS message does not name this origin (${origin})`);
+        else pass(`the CORS message names the exact origin to allow (${origin})`);
+    }
+
+    await ctx.close();
+}
+
 await browser.close();
 
 console.log('\n' + '='.repeat(62));

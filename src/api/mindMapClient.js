@@ -148,12 +148,15 @@ export class MindMapClient {
     }
 
     /**
-     * Probe the API's own health endpoint.
+     * Read the API's own health endpoint.
      *
-     * Needs no auth and touches no user data, which makes it the one request
-     * that can distinguish "the whole service is unreachable" from "this
-     * particular request was rejected". Returns the parsed body, or null if the
-     * service could not be reached at all.
+     * Returns the parsed body, or null if the request failed at the transport
+     * layer. Note what null does NOT tell you: this goes through the normal
+     * request path, so it carries an Authorization header when signed in, which
+     * makes it a credentialed cross-origin request. A CORS misconfiguration
+     * blocks it exactly as it blocks every other call — so a null here means
+     * "unreachable OR blocked", not "the server is down". Use probeReachable()
+     * to separate those.
      */
     async checkHealth() {
         try {
@@ -161,6 +164,35 @@ export class MindMapClient {
         } catch (error) {
             if (MindMapClient.isNetworkError(error)) return null;
             throw error;
+        }
+    }
+
+    /**
+     * Is anything answering at the API's address, regardless of CORS?
+     *
+     * This is the one way a browser can tell "the server is gone" apart from
+     * "the server replied and CORS stopped me reading it" — the two are
+     * otherwise the same opaque TypeError.
+     *
+     * `mode: 'no-cors'` still sends the request; it just makes the response
+     * opaque, so status and body are unreadable. That is enough: the promise
+     * RESOLVES when a server answered and REJECTS when the connection could not
+     * be made. Sends no headers, because a non-safelisted header would take the
+     * request back out of no-cors territory.
+     *
+     * @returns {Promise<boolean>} true if something is listening
+     */
+    async probeReachable() {
+        if (!this.baseUrl) return false;
+        try {
+            await fetch(`${this.baseUrl}/health`, {
+                method: 'GET',
+                mode: 'no-cors',
+                cache: 'no-store'
+            });
+            return true;
+        } catch {
+            return false;
         }
     }
 

@@ -226,11 +226,35 @@ curl -i https://<your-api-host>/health
   shows up as exit status 137.
 - **Answers, `"database"` not `"ok"`** — AuraDB credentials, or a Free instance
   paused after a few days idle. Run `python scripts/check_neo4j.py`.
-- **Answers `{"status":"ok",...}` but the browser still fails** — it is CORS. The
-  API's `CORS_ORIGIN` must contain the site's origin **exactly**: scheme, host,
-  no trailing slash, and `https://www.fractiverse.com` is a *different* origin
-  from `https://fractiverse.com`. List both if both resolve. Requests carry an
-  `Authorization` header, so `*` is rejected outright by the browser.
+- **Answers `{"status":"ok",...}` but the browser still fails** — it is CORS. See
+  below.
+
+### CORS_ORIGIN: list every origin the site is served from
+
+`CORS_ORIGIN` is **comma-separated** (`api/settings.py`, `cors_origins`), and
+whitespace around each entry is stripped:
+
+```
+CORS_ORIGIN = https://fractiverse.com,https://www.fractiverse.com
+```
+
+Both entries are needed if both hostnames resolve. `https://www.fractiverse.com`
+is a **different origin** from `https://fractiverse.com` as far as a browser is
+concerned — matching is exact on scheme, host and port, with no trailing slash
+and no wildcards in the hostname. Requests carry an `Authorization` header, so
+`*` is rejected outright by browsers and the app refuses to boot on it in
+production.
+
+Set it on the **API** service, then redeploy the API. It is read at run time, so
+no frontend rebuild is needed.
+
+**Why a CORS problem is so hard to recognise:** the browser reports it to
+JavaScript as a bare `TypeError` — the same thing you get when the server is
+genuinely gone. The Maps panel now distinguishes them with a `mode: 'no-cors'`
+probe, which still reaches the server but returns an unreadable response: if
+that resolves, something answered and CORS is the problem; if it rejects,
+nothing is listening. When it is CORS the panel prints the exact origin to add,
+read from the page itself, so there is nothing to guess.
 
 Free-plan cold starts are a real cost here: the API spins down after about 15
 minutes idle and the next request waits ~50s for it to boot. Reads now retry
