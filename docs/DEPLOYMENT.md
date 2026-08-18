@@ -190,7 +190,7 @@ real map list.
 
 ```bash
 npm run health     # 0 errors expected
-npm test           # 87 passing
+npm test           # 104 passing
 pytest api/tests   # 101 passing, 33 skipped without NEO4J_URI
 npm run build      # then check dist/ loads
 ```
@@ -201,7 +201,7 @@ above cannot see, since they only read files:
 ```bash
 npm i -D playwright && npx playwright install chromium   # one-time
 npm run preview &                 # serves the build on :4173
-npm run browser-check             # 98 checks at three viewports
+npm run browser-check             # 108 checks at three viewports
                                   # BROWSER_CHECK_ONLY=feed narrows it
 ```
 
@@ -213,6 +213,41 @@ share link, and that **every entry in the dock has an observable effect** — th
 menu it replaced was reachable, evenly spaced and completely inert, so
 reachability alone proves nothing. Every check in it exists because the
 corresponding bug shipped. See Parts 6, 7 and 9 of `docs/AUDIT-2026-08.md`.
+
+## Exporting a map
+
+Two formats, both under ☰ More:
+
+| | |
+|---|---|
+| **Export JSON** | everything, including runtime metadata. The format to use for a backup you intend to re-import here. |
+| **Export Turtle** | RDF/SKOS. The format to use for anything *else* — ontology tools, merging with someone else's map, publishing as linked data. |
+
+Import is one button and detects which it has been given.
+
+The Turtle export is deliberately narrower: transient visual state (positions,
+colours) is recomputed by the layout engine, so it is not written out, and a
+re-imported map is laid out afresh. Structure, tiers, sibling order, labels,
+types, tags and descriptions all survive — there is a test asserting a round trip
+returns a byte-identical structure.
+
+## Free plan, and when to leave it
+
+The API runs on Render's free plan. It spins down after about 15 minutes idle, and
+the next request waits roughly 50 seconds for it to boot.
+
+**This hurts more at low traffic, not less.** A handful of people checking in a
+couple of times a day means almost every visit is a cold start. Reads retry
+through it, so nothing breaks — it just looks broken while it waits.
+
+Move to a paid instance when either is true:
+
+- **Chat exists.** Spin-down drops WebSocket connections, so it stops being a slow
+  experience and becomes a broken one.
+- **You are showing it to someone whose first impression matters.**
+
+AuraDB Free has its own, independent idle pause of a few days, which no Render
+plan affects.
 
 ## When the Maps panel says it cannot reach the server
 

@@ -1,5 +1,21 @@
 # render.yaml — Render Blueprint for the Fractality Platform
 #
+# READ THIS FIRST: a Blueprint only governs services Render created FROM a
+# Blueprint. Both live services were created by hand in the dashboard, so today
+# this file is documentation — accurate documentation, but Render is not reading
+# it. Editing it does not change the running deployment.
+#
+# To make it authoritative, create the services from this Blueprint (New →
+# Blueprint) or adopt the existing ones into it. Until then, the dashboard is the
+# source of truth, and this file exists so that a service lost or recreated can
+# be rebuilt without reconstructing its settings from memory.
+#
+# Values that are secret, or that only the dashboard knows, are marked
+# `sync: false`. That means "this service has this variable; its value lives in
+# the dashboard". Deliberate: hardcoding a guessed URL here would be worse than
+# leaving it unset, because a Blueprint sync would then overwrite a working value
+# with a wrong one.
+#
 # The frontend is a fully client-side SPA (Three.js rendering, localStorage
 # persistence), so it deploys as a Static Site: free tier, global CDN, free TLS,
 # and no idle spin-down. That is the right shape until there is a backend.
@@ -43,60 +59,98 @@ services:
         value: strict-origin-when-cross-origin
 
     envVars:
-      # Backend endpoints. Leave unset until the API exists; the app detects
-      # their absence and degrades rather than erroring.
-      # - key: VITE_API_BASE
-      #   value: https://api.fractiverse.com
+      # The API's base URL. Set in the dashboard; sync: false rather than a
+      # literal because the deployed service's hostname is not recorded here.
+      - key: VITE_API_BASE
+        sync: false
+
+      # Clerk PUBLISHABLE key (pk_...). Safe as a VITE_ variable by design —
+      # publishable keys are meant to be public, which is the whole point of the
+      # publishable/secret split. Clerk's SECRET key must never be a VITE_
+      # variable, and is not used anywhere in this project.
+      - key: VITE_CLERK_PUBLISHABLE_KEY
+        sync: false
+
+      # Chat, step 5. Both stay unset until the realtime server exists; the app
+      # checks for them and disables chat rather than erroring.
       # - key: VITE_SOCKET_URL
-      #   value: https://api.fractiverse.com
-      # - key: VITE_AI_PROXY_URL
-      #   value: https://api.fractiverse.com/ai
-      #
-      # Clerk PUBLISHABLE key. Safe here by design — publishable keys are meant
-      # to be public. Clerk's SECRET key must never be a VITE_ variable, and is
-      # not used by this project at all.
-      # - key: VITE_CLERK_PUBLISHABLE_KEY
       #   sync: false
+      # - key: VITE_AI_PROXY_URL
+      #   sync: false
+
       - key: NODE_VERSION
         value: "22"
 
   # --- API service (api/) --------------------------------------------------
   #
-  # Commented out until you have AuraDB and Clerk credentials to hand. Once you
-  # do, uncomment, set the secrets in the dashboard, then point VITE_API_BASE
-  # above at this service's URL and redeploy the static site.
+  # This service is live. Its configuration below mirrors the dashboard.
   #
-  # Things that are not optional:
-  #   * `plan: starter`, not free. Idle spin-down drops WebSocket connections,
-  #     and cold starts on a paused instance make the API look broken.
-  #   * Neo4j is NOT hosted on Render. Use Neo4j AuraDB (Free tier is fine to
-  #     start) and set the credentials as secrets — sync: false keeps them out
-  #     of this file and out of git.
-  #   * CORS_ORIGIN must be your real frontend origin. The app refuses to boot
-  #     in production on a wildcard, because browsers reject wildcard + credentials.
+  # On the plan: `free` is what is running now, and it is a real trade-off rather
+  # than a placeholder. A free instance spins down after ~15 minutes idle, and the
+  # next request waits roughly 50 seconds for it to boot. That hurts MORE at low
+  # traffic, not less: a handful of people checking in a couple of times a day
+  # means almost every visit is a cold start. Reads retry through it (see
+  # MindMapClient._request), so it works — it just looks broken while it waits.
   #
-  # - type: web
-  #   name: fractality-api
-  #   runtime: python
-  #   plan: starter
-  #   buildCommand: pip install -r api/requirements.txt
-  #   startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
-  #   healthCheckPath: /health
-  #   envVars:
-  #     - key: ENVIRONMENT
-  #       value: production
-  #     - key: CORS_ORIGIN
-  #       value: https://fractiverse.com
-  #     - key: NEO4J_URI
-  #       sync: false
-  #     - key: NEO4J_USER
-  #       sync: false
-  #     - key: NEO4J_PASSWORD
-  #       sync: false
-  #     - key: CLERK_ISSUER
-  #       sync: false
-  #     # For the future AI proxy (step 5). Server-side only — never VITE_.
-  #     - key: ANTHROPIC_API_KEY
-  #       sync: false
-  #     - key: OPENAI_API_KEY
-  #       sync: false
+  # Move to `starter` when either of these is true:
+  #   * chat exists — spin-down drops WebSocket connections, so it is not a slow
+  #     experience but a broken one
+  #   * you are showing it to anyone whose first impression matters
+  #
+  # AuraDB has its own, independent idle pause (a few days), which no Render plan
+  # affects.
+  - type: web
+    name: fractality-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r api/requirements.txt
+    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+
+      # Must list every origin the site is served from, comma-separated, and match
+      # EXACTLY — scheme, host, no trailing slash. https://www.fractiverse.com is a
+      # DIFFERENT origin from https://fractiverse.com to a browser, and listing
+      # only one is what broke the deployed app once already. A wildcard is
+      # refused at boot in production, because browsers reject wildcard +
+      # credentials and every request here carries an Authorization header.
+      - key: CORS_ORIGIN
+        value: https://fractiverse.com,https://www.fractiverse.com
+
+      # Neo4j is NOT hosted on Render. These come from the AuraDB credentials
+      # file, pasted verbatim.
+      #
+      # Note the spelling: current Aura issues NEO4J_USERNAME, and its value is
+      # the instance ID (matching the URI subdomain), not "neo4j". Both spellings
+      # are accepted by api/settings.py; this is the one Aura gives you.
+      #
+      # NEO4J_DATABASE is deliberately absent. Leaving it unset lets the server
+      # choose its own default, which is correct for Aura — forcing the name
+      # "neo4j" is what produced DatabaseNotFound.
+      - key: NEO4J_URI
+        sync: false
+      - key: NEO4J_USERNAME
+        sync: false
+      - key: NEO4J_PASSWORD
+        sync: false
+
+      # Clerk's ISSUER url, not either of its keys. Tokens are verified against
+      # Clerk's published JWKS, so no secret is stored here at all.
+      - key: CLERK_ISSUER
+        sync: false
+
+      # Optional limits; the defaults in api/settings.py are used when unset.
+      # - key: MAX_PULSES_PER_HOUR
+      #   value: "20"
+      # - key: MAX_NODES_PER_MAP
+      #   value: "10000"
+      # - key: MAX_MAPS_PER_USER
+      #   value: "500"
+
+      # For the AI proxy (step 5). Server-side only — never a VITE_ variable, or
+      # it would be compiled into the bundle every visitor downloads.
+      # - key: ANTHROPIC_API_KEY
+      #   sync: false

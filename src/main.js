@@ -4,6 +4,7 @@ import { AppState } from './utils/appState.js';
 import { nodeBridge } from './bridge/NodeBridge.js';
 import { FractalityEngine } from './engine/FractalityEngine.js';
 import { DataLoader } from './data/DataLoader.js';
+import { NodeGraph } from './data/NodeData.js';
 import { TestDataGenerator } from './data/TestDataGenerator.js';
 
 import { SearchInterface } from './ui/SearchInterface.js';
@@ -288,17 +289,26 @@ function buildDockItems() {
       label: 'More',
       items: [
         {
-          id: 'export',
+          id: 'export-json',
           icon: '\u{1f4e4}',
-          label: 'Export',
-          description: 'Download this map as JSON',
-          onSelect: exportToCLI
+          label: 'Export JSON',
+          description: 'Download this map, structure and all',
+          disabledReason: needsEngine,
+          onSelect: exportMapJson
+        },
+        {
+          id: 'export-turtle',
+          icon: '\u{1f422}',
+          label: 'Export Turtle',
+          description: 'RDF/SKOS, for ontology tools and merging maps',
+          disabledReason: needsEngine,
+          onSelect: exportMapTurtle
         },
         {
           id: 'import',
           icon: '\u{1f4e5}',
           label: 'Import',
-          description: 'Load a map from a JSON file',
+          description: 'Load a .json or .ttl file',
           onSelect: showImportDialog
         },
         { separator: true },
@@ -544,52 +554,147 @@ function setupSearchListeners() {
 }
 
 // Export to CLI (existing)
-async function exportToCLI() {
-  const exportData = nodeBridge.exportForCLI();
-  
-  const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'fractality-frontend-export.json';
-  a.click();
-  URL.revokeObjectURL(url);
-  
-  showNotification(`Exported ${exportData.metadata.totalNodes} nodes for CLI`);
+/** The graph currently on screen, or null before the 3D view has booted. */
+function currentGraph() {
+  return fractalityEngine?.nodeGraph ?? null;
 }
 
-// Show import dialog (existing)
+/** Hand the browser a file to save. */
+function downloadFile(filename, text, mimeType) {
+  const blob = new Blob([text], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+/** A filename stem safe on every platform. */
+function fileStem() {
+  const title = mapsPanel.currentMap?.title || 'fractality-map';
+  return title.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'fractality-map';
+}
+
+/**
+ * Export the map on screen as JSON.
+ *
+ * Exports `fractalityEngine.nodeGraph` — the graph actually being displayed.
+ * This used to export `nodeBridge.exportForCLI()`, which reads the CLI bridge's
+ * own node collection. That collection is only populated by the local Python
+ * helper, so in production it held nothing and Export wrote a file containing
+ * zero nodes. Silently: a valid JSON document with an empty array.
+ */
+function exportMapJson() {
+  const graph = currentGraph();
+  if (!graph || graph.nodes.size === 0) {
+    showNotification('Nothing to export — open a map first', 'warning');
+    return;
+  }
+
+  const payload = graph.toJSON();
+  downloadFile(`${fileStem()}.json`, JSON.stringify(payload, null, 2), 'application/json');
+  showNotification(`Exported ${payload.nodes.length} nodes as JSON`);
+}
+
+/**
+ * Export the map on screen as Turtle (RDF).
+ *
+ * The interchange format: SKOS concepts, so tools nobody here wrote can read it.
+ * See src/data/turtle.js for why it sits alongside JSON rather than replacing it.
+ */
+async function exportMapTurtle() {
+  const graph = currentGraph();
+  if (!graph || graph.nodes.size === 0) {
+    showNotification('Nothing to export — open a map first', 'warning');
+    return;
+  }
+
+  try {
+    // Lazily imported: the Turtle library must not sit in the initial bundle for
+    // the sake of a button most visitors never press.
+    const { graphToTurtle } = await import('./data/turtle.js');
+    const title = mapsPanel.currentMap?.title || 'Fractality map';
+    const mapId = mapsPanel.currentMap?.id || 'local';
+
+    const turtle = await graphToTurtle(graph, { title, mapId });
+    downloadFile(`${fileStem()}.ttl`, turtle, 'text/turtle');
+    showNotification(`Exported ${graph.nodes.size} nodes as Turtle`);
+  } catch (error) {
+    console.error('Turtle export failed:', error);
+    showNotification(`Turtle export failed: ${error.message}`, 'error');
+  }
+}
+
+/**
+ * Import a map from a file, detecting JSON or Turtle from the contents.
+ *
+ * One button rather than two: the user already has a file, so asking which
+ * format it is only invites the wrong answer.
+ */
 function showImportDialog() {
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.json';
-  
-  input.addEventListener('change', async (e) => {
-    const file = e.target.files[0];
+  input.accept = '.json,.ttl,.turtle,application/json,text/turtle';
+
+  input.addEventListener('change', async (event) => {
+    const file = event.target.files[0];
     if (!file) return;
-    
+
     try {
       const text = await file.text();
-      const data = JSON.parse(text);
-      
-      const result = await nodeBridge.importNodes(data.nodes || []);
-      
-      console.log('📥 Import complete:', result);
-      
-      if (fractalityEngine) {
-        await loadBridgeData();
+      const looksLikeTurtle = /\.ttl$|\.turtle$/i.test(file.name)
+        // Sniff the content too, since a .txt full of Turtle should still work
+        // and a mislabelled .json should not be parsed as RDF.
+        || /^\s*(@prefix|@base|PREFIX|BASE)\s/im.test(text);
+
+      const { graph, title, warnings } = looksLikeTurtle
+        ? await importTurtleText(text)
+        : importJsonText(text);
+
+      if (!graph || graph.nodes.size === 0) {
+        showNotification('That file contained no nodes', 'warning');
+        return;
       }
-      
-      showNotification(`Import complete! Added: ${result.added}, Updated: ${result.updated}`);
-      
+
+      if (!fractalityEngine) {
+        AppState.setView('bubble');
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      await fractalityEngine.loadData(graph);
+      // An imported map is not the saved cloud map any more, so clear that link
+      // rather than letting a later Overwrite write over the wrong thing.
+      mapsPanel.currentMap = null;
+
+      for (const warning of warnings ?? []) showNotification(warning, 'warning');
+      showNotification(
+        `Imported ${graph.nodes.size} nodes${title ? ` from "${title}"` : ''}`
+      );
     } catch (error) {
       console.error('Import failed:', error);
-      showNotification('Import failed: ' + error.message, 'error');
+      showNotification(`Import failed: ${error.message}`, 'error');
     }
   });
-  
+
   input.click();
 }
+
+/** Parse our JSON export. Also accepts a CLI export, whose node shape matches. */
+function importJsonText(text) {
+  const data = JSON.parse(text);
+  const nodes = Array.isArray(data) ? data : data.nodes;
+  if (!Array.isArray(nodes)) {
+    throw new Error('No "nodes" array in that JSON file');
+  }
+  return { graph: NodeGraph.fromJSON({ nodes }), title: data.title ?? null, warnings: [] };
+}
+
+/** Parse a Turtle file. The library is loaded only when one is actually opened. */
+async function importTurtleText(text) {
+  const { turtleToGraph } = await import('./data/turtle.js');
+  return turtleToGraph(text);
+}
+
 
 // REMOVED: displaySearchResults function (replaced by SearchInterface)
 

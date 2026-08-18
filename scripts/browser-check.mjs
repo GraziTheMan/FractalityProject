@@ -1306,6 +1306,177 @@ if (run_feed) {
     await ctx.close();
 }
 
+// ---------------------------------------------------------------------------
+// 10. Export and import, through the browser's real download path
+// ---------------------------------------------------------------------------
+//
+// The JSON export was broken for the entire life of the deployed app: it
+// serialised `nodeBridge.exportForCLI()`, which reads the CLI bridge's own node
+// collection. That collection is only filled by the local Python helper, so in
+// production it was empty and Export wrote a valid JSON file containing zero
+// nodes. Silently — a download that looks like it worked.
+//
+// So what is asserted is the file's CONTENTS, not that a download happened.
+
+const run_export_import = section('export and import');
+
+if (run_export_import) {
+    const ctx = await browser.newContext({
+        viewport: { width: 1280, height: 900 },
+        acceptDownloads: true,
+    });
+    const page = await ctx.newPage();
+    const jsRequests = [];
+    page.on('request', (r) => {
+        if (r.url().endsWith('.js')) jsRequests.push(r.url().split('/').pop());
+    });
+    await page.goto(URL, { waitUntil: 'networkidle' });
+    await page.waitForFunction(() => Boolean(window.fractalityEngine?.()), { timeout: 15000 })
+        .catch(() => {});
+    await page.waitForTimeout(2000);
+
+    const liveNodes = await page.evaluate(() =>
+        window.fractalityEngine()?.nodeGraph?.nodes?.size ?? 0);
+
+    if (liveNodes === 0) fail('no map is loaded, so export cannot be checked');
+    else pass(`a map with ${liveNodes} nodes is loaded`);
+
+    // The Turtle library must not be in the initial payload for the sake of a
+    // button most visitors never press.
+    if (jsRequests.some((u) => /turtle/i.test(u))) {
+        fail('the Turtle chunk is fetched on page load; it should be lazy');
+    } else {
+        pass('the Turtle chunk is not fetched on page load');
+    }
+
+    /** Click a row in the More sheet and return the downloaded text. */
+    const downloadVia = async (rowId) => {
+        await page.click('#app-dock [data-dock-id="more"]');
+        await page.waitForTimeout(250);
+        const pending = page.waitForEvent('download', { timeout: 20000 });
+        await page.click(`.dock-sheet-row[data-dock-id="${rowId}"]`);
+        const download = await pending;
+        const fs = await import('node:fs');
+        return {
+            name: download.suggestedFilename(),
+            text: fs.readFileSync(await download.path(), 'utf8'),
+        };
+    };
+
+    // --- JSON
+    try {
+        const json = await downloadVia('export-json');
+        const parsed = JSON.parse(json.text);
+        const count = parsed.nodes?.length ?? 0;
+
+        if (!json.name.endsWith('.json')) fail(`JSON export produced "${json.name}"`);
+        else if (count === 0) fail('the JSON export contains ZERO nodes — the original bug');
+        else if (count !== liveNodes) fail(`JSON export has ${count} nodes, the map has ${liveNodes}`);
+        else pass(`JSON export contains all ${count} nodes`);
+
+        // Structure, not just a node list: an export without parent links is not
+        // a map, it is a bag of labels.
+        const withParents = (parsed.nodes || []).filter((n) => n.parentId).length;
+        if (withParents === 0) fail('the JSON export carries no parent links');
+        else pass(`JSON export preserves structure (${withParents} nodes have a parent)`);
+    } catch (error) {
+        fail(`JSON export failed: ${error.message}`);
+    }
+
+    // --- Turtle
+    let turtleText = null;
+    try {
+        const ttl = await downloadVia('export-turtle');
+        turtleText = ttl.text;
+
+        if (!ttl.name.endsWith('.ttl')) fail(`Turtle export produced "${ttl.name}"`);
+        else pass(`Turtle export produced ${ttl.name}`);
+
+        if (!jsRequests.some((u) => /turtle/i.test(u))) {
+            fail('the Turtle chunk was never fetched, yet an export happened');
+        } else {
+            pass('the Turtle chunk loads on demand');
+        }
+
+        // `a skos:Concept` is a prefix of `a skos:ConceptScheme`, so the scheme
+        // would inflate a naive count by one.
+        const concepts = (turtleText.match(/a skos:Concept[;\s]/g) || []).length;
+        if (concepts !== liveNodes) fail(`Turtle has ${concepts} concepts, the map has ${liveNodes}`);
+        else pass(`Turtle export contains all ${concepts} concepts`);
+
+        for (const term of ['skos:prefLabel', 'skos:broader', 'skos:ConceptScheme', 'fract:position']) {
+            if (!turtleText.includes(term)) fail(`Turtle export is missing ${term}`);
+        }
+        if (['skos:prefLabel', 'skos:broader', 'skos:ConceptScheme', 'fract:position']
+            .every((t) => turtleText.includes(t))) {
+            pass('Turtle export uses SKOS, with order carried in fract:position');
+        }
+    } catch (error) {
+        fail(`Turtle export failed: ${error.message}`);
+    }
+
+    // --- import the Turtle back
+    if (turtleText) {
+        try {
+            const fs = await import('node:fs');
+            const os = await import('node:os');
+            const path = await import('node:path');
+            const file = path.join(os.tmpdir(), 'browser-check-roundtrip.ttl');
+            fs.writeFileSync(file, turtleText);
+
+            const before = await page.evaluate(() => {
+                const graph = window.fractalityEngine().nodeGraph;
+                return [...graph.nodes.values()]
+                    .map((n) => `${n.id}|${n.depth}|${n.parentId ?? ''}|${n.childIds.join(',')}`)
+                    .sort().join('\n');
+            });
+
+            await page.click('#app-dock [data-dock-id="more"]');
+            await page.waitForTimeout(250);
+            const chooser = page.waitForEvent('filechooser', { timeout: 15000 });
+            await page.click('.dock-sheet-row[data-dock-id="import"]');
+            (await chooser).setFiles(file);
+            await page.waitForTimeout(2500);
+
+            const after = await page.evaluate(() => {
+                const graph = window.fractalityEngine().nodeGraph;
+                return [...graph.nodes.values()]
+                    .map((n) => `${n.id}|${n.depth}|${n.parentId ?? ''}|${n.childIds.join(',')}`)
+                    .sort().join('\n');
+            });
+
+            if (after === before) {
+                pass('a Turtle round trip returns an identical structure, sibling order included');
+            } else {
+                const beforeLines = before.split('\n');
+                const afterLines = after.split('\n');
+                const differing = beforeLines.find((line, i) => line !== afterLines[i]);
+                fail(`the Turtle round trip changed the graph, e.g. "${differing}" -> "${afterLines[beforeLines.indexOf(differing)]}"`);
+            }
+
+            // And the imported graph must satisfy the tier invariant.
+            const problems = await page.evaluate(() => {
+                const graph = window.fractalityEngine().nodeGraph;
+                const out = [];
+                for (const node of graph.nodes.values()) {
+                    if (node.parentId) {
+                        const parent = graph.nodes.get(node.parentId);
+                        if (!parent) out.push(`${node.id}: dangling parent`);
+                        else if (node.depth !== parent.depth + 1) out.push(`${node.id}: bad tier`);
+                    } else if (node.depth !== 0) out.push(`${node.id}: root not at tier 0`);
+                }
+                return out;
+            });
+            if (problems.length) fail(`the imported graph is inconsistent: ${problems.slice(0, 3).join('; ')}`);
+            else pass('the imported graph satisfies the tier invariant');
+        } catch (error) {
+            fail(`Turtle import failed: ${error.message}`);
+        }
+    }
+
+    await ctx.close();
+}
+
 await browser.close();
 
 console.log('\n' + '='.repeat(62));
