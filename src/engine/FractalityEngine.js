@@ -107,6 +107,31 @@ export class FractalityEngine {
         }
         
         console.log('✅ Data loaded successfully');
+
+        // Announce the swap.
+        //
+        // loadData() REPLACES this.nodeGraph with a different object. Anything
+        // that renders once and caches — the Node Manager's outline, for
+        // instance — keeps showing the graph it read earlier, with no way to
+        // know it is now stale. The Cone view never showed this because it
+        // redraws from getGraph() every frame.
+        //
+        // The visible symptom: open a saved map and the Cone shows the renamed
+        // root while the Node Manager still shows the old name.
+        this._announce('fractality:graphReplaced');
+    }
+
+    /**
+     * Tell the page the graph changed.
+     *
+     * A window event because this class has no emitter, matching the existing
+     * `fractality:nodeFocused` and `fractality:expandNode` convention.
+     */
+    _announce(type) {
+        if (typeof window === 'undefined') return;
+        window.dispatchEvent(new CustomEvent(type, {
+            detail: { nodeCount: this.nodeGraph?.nodes?.size ?? 0 }
+        }));
     }
     
     /**
@@ -257,6 +282,11 @@ export class FractalityEngine {
         }
 
         this.state.needsLayout = true;
+
+        // Same reasoning as loadData(): panels that cache a render need telling.
+        // This fires for in-place edits, where the graph object is the same but
+        // its contents are not.
+        this._announce('fractality:graphChanged');
     }
 
     /**

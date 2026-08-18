@@ -47,6 +47,29 @@ export class NodeManagerPanel {
          * that shows too much.
          */
         this.collapsed = new Set();
+
+        /**
+         * Re-render when the engine's graph is replaced or edited elsewhere.
+         *
+         * Bound once so destroy() can remove it. The outline is rendered and then
+         * cached, so without this it keeps showing whichever graph it read last —
+         * which is exactly what happened when a saved map was opened: the Cone
+         * showed the renamed root and this panel still showed the old name.
+         */
+        this._onGraphChanged = () => {
+            if (!this.container) return;
+
+            // A replaced graph may not contain the previously selected node.
+            const graph = this.getGraph();
+            if (this.selectedId && !graph?.getNode(this.selectedId)) {
+                this.selectedId = null;
+            }
+            // Collapse state is keyed by node id, and those ids belong to the old
+            // graph. Keeping it would hide branches of the new one at random.
+            this.collapsed.clear();
+
+            if (this.isOpen) this.render();
+        };
     }
 
     // --- lifecycle ---------------------------------------------------------
@@ -79,6 +102,9 @@ export class NodeManagerPanel {
 
         this._buildToolbar();
         this._injectStyles();
+
+        window.addEventListener('fractality:graphReplaced', this._onGraphChanged);
+        window.addEventListener('fractality:graphChanged', this._onGraphChanged);
     }
 
     show() {
@@ -100,6 +126,8 @@ export class NodeManagerPanel {
     }
 
     destroy() {
+        window.removeEventListener('fractality:graphReplaced', this._onGraphChanged);
+        window.removeEventListener('fractality:graphChanged', this._onGraphChanged);
         this.container?.remove();
         this.container = null;
     }

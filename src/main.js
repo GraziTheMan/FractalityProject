@@ -630,6 +630,39 @@ function setupSearchListeners() {
 }
 
 // Export to CLI (existing)
+/**
+ * Open the signed-in user's most recent map, if they have one.
+ *
+ * Ordered by `updated_at DESC` server-side, so the first result is the one last
+ * worked on — which is what someone returning to the app is nearly always after.
+ * Coming back to the generated demo map instead makes it look as though the saved
+ * work is gone.
+ *
+ * Silent about failure on purpose: this runs during boot, and a cold API or an
+ * unreachable network must fall through to the demo rather than leaving an empty
+ * screen. The Maps panel reports properly when opened deliberately.
+ *
+ * @returns {Promise<boolean>} true when a map was loaded
+ */
+async function openMostRecentMap() {
+  if (!mindMapClient.available) return false;
+  if (hasAuth() && !getAuthState().signedIn) return false;
+
+  try {
+    const maps = await mindMapClient.listMyMaps({ limit: 1 });
+    if (!maps?.length) return false;
+
+    const opened = await mapsPanel.loadMap(maps[0].id);
+    if (!opened) return false;
+
+    showNotification(`Opened "${maps[0].title}"`);
+    return true;
+  } catch (error) {
+    console.warn('Could not open the most recent map:', error.message);
+    return false;
+  }
+}
+
 /** The graph currently on screen, or null before the 3D view has booted. */
 function currentGraph() {
   return fractalityEngine?.nodeGraph ?? null;
@@ -992,6 +1025,8 @@ AppState.on('viewChanged', async (view) => {
         showNotification('That shared map could not be opened', 'error');
         await fractalityEngine.loadData(testGenerator.generateTestPattern('golden'));
       }
+    } else if (await openMostRecentMap()) {
+      // Your own most recent map, which is almost always what you came back for.
     } else {
       // Check for CLI data first
       const hasCliData = await checkForCLIData();

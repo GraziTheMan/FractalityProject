@@ -1573,6 +1573,57 @@ if (run_identity) {
 
     await page.evaluate(() => window.coneView.hide());
 
+    // --- a panel that caches a render must notice a replaced graph
+    //
+    // Reported from a desktop session: a saved map was opened and the Cone view
+    // showed the renamed root while the Node Manager still showed the old name.
+    // loadData() REPLACES engine.nodeGraph with a different object, and the Cone
+    // never showed the problem because it redraws from getGraph() every frame.
+    // Anything that renders once and caches keeps the graph it read earlier.
+    const staleness = await page.evaluate(async () => {
+        window.nodeManagerPanel.show();
+        await new Promise((r) => setTimeout(r, 400));
+        const before = document.querySelector('.nodemgr-row .nodemgr-label')?.textContent;
+
+        // Replace the graph the way an opened map arrives: a new NodeGraph built
+        // from a serialised payload, with the root renamed.
+        const engine = window.fractalityEngine();
+        const NodeGraph = engine.nodeGraph.constructor;
+        const payload = engine.nodeGraph.toJSON();
+        const rootId = engine.nodeGraph.getRootNodes()[0].id;
+        for (const node of payload.nodes) {
+            if (node.id === rootId) {
+                node.metadata = { ...node.metadata, label: 'RENAMED BY CHECK' };
+            }
+        }
+        await engine.loadData(NodeGraph.fromJSON(payload));
+        await new Promise((r) => setTimeout(r, 600));
+
+        return {
+            before,
+            outline: document.querySelector('.nodemgr-row .nodemgr-label')?.textContent,
+            engine: engine.nodeGraph.getRootNodes()[0].metadata.label,
+            rows: document.querySelectorAll('.nodemgr-row').length,
+            nodes: engine.nodeGraph.nodes.size,
+        };
+    });
+
+    if (staleness.outline !== staleness.engine) {
+        fail(`the Node Manager shows "${staleness.outline}" while the engine has "${staleness.engine}" — the reported bug`);
+    } else if (staleness.before === staleness.outline) {
+        fail('the outline did not change at all, so this check proved nothing');
+    } else {
+        pass(`an open Node Manager follows a replaced graph ("${staleness.before}" -> "${staleness.outline}")`);
+    }
+
+    if (staleness.rows !== staleness.nodes) {
+        fail(`the outline lists ${staleness.rows} of ${staleness.nodes} nodes after a reload`);
+    } else {
+        pass('the outline lists every node of the newly loaded graph');
+    }
+
+    await page.evaluate(() => window.nodeManagerPanel.hide());
+
     // --- map visibility has a control at all
     await page.evaluate(() => {
         const client = window.mapsPanel.client;
@@ -1624,6 +1675,11 @@ if (run_identity) {
         const before = button.textContent;
         button.click();
         await new Promise((r) => setTimeout(r, 700));
+        // refresh() has already run and re-rendered through the session path,
+        // which drops the owner controls in a keyless build — so the old button
+        // is gone. Re-render as owner to read the label the owner would see.
+        const panel = window.mapsPanel;
+        panel._renderList(await panel.client.listMyMaps().catch(() => []), true);
         return {
             before,
             patched: window.__patched,
@@ -1635,8 +1691,10 @@ if (run_identity) {
     else if (visibility.patched.length === 0) fail('pressing the visibility control sent nothing');
     else if (visibility.patched[0].visibility !== 'unlisted') {
         fail(`private should step to unlisted, got ${visibility.patched[0].visibility}`);
+    } else if (!visibility.after || visibility.after === visibility.before) {
+        fail(`the control still reads "${visibility.after}" after the change committed`);
     } else {
-        pass(`visibility cycles private -> ${visibility.patched[0].visibility} ("${visibility.before}" -> "${visibility.after}")`);
+        pass(`visibility cycles private -> unlisted, and the label follows ("${visibility.before}" -> "${visibility.after}")`);
     }
 
     // Stepping round to public must be confirmed, and must reach the API.
