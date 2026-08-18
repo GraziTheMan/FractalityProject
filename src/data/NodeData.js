@@ -62,11 +62,30 @@ export class NodeData {
     getMemorySize() {
         // Rough estimation
         const baseSize = 100; // Base object overhead
-        const stringSize = (this.id.length + (this.metadata.label?.length || 0)) * 2; // UTF-16
+        // Content is the only field with no natural bound — a node's markdown page
+        // can be longer than everything else about the map put together, so
+        // leaving it out of the estimate would make the memory reading useless
+        // for exactly the maps that need watching.
+        const stringSize = (
+            this.id.length
+            + (this.metadata.label?.length || 0)
+            + (this.metadata.content?.length || 0)
+        ) * 2; // UTF-16
         const arraySize = (this.childIds.length + this.siblingIds.length) * 8; // References
         const vectorSize = 3 * 4 * 3; // Three Vector3 objects
         
         return baseSize + stringSize + arraySize + vectorSize;
+    }
+
+    /**
+     * This node's markdown page, or '' if it has none.
+     *
+     * A getter rather than a defaulted field: an absent key costs nothing in an
+     * export, and most nodes in a large map will never have a page. Callers get
+     * a string either way.
+     */
+    get content() {
+        return this.metadata.content ?? '';
     }
 }
 
@@ -441,6 +460,34 @@ export class NodeGraph {
         const node = this.nodes.get(nodeId);
         if (!node) return false;
         node.metadata.label = String(label ?? '').trim() || node.metadata.label;
+        return true;
+    }
+
+    /**
+     * Set a node's markdown page.
+     *
+     * An empty page deletes the key rather than storing ''. Most nodes of a large
+     * map will never have a page, and a stored empty string would be written to
+     * every export, every Turtle file and every Neo4j row for no gain.
+     *
+     * Unlike renameNode, blank is a legitimate value here: clearing a page you
+     * wrote is a thing you may want to do, whereas clearing a label leaves a node
+     * you cannot identify.
+     *
+     * @param {string} nodeId
+     * @param {string} markdown
+     * @returns {boolean} false if there is no such node
+     */
+    setContent(nodeId, markdown) {
+        const node = this.nodes.get(nodeId);
+        if (!node) return false;
+
+        const text = String(markdown ?? '');
+        if (text.trim()) {
+            node.metadata.content = text;
+        } else {
+            delete node.metadata.content;
+        }
         return true;
     }
 

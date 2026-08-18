@@ -8,7 +8,7 @@ Data model
     (:User   {id, subject, username, email, created_at})
     (:MindMap{id, title, description, visibility, node_count,
               created_at, updated_at, root_id})
-    (:MapNode{map_id, id, depth, label, type, tags, description,
+    (:MapNode{map_id, id, depth, label, type, tags, description, content,
               metadata_json, energy_json, resonance_json, visual_json,
               created, modified, last_visited})
     (:ShareLink{token, permission, created_at, expires_at, revoked})
@@ -26,7 +26,9 @@ properties are derived when reading.
 Note on JSON columns: Neo4j properties must be primitives or arrays of
 primitives, so nested objects (energy/resonance/visual and free-form metadata)
 are stored as JSON strings and parsed on read. Fields worth querying or indexing
-(label, type, tags, depth) are stored as real properties instead.
+(label, type, tags, depth) are stored as real properties instead. So is `content`,
+the node's markdown page, which is the one field a reader may want on its own and
+the one large enough to be worth projecting away.
 """
 
 import json
@@ -113,7 +115,7 @@ async def upsert_user(
 def _node_to_params(node: MapNode) -> Dict[str, Any]:
     """Flatten a MapNode into Neo4j-safe primitive properties."""
     extra = node.metadata.model_dump()
-    for key in ("label", "type", "tags", "description"):
+    for key in ("label", "type", "tags", "description", "content"):
         extra.pop(key, None)
 
     return {
@@ -125,6 +127,10 @@ def _node_to_params(node: MapNode) -> Dict[str, Any]:
         "type": node.metadata.type,
         "tags": node.metadata.tags,
         "description": node.metadata.description,
+        # Stored as its own property rather than inside metadata_json. It is the
+        # one field a reader is likely to want without the rest of the node, and
+        # burying a 64 KB body in a JSON blob makes it impossible to project away.
+        "content": node.metadata.content,
         # Only the non-standard remainder, so the common fields stay queryable
         "metadata_json": json.dumps(extra) if extra else None,
         "energy_json": node.energy.model_dump_json(),
@@ -148,11 +154,19 @@ def _row_to_node(row: Dict[str, Any]) -> MapNode:
             return default
 
     metadata_extra = load(row.get("metadata_json"), {})
+    # `content` was free-form metadata before it became a column, so rows written
+    # then carry it inside metadata_json. Take the column when it has something,
+    # the blob otherwise — and pop it either way, because passing the same keyword
+    # twice to NodeMetadata is a TypeError, not a silent preference.
+    content_from_blob = metadata_extra.pop("content", None)
+    content = row.get("content") or content_from_blob or ""
+
     metadata = NodeMetadata(
         label=row.get("label") or "",
         type=row.get("type") or "default",
         tags=row.get("tags") or [],
         description=row.get("description") or "",
+        content=content if isinstance(content, str) else str(content),
         **metadata_extra,
     )
 
@@ -288,7 +302,8 @@ OPTIONAL MATCH (p:MapNode)-[:HAS_CHILD]->(n)
 RETURN n.id AS id, n.depth AS depth, p.id AS parentId,
        collect(DISTINCT c.id) AS childIds,
        n.label AS label, n.type AS type, n.tags AS tags,
-       n.description AS description, n.metadata_json AS metadata_json,
+       n.description AS description, n.content AS content,
+       n.metadata_json AS metadata_json,
        n.energy_json AS energy_json, n.resonance_json AS resonance_json,
        n.visual_json AS visual_json,
        n.created AS created, n.modified AS modified, n.last_visited AS last_visited
@@ -379,6 +394,7 @@ CREATE (n:MapNode {
     type: node.type,
     tags: node.tags,
     description: node.description,
+    content: node.content,
     metadata_json: node.metadata_json,
     energy_json: node.energy_json,
     resonance_json: node.resonance_json,

@@ -50,6 +50,24 @@ export class ConeView {
 
         /** Rotation about the cone's axis, radians. */
         this.spin = 0;
+
+        /**
+         * Follow a focus change made by another surface.
+         *
+         * Only another surface. A tap in the cone also changes the focus, and
+         * re-aiming on that would snap the node the user just pointed at from
+         * wherever they saw it to the front — moving the thing they were looking at
+         * as a reward for looking at it.
+         */
+        this._onFocusChanged = () => {
+            if (this._selfInitiatedFocus) {
+                this._selfInitiatedFocus = false;
+                return;
+            }
+            if (!this.isOpen) return;   // aimed again on show()
+            this.aimAtFocus();
+        };
+        this._selfInitiatedFocus = false;
         /** Which tier sits at the vertical centre. Fractional while dragging. */
         this.tierFocus = 0;
 
@@ -90,6 +108,7 @@ export class ConeView {
         this._bindGestures();
         this._injectStyles();
         window.addEventListener('resize', this._onResize);
+        window.addEventListener('fractality:focusChanged', this._onFocusChanged);
     }
 
     show() {
@@ -99,13 +118,41 @@ export class ConeView {
 
         // Open on the tier the 3D view is looking at, so switching surfaces does
         // not lose the user's place.
-        const graph = this.getGraph();
-        const focused = graph?.getNode(this.getFocusedNode());
-        if (focused) this.tierFocus = focused.depth;
+        this.aimAtFocus();
 
         this._resize();
         this._start();
         this.onVisibilityChange(true);
+    }
+
+    /**
+     * Turn and scroll the cone until the focused node is front and centre.
+     *
+     * Highlighting it was not enough. The cone shows one tier's neighbourhood at a
+     * time, so selecting a tier-4 node while looking at tier 0 drew a highlight
+     * nobody could see, and the two surfaces looked like they were ignoring each
+     * other — which was the whole complaint.
+     *
+     * Spinning as well as scrolling matters: a node on the far side of the cone is
+     * drawn small, dim and behind everything, and reads as absent.
+     */
+    aimAtFocus() {
+        const graph = this.getGraph();
+        const focused = graph?.getNode(this.getFocusedNode());
+        if (!focused) return false;
+
+        this.tierFocus = this._clampTier(focused.depth);
+
+        // The wedge angles are recomputed here rather than cached: the graph may
+        // have been edited or replaced since the last frame, and aiming with stale
+        // angles points at wherever the node used to be.
+        const angle = this._computeAngles(graph).get(focused.id);
+        if (typeof angle === 'number') {
+            // The front of the cone is where sin(angle + spin) is 0 and
+            // cos(angle + spin) is 1 — see _project. So spin = -angle.
+            this.spin = -angle;
+        }
+        return true;
     }
 
     hide() {
@@ -123,6 +170,7 @@ export class ConeView {
     destroy() {
         this._stop();
         window.removeEventListener('resize', this._onResize);
+        window.removeEventListener('fractality:focusChanged', this._onFocusChanged);
         this.container?.remove();
         this.container = null;
     }
@@ -485,7 +533,9 @@ export class ConeView {
             const dx = x - hit.x;
             const dy = y - hit.y;
             if (dx * dx + dy * dy <= hit.r * hit.r) {
+                this._selfInitiatedFocus = true;
                 this.onFocusNode(hit.id);
+                this._selfInitiatedFocus = false;
                 const label = this.getGraph()?.getNode(hit.id)?.metadata.label;
                 if (label) this.notify(`Selected "${label}"`);
                 return;

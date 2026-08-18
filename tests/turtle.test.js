@@ -35,6 +35,7 @@ function makeGraph() {
     add('alpha', 'root', 1, {
         label: 'Alpha', type: 'concept', tags: ['fractal', 'math'],
         description: 'The first branch',
+        content: '# Alpha\n\nA page with **emphasis**, a list:\n\n- one\n- two\n',
     });
     add('beta', 'root', 1, { label: 'Beta' });
     add('a1', 'alpha', 2, { label: 'Alpha one' });
@@ -60,6 +61,9 @@ function shapeOf(graph) {
             type: n.metadata.type,
             tags: [...(n.metadata.tags ?? [])].sort(),
             description: n.metadata.description ?? null,
+            // Compared exactly. Markdown is whitespace-significant, so a page that
+            // survives with its blank lines collapsed is not a page that survived.
+            content: n.metadata.content ?? null,
         }))
         .sort((a, b) => a.id.localeCompare(b.id));
 }
@@ -155,6 +159,77 @@ test('custom metadata survives a round trip', async () => {
     assert.equal(meta.certainty, 0.5);
     assert.equal(meta.confirmed, true);
     assert.equal(meta.note, 'hand written');
+});
+
+test("a node's page is written as schema:text, not as a fract:* fallback", async () => {
+    const graph = makeGraph();
+    const ttl = await graphToTurtle(graph, { mapId: 'test' });
+
+    assert.match(ttl, /schema:text/,
+        'a markdown page should use a term other tools understand');
+    assert.doesNotMatch(ttl, /fract:content/,
+        'content has a real vocabulary term, so it must not fall through to fract:*');
+    // dcterms:description is the one-line summary. A reader listing descriptions
+    // must not be handed a whole document instead.
+    assert.doesNotMatch(ttl, /dcterms:description "# Alpha/, 'the page leaked into the summary');
+});
+
+test('a page keeps its blank lines and indentation exactly', async () => {
+    const graph = new NodeGraph();
+    // Every whitespace feature markdown gives meaning to: a blank line between
+    // paragraphs, a trailing newline, a fenced block whose leading spaces are code.
+    const page = 'Para one.\n\nPara two.\n\n```\n    indented code\n```\n\n> quoted\n';
+    const node = new NodeData('only', 0, { label: 'Only', content: page });
+    graph.nodes.set('only', node);
+    graph.rebuildIndices();
+
+    const ttl = await graphToTurtle(graph, { mapId: 'test' });
+    const { graph: restored } = await turtleToGraph(ttl);
+
+    assert.equal(restored.getNode('only').metadata.content, page);
+});
+
+test('a page written as fract:content by an older version still imports', async () => {
+    // The format before schema:text was adopted. Files already on disk must open.
+    const ttl = [
+        '@prefix skos: <http://www.w3.org/2004/02/skos/core#> .',
+        '@prefix fract: <https://fractiverse.com/ns#> .',
+        '<https://fractiverse.com/map/old#n1> a skos:Concept ;',
+        '    skos:prefLabel "Legacy" ;',
+        '    fract:content "# Legacy page" .',
+        '',
+    ].join('\n');
+
+    const { graph } = await turtleToGraph(ttl);
+    assert.equal(graph.getNode('n1').metadata.content, '# Legacy page');
+});
+
+test('schema:text wins over a stale fract:content in the same file', async () => {
+    // Quad order is not guaranteed, so this must not depend on which arrives last.
+    const ttl = [
+        '@prefix skos: <http://www.w3.org/2004/02/skos/core#> .',
+        '@prefix fract: <https://fractiverse.com/ns#> .',
+        '@prefix schema: <https://schema.org/> .',
+        '<https://fractiverse.com/map/both#n1> a skos:Concept ;',
+        '    skos:prefLabel "Both" ;',
+        '    fract:content "the old page" ;',
+        '    schema:text "the current page" .',
+        '',
+    ].join('\n');
+
+    const { graph } = await turtleToGraph(ttl);
+    assert.equal(graph.getNode('n1').metadata.content, 'the current page');
+});
+
+test('a node without a page gains no content key', async () => {
+    // An empty string written to every node would be carried by every export and
+    // every database row for nothing.
+    const graph = makeGraph();
+    const ttl = await graphToTurtle(graph, { mapId: 'test' });
+    const { graph: restored } = await turtleToGraph(ttl);
+
+    assert.equal('content' in restored.getNode('beta').metadata, false);
+    assert.equal(restored.getNode('beta').content, '', 'the getter still gives a string');
 });
 
 test('runtime timestamps are not exported, so a round trip looks clean', async () => {

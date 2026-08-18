@@ -33,12 +33,16 @@ export const NS = {
     skos: 'http://www.w3.org/2004/02/skos/core#',
     dcterms: 'http://purl.org/dc/terms/',
     fract: 'https://fractiverse.com/ns#',
+    // schema.org, for the one field that has a well-known term: a node's page is
+    // the text of a work, which is exactly what schema:text means. Everything else
+    // this format needs is either SKOS or genuinely ours.
+    schema: 'https://schema.org/',
     xsd: 'http://www.w3.org/2001/XMLSchema#',
     rdf: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
 };
 
 /** Metadata keys that have a real vocabulary term, so they are not re-emitted as fract:*. */
-const MAPPED_METADATA = new Set(['label', 'type', 'tags', 'description']);
+const MAPPED_METADATA = new Set(['label', 'type', 'tags', 'description', 'content']);
 
 /**
  * Metadata keys that exist only at runtime and must not round-trip.
@@ -126,6 +130,12 @@ export async function graphToTurtle(graph, { title = 'Untitled map', mapId = 'ma
         if (metadata.description) {
             add(subject, namedNode(`${NS.dcterms}description`), literal(String(metadata.description)));
         }
+        // The node's markdown page. Kept apart from dcterms:description, which is
+        // the one-line summary: a reader that shows descriptions in a list should
+        // not be handed a whole document instead.
+        if (metadata.content) {
+            add(subject, namedNode(`${NS.schema}text`), literal(String(metadata.content)));
+        }
         if (metadata.type) {
             add(subject, fract('nodeType'), literal(String(metadata.type)));
         }
@@ -184,6 +194,7 @@ export async function graphToTurtle(graph, { title = 'Untitled map', mapId = 'ma
         prefixes: {
             skos: NS.skos,
             dcterms: NS.dcterms,
+            schema: NS.schema,
             fract: NS.fract,
             // Declared so typed literals read as `xsd:double` rather than
             // carrying the full datatype IRI inline.
@@ -226,7 +237,7 @@ export async function turtleToGraph(text) {
     const ensure = (iri) => {
         if (!found.has(iri)) {
             found.set(iri, {
-                iri, label: null, description: null, type: null,
+                iri, label: null, description: null, content: null, type: null,
                 tags: [], tier: null, position: null,
                 parentIri: null, childIris: [], extra: {}, isTopConcept: false,
             });
@@ -245,6 +256,15 @@ export async function turtleToGraph(text) {
 
         if (p === `${NS.skos}prefLabel`) { ensure(s).label = o.value; continue; }
         if (p === `${NS.dcterms}description`) { ensure(s).description = o.value; continue; }
+        if (p === `${NS.schema}text`) { ensure(s).content = o.value; continue; }
+        // Written as fract:content by versions before schema:text was adopted.
+        // Only fills a gap: quad order is not guaranteed, so a file carrying both
+        // must not depend on which one N3 happens to hand over second.
+        if (p === `${NS.fract}content`) {
+            const entry = ensure(s);
+            if (!entry.content) entry.content = o.value;
+            continue;
+        }
         if (p === `${NS.fract}nodeType`) { ensure(s).type = o.value; continue; }
         if (p === `${NS.fract}tag`) { ensure(s).tags.push(o.value); continue; }
         if (p === `${NS.fract}tier`) { ensure(s).tier = _int(o.value); continue; }
@@ -309,6 +329,7 @@ export async function turtleToGraph(text) {
             type: entry.type || 'default',
             tags: entry.tags,
             ...(entry.description ? { description: entry.description } : {}),
+            ...(entry.content ? { content: entry.content } : {}),
             ...entry.extra,
         });
         graph.nodes.set(id, node);

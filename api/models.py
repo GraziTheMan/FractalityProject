@@ -77,11 +77,24 @@ class NodeTimestamps(BaseModel):
     lastVisited: Optional[int] = None
 
 
+# A node's markdown page. Generous for a page of prose, and small enough that a
+# map cannot become unservable one node at a time: the cap is per node, and a map
+# on the free tier may hold thousands of them.
+MAX_NODE_CONTENT = 64_000
+
+
 class NodeMetadata(BaseModel):
     label: str = ""
     type: str = "default"
     tags: List[str] = Field(default_factory=list)
     description: str = ""
+
+    # The node's own page, as markdown.
+    #
+    # Distinct from `description`, which is a one-line summary shown in lists.
+    # This is the body: the thing the map is actually for, in the spirit of a
+    # linked notes app where every concept has a page behind it.
+    content: str = Field(default="", max_length=MAX_NODE_CONTENT)
 
     # Callers may attach arbitrary extra metadata, as the frontend allows
     model_config = {"extra": "allow"}

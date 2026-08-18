@@ -14,6 +14,14 @@
 //
 // Not to be confused with the Node *inspector* (NodeDebugPanel), which reports
 // context scores and energy for one node and changes nothing.
+//
+// The second half of the panel is the node's page. Every node stands for a concept
+// and the map's value is the writing attached to those concepts, not the shape of
+// the tree — the tree is how you get to the writing. So the outline and the page
+// sit side by side, and the page gets the larger half: reorganising and writing are
+// the same session, and the 3D view is not needed for either.
+
+import { renderMarkdownInto, markdownSummary } from './markdown.js';
 
 const INDENT_PX = 14;
 
@@ -35,6 +43,22 @@ export class NodeManagerPanel {
 
         this.container = null;
         this.isOpen = false;
+
+        /** Whether the page pane is showing the editor or the rendered page. */
+        this.editing = false;
+
+        /**
+         * Which column a narrow screen is showing.
+         *
+         * Side by side needs width this does not have on a phone, and the phone is
+         * where the panel matters most — it is the device you have when the idea
+         * arrives. So a phone gets one column and a switch.
+         */
+        this.pane = 'tree';
+
+        /** The node whose page is currently in the editor, so a switch can commit. */
+        this._editingId = null;
+        this._commitTimer = null;
 
         /** Currently selected row — what the toolbar acts on. */
         this.selectedId = null;
@@ -70,6 +94,35 @@ export class NodeManagerPanel {
 
             if (this.isOpen) this.render();
         };
+
+        /**
+         * Follow a focus change made by another surface.
+         *
+         * The Cone and the 3D view both change the engine's focus when you tap a
+         * node, and this panel used to ignore that: you could pick a node in the
+         * cone, switch to the outline, and find it still pointed somewhere else.
+         *
+         * Returning early when the id already matches is what keeps a click in this
+         * panel from rendering twice — the row handler sets selectedId, then calls
+         * onFocusNode, which fires this synchronously before the handler's own
+         * render. There is genuinely nothing to do in that case.
+         */
+        this._onFocusChanged = (event) => {
+            const nodeId = event?.detail?.nodeId;
+            if (!nodeId || nodeId === this.selectedId) return;
+            if (!this.getGraph()?.getNode(nodeId)) return;
+
+            this.selectedId = nodeId;
+            // Expand whatever was hiding it: a selection nobody can see reads as
+            // nothing having happened.
+            for (let id = this.getGraph().getNode(nodeId).parentId; id; id = this.getGraph().getNode(id)?.parentId) {
+                this.collapsed.delete(id);
+            }
+            if (this.isOpen) {
+                this.render();
+                this._scrollSelectionIntoView();
+            }
+        };
     }
 
     // --- lifecycle ---------------------------------------------------------
@@ -79,14 +132,44 @@ export class NodeManagerPanel {
 
         this.container = document.createElement('div');
         this.container.className = 'nodemgr-panel hidden';
+        // Static markup only. Every user-authored value below goes in through
+        // textContent or the markdown renderer, never through here.
         this.container.innerHTML = `
             <div class="nodemgr-header">
                 <h3>Node Manager</h3>
                 <span class="nodemgr-count"></span>
+                <div class="nodemgr-tabs" role="tablist">
+                    <button class="nodemgr-tab" data-pane="tree" type="button" role="tab">Outline</button>
+                    <button class="nodemgr-tab" data-pane="page" type="button" role="tab">Page</button>
+                </div>
                 <button class="nodemgr-close" title="Close" type="button">×</button>
             </div>
-            <div class="nodemgr-tree" role="tree"></div>
-            <div class="nodemgr-toolbar"></div>
+            <div class="nodemgr-body">
+                <div class="nodemgr-column nodemgr-column-tree">
+                    <div class="nodemgr-tree" role="tree"></div>
+                    <div class="nodemgr-toolbar"></div>
+                </div>
+                <div class="nodemgr-column nodemgr-column-page">
+                    <div class="nodemgr-page-head">
+                        <span class="nodemgr-page-title"></span>
+                        <span class="nodemgr-page-tier"></span>
+                        <button class="nodemgr-mode" type="button"></button>
+                    </div>
+                    <div class="nodemgr-page-body">
+                        <div class="nodemgr-rendered"></div>
+                        <textarea class="nodemgr-editor" spellcheck="true"
+                            placeholder="Write this node's page in Markdown.
+
+# Heading
+
+Link to another node with [[its name]].
+
+- a list
+- another item"></textarea>
+                    </div>
+                    <div class="nodemgr-page-foot"></div>
+                </div>
+            </div>
             <div class="nodemgr-status"></div>
         `;
 
@@ -96,27 +179,65 @@ export class NodeManagerPanel {
         this.toolbarEl = this.container.querySelector('.nodemgr-toolbar');
         this.statusEl = this.container.querySelector('.nodemgr-status');
         this.countEl = this.container.querySelector('.nodemgr-count');
+        this.pageTitleEl = this.container.querySelector('.nodemgr-page-title');
+        this.pageTierEl = this.container.querySelector('.nodemgr-page-tier');
+        this.renderedEl = this.container.querySelector('.nodemgr-rendered');
+        this.editorEl = this.container.querySelector('.nodemgr-editor');
+        this.modeButton = this.container.querySelector('.nodemgr-mode');
+        this.pageFootEl = this.container.querySelector('.nodemgr-page-foot');
 
         this.container.querySelector('.nodemgr-close')
             .addEventListener('click', () => this.hide());
+
+        for (const tab of this.container.querySelectorAll('.nodemgr-tab')) {
+            tab.addEventListener('click', () => this._showPane(tab.dataset.pane));
+        }
+
+        this.modeButton.addEventListener('click', () => this._setEditing(!this.editing));
+
+        // Committed on a debounce while typing and again on blur. There is no Save
+        // button on purpose: a page you typed and then clicked away from is a page
+        // you wrote, and a dialog asking whether you meant it is a trap you have to
+        // answer before you are allowed to look at anything else.
+        this.editorEl.addEventListener('input', () => {
+            this._setStatus('Typing…');
+            clearTimeout(this._commitTimer);
+            this._commitTimer = setTimeout(() => this._commitContent(), 600);
+        });
+        this.editorEl.addEventListener('blur', () => {
+            clearTimeout(this._commitTimer);
+            this._commitContent();
+        });
 
         this._buildToolbar();
         this._injectStyles();
 
         window.addEventListener('fractality:graphReplaced', this._onGraphChanged);
         window.addEventListener('fractality:graphChanged', this._onGraphChanged);
+        window.addEventListener('fractality:focusChanged', this._onFocusChanged);
     }
 
     show() {
         this.init();
         this.container.classList.remove('hidden');
         this.isOpen = true;
-        // Start on whatever the 3D view is looking at, so the two surfaces agree.
-        this.selectedId = this.selectedId ?? this.getFocusedNode();
+        // Start on whatever the engine is looking at. The engine's focus is the
+        // shared selection and this panel's selectedId is a cache of it, so the
+        // engine wins — the other way round meant selecting a node in the cone with
+        // this panel closed, reopening it, and finding it still pointed at whatever
+        // was selected here last. The focusChanged listener only runs from init()
+        // onwards, so this is also what covers focus changes made while closed.
+        this.selectedId = this.getFocusedNode() ?? this.selectedId;
+        this._showPane(this.pane);
         this.render();
+        this._scrollSelectionIntoView();
     }
 
     hide() {
+        // Closing the panel is the third way to stop writing, alongside blurring
+        // the editor and selecting another node. All three must commit.
+        clearTimeout(this._commitTimer);
+        this._commitContent();
         if (this.container) this.container.classList.add('hidden');
         this.isOpen = false;
     }
@@ -128,6 +249,7 @@ export class NodeManagerPanel {
     destroy() {
         window.removeEventListener('fractality:graphReplaced', this._onGraphChanged);
         window.removeEventListener('fractality:graphChanged', this._onGraphChanged);
+        window.removeEventListener('fractality:focusChanged', this._onFocusChanged);
         this.container?.remove();
         this.container = null;
     }
@@ -372,6 +494,7 @@ export class NodeManagerPanel {
             this.treeEl.appendChild(empty);
             this.countEl.textContent = '';
             this._syncToolbar();
+            this._renderPage();
             return;
         }
 
@@ -383,6 +506,7 @@ export class NodeManagerPanel {
         for (const root of roots) this._renderSubtree(graph, root, 0);
 
         this._syncToolbar();
+        this._renderPage();
     }
 
     _renderSubtree(graph, node, indent) {
@@ -436,12 +560,26 @@ export class NodeManagerPanel {
         // textContent: labels are user-authored.
         label.textContent = node.metadata.label || node.id;
 
+        // Which nodes have writing behind them, at a glance. Without this the
+        // outline gives no way to tell a concept that has been thought through from
+        // one that is still just a word, and finding out means clicking every row.
+        const page = document.createElement('span');
+        page.className = 'nodemgr-haspage';
+        const content = node.metadata.content ?? '';
+        if (content.trim()) {
+            page.textContent = '◈';
+            page.title = markdownSummary(content, 160) || 'Has a page';
+        } else {
+            page.textContent = '';
+            page.setAttribute('aria-hidden', 'true');
+        }
+
         const meta = document.createElement('span');
         meta.className = 'nodemgr-meta';
         meta.textContent = childCount > 0 ? `${childCount}` : '';
         if (childCount > 0) meta.title = `${childCount} child node(s)`;
 
-        row.append(twisty, tier, label, meta);
+        row.append(twisty, tier, label, page, meta);
 
         row.addEventListener('click', () => {
             this.selectedId = node.id;
@@ -451,7 +589,235 @@ export class NodeManagerPanel {
             this.render();
         });
 
+        // On a phone the page is behind a tab, so a tap on the row selects and a
+        // second tap opens what it selected. Jumping straight to the page on the
+        // first tap would make the outline impossible to browse.
+        row.addEventListener('dblclick', () => this._showPane('page'));
+
         return row;
+    }
+
+    // --- the page ----------------------------------------------------------
+
+    /**
+     * Show one column on a narrow screen. On a wide one both are visible and this
+     * only moves the tab highlight, which is why it does not hide anything itself:
+     * the media query decides what is on screen, not this method.
+     */
+    _showPane(pane) {
+        this.pane = pane === 'page' ? 'page' : 'tree';
+        this.container.dataset.pane = this.pane;
+        for (const tab of this.container.querySelectorAll('.nodemgr-tab')) {
+            const active = tab.dataset.pane === this.pane;
+            tab.classList.toggle('active', active);
+            tab.setAttribute('aria-selected', String(active));
+        }
+    }
+
+    /**
+     * Switch the page pane between reading and writing.
+     *
+     * A node with no page opens straight into the editor: showing an empty reading
+     * pane and making you find the button first is one step of nothing.
+     */
+    _setEditing(editing) {
+        // Leaving the editor commits, so the toggle can never be the thing that
+        // loses a paragraph.
+        if (this.editing && !editing) {
+            clearTimeout(this._commitTimer);
+            this._commitContent();
+        }
+
+        const changed = this.editing !== Boolean(editing);
+        this.editing = Boolean(editing);
+        this.container.classList.toggle('editing', this.editing);
+        this.modeButton.textContent = this.editing ? '👁 Read' : '✎ Write';
+        this.modeButton.title = this.editing
+            ? 'Show the page as it reads'
+            : 'Edit this page';
+        // Only on an actual switch. This method is also called from every render to
+        // re-apply the current mode, and focusing there would pull the caret out of
+        // the outline whenever anything redrew.
+        if (changed && this.editing) this.editorEl.focus();
+    }
+
+    /**
+     * Write the editor's text into the graph.
+     *
+     * Guarded on the id the text was loaded for rather than the current selection.
+     * Without that, a debounce still pending when the selection changes would write
+     * one node's page onto another — the kind of bug that is only noticed later,
+     * once the wrong page is the only page.
+     */
+    _commitContent() {
+        const graph = this.getGraph();
+        const id = this._editingId;
+        if (!graph || !id) return;
+
+        const node = graph.getNode(id);
+        if (!node) return;
+
+        const next = this.editorEl.value;
+        if ((node.metadata.content ?? '') === next) {
+            this._setStatus('');
+            return;
+        }
+
+        graph.setContent(id, next);
+        this._refreshPageMeta(graph, node);
+        // The row shows whether a node has a page, so it has to be redrawn — but
+        // only the one row, because re-rendering the outline while typing would
+        // scroll the tree out from under the cursor.
+        this._refreshRow(graph, id);
+
+        // Deliberately NOT onGraphChanged(). That invalidates the family view, the
+        // CACE analysis and the layout, none of which depend on a node's text — so
+        // on every debounce tick it would be pure waste. It would also announce a
+        // graph change, which re-enters render(), which commits again: a loop that
+        // only terminates by accident.
+
+        this._setStatus(
+            next.trim()
+                ? 'Page saved into the map. Use Maps → Overwrite to store the map itself.'
+                : 'Page cleared.'
+        );
+    }
+
+    /**
+     * Load the selected node's page into the pane.
+     *
+     * Commits the outgoing page first: changing the selection is one of the ways
+     * you stop writing, and the least expected way to lose text.
+     */
+    _renderPage() {
+        const graph = this.getGraph();
+        const node = this.selectedId ? graph?.getNode(this.selectedId) : null;
+
+        if (this._editingId && this._editingId !== this.selectedId) {
+            clearTimeout(this._commitTimer);
+            this._commitContent();
+        }
+
+        if (!node) {
+            this._editingId = null;
+            this.pageTitleEl.textContent = 'No node selected';
+            this.pageTierEl.textContent = '';
+            this.editorEl.value = '';
+            this.editorEl.disabled = true;
+            this.modeButton.classList.add('unavailable');
+            this.renderedEl.replaceChildren(
+                this._placeholder('Pick a node in the outline to read or write its page.')
+            );
+            this.pageFootEl.textContent = '';
+            return;
+        }
+
+        this._editingId = node.id;
+        this.editorEl.disabled = false;
+        this.modeButton.classList.remove('unavailable');
+        this.editorEl.value = node.metadata.content ?? '';
+
+        this._refreshPageMeta(graph, node);
+
+        // A node with nothing written opens ready to write.
+        if (!this.editorEl.value.trim() && !this.editing) this._setEditing(true);
+        else this._setEditing(this.editing);
+    }
+
+    /** The title line, the rendered page, and the footer note. */
+    _refreshPageMeta(graph, node) {
+        this.pageTitleEl.textContent = node.metadata.label || node.id;
+
+        // Tier and branch are metadata, so they are stated quietly beside the name
+        // rather than being the heading. The concept is the subject of the page.
+        const siblings = node.parentId ? (graph.getNode(node.parentId)?.childIds ?? []) : graph.getRootNodes().map((n) => n.id);
+        const position = siblings.indexOf(node.id);
+        const parts = [`Tier ${node.depth}`];
+        if (position >= 0 && siblings.length > 1) parts.push(`${position + 1} of ${siblings.length}`);
+        if (node.childIds.length) parts.push(`${node.childIds.length} below`);
+        this.pageTierEl.textContent = parts.join(' · ');
+
+        const content = node.metadata.content ?? '';
+        if (content.trim()) {
+            renderMarkdownInto(this.renderedEl, content, {
+                resolveWikiLink: (target) => this._resolveWikiLink(graph, target),
+                onWikiLink: (nodeId) => this.selectNode(nodeId),
+            });
+        } else {
+            this.renderedEl.replaceChildren(
+                this._placeholder(`"${node.metadata.label || node.id}" has no page yet.`)
+            );
+        }
+
+        this.pageFootEl.textContent = content.trim()
+            ? `${content.length} characters · linked with [[node name]]`
+            : 'Markdown. Link to another node with [[its name]].';
+    }
+
+    /**
+     * Find the node a [[wiki link]] names.
+     *
+     * By label first, because that is what a person types, and case-insensitively
+     * for the same reason. Falls back to the id so a link written against an
+     * exported file still resolves.
+     */
+    _resolveWikiLink(graph, target) {
+        if (!graph) return null;
+        const wanted = String(target).trim().toLowerCase();
+        if (!wanted) return null;
+
+        for (const node of graph.nodes.values()) {
+            if ((node.metadata.label ?? '').trim().toLowerCase() === wanted) return node.id;
+        }
+        for (const node of graph.nodes.values()) {
+            if (node.id.toLowerCase() === wanted) return node.id;
+        }
+        return null;
+    }
+
+    _placeholder(text) {
+        const el = document.createElement('p');
+        el.className = 'nodemgr-page-empty';
+        el.textContent = text;
+        return el;
+    }
+
+    /**
+     * Select a node from outside the outline — a wiki link, or another surface.
+     *
+     * Expands whatever was hiding it, because selecting a row nobody can see looks
+     * like nothing happened.
+     */
+    selectNode(nodeId) {
+        const graph = this.getGraph();
+        if (!graph?.getNode(nodeId)) return false;
+
+        for (let id = graph.getNode(nodeId).parentId; id; id = graph.getNode(id)?.parentId) {
+            this.collapsed.delete(id);
+        }
+
+        this.selectedId = nodeId;
+        this.onFocusNode(nodeId);
+        if (this.isOpen) {
+            this.render();
+            this._scrollSelectionIntoView();
+        }
+        return true;
+    }
+
+    _scrollSelectionIntoView() {
+        const row = this.treeEl?.querySelector('.nodemgr-row.selected');
+        // Guarded: jsdom and older browsers have no scrollIntoView on every element.
+        row?.scrollIntoView?.({ block: 'nearest' });
+    }
+
+    /** Redraw one row in place, so typing does not scroll the outline. */
+    _refreshRow(graph, nodeId) {
+        const row = this.treeEl?.querySelector(`.nodemgr-row[data-node-id="${CSS.escape(nodeId)}"]`);
+        const node = graph.getNode(nodeId);
+        if (!row || !node) return;
+        const indent = Math.round((parseFloat(row.style.paddingLeft) - 8) / INDENT_PX);
+        row.replaceWith(this._renderRow(graph, node, Number.isFinite(indent) ? indent : 0));
     }
 
     /** Reflect the current selection into the toolbar's enabled states. */
@@ -483,13 +849,19 @@ export class NodeManagerPanel {
         // Prefixed selectors, every edge stated. Two stylesheets each supplying
         // half of one component's position is how a toast ended up 814px tall.
         style.textContent = `
+            /* Full width, between the two docks. Viewing the 3D map while
+               reorganising is not useful — you cannot move a node to somewhere the
+               3D view will not show you — and the page needs room to be read. The
+               inset uses both dock variables from shell.css so the panel can never
+               cover the controls, which is how the Cone view came to hide the dock. */
             .nodemgr-panel {
                 position: fixed;
-                top: 64px;
-                left: 16px;
-                bottom: auto;
-                width: 380px;
-                max-height: 70vh;
+                top: calc(var(--dock-top-height, 0px) + 8px);
+                left: 12px;
+                right: 12px;
+                bottom: calc(var(--dock-height, 0px) + 8px);
+                width: auto;
+                max-height: none;
                 display: flex;
                 flex-direction: column;
                 background: rgba(0, 0, 0, 0.94);
@@ -501,6 +873,207 @@ export class NodeManagerPanel {
                 z-index: 1001;
             }
             .nodemgr-panel.hidden { display: none; }
+
+            /* Two columns, the page taking the larger share. */
+            .nodemgr-body {
+                flex: 1;
+                display: flex;
+                min-height: 0;   /* lets the children scroll instead of growing */
+                overflow: hidden;
+            }
+            .nodemgr-column {
+                display: flex;
+                flex-direction: column;
+                min-height: 0;
+                min-width: 0;
+            }
+            .nodemgr-column-tree {
+                flex: 0 0 340px;
+                border-right: 1px solid #222;
+            }
+            .nodemgr-column-page { flex: 1 1 auto; }
+
+            /* The tabs only matter on a narrow screen. */
+            .nodemgr-tabs { display: none; }
+            .nodemgr-tab {
+                background: rgba(255,255,255,0.06);
+                border: 1px solid #333;
+                color: #bbb;
+                font-family: inherit;
+                font-size: 11px;
+                min-height: 32px;
+                padding: 4px 10px;
+                cursor: pointer;
+            }
+            .nodemgr-tab:first-child { border-radius: 6px 0 0 6px; }
+            .nodemgr-tab:last-child { border-radius: 0 6px 6px 0; }
+            .nodemgr-tab.active { background: rgba(0,255,255,0.16); border-color: #0ff; color: #fff; }
+
+            /* --- the page ------------------------------------------------- */
+            .nodemgr-page-head {
+                display: flex;
+                align-items: baseline;
+                gap: 10px;
+                padding: 10px 14px;
+                border-bottom: 1px solid #222;
+            }
+            .nodemgr-page-title {
+                flex: 0 1 auto;
+                min-width: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                font-size: 16px;
+                color: #fff;
+            }
+            /* Tier and branch are metadata: stated, not headlined. The concept's
+               name is the subject of the page. */
+            .nodemgr-page-tier {
+                flex: 1 1 auto;
+                color: #666;
+                font-size: 11px;
+                font-family: 'Consolas', 'Monaco', monospace;
+                white-space: nowrap;
+            }
+            .nodemgr-mode {
+                flex: 0 0 auto;
+                background: rgba(255,255,255,0.06);
+                border: 1px solid #333;
+                border-radius: 6px;
+                color: #eee;
+                font-family: inherit;
+                font-size: 11px;
+                min-height: 32px;
+                padding: 4px 10px;
+                cursor: pointer;
+            }
+            .nodemgr-mode:hover { border-color: #0ff; }
+            .nodemgr-mode.unavailable { opacity: 0.45; }
+
+            .nodemgr-page-body {
+                flex: 1;
+                min-height: 0;
+                display: flex;
+                overflow: hidden;
+            }
+            /* One of the two is shown; .editing on the panel decides which. */
+            .nodemgr-rendered {
+                flex: 1;
+                overflow-y: auto;
+                padding: 4px 18px 18px;
+                line-height: 1.6;
+            }
+            .nodemgr-editor {
+                display: none;
+                flex: 1;
+                min-width: 0;
+                margin: 0;
+                padding: 12px 16px;
+                background: rgba(255,255,255,0.03);
+                border: none;
+                color: #eee;
+                font-family: 'Consolas', 'Monaco', monospace;
+                font-size: 13px;
+                line-height: 1.6;
+                resize: none;
+                outline: none;
+            }
+            .nodemgr-panel.editing .nodemgr-rendered { display: none; }
+            .nodemgr-panel.editing .nodemgr-editor { display: block; }
+            .nodemgr-editor:disabled { opacity: 0.4; }
+
+            .nodemgr-page-foot {
+                padding: 6px 14px;
+                border-top: 1px solid #222;
+                color: #666;
+                font-size: 11px;
+                min-height: 22px;
+            }
+            .nodemgr-page-empty { color: #777; font-style: italic; }
+
+            /* --- rendered markdown --------------------------------------- */
+            .nodemgr-rendered h1,
+            .nodemgr-rendered h2,
+            .nodemgr-rendered h3,
+            .nodemgr-rendered h4,
+            .nodemgr-rendered h5,
+            .nodemgr-rendered h6 {
+                margin: 1.1em 0 0.4em;
+                color: #0ff;
+                line-height: 1.3;
+            }
+            .nodemgr-rendered h1 { font-size: 20px; }
+            .nodemgr-rendered h2 { font-size: 17px; }
+            .nodemgr-rendered h3 { font-size: 15px; }
+            .nodemgr-rendered h4,
+            .nodemgr-rendered h5,
+            .nodemgr-rendered h6 { font-size: 13px; color: #7dd3fc; }
+            .nodemgr-rendered p { margin: 0 0 0.9em; }
+            .nodemgr-rendered ul,
+            .nodemgr-rendered ol { margin: 0 0 0.9em; padding-left: 1.5em; }
+            .nodemgr-rendered li { margin: 0.2em 0; }
+            .nodemgr-rendered li.md-task { list-style: none; margin-left: -1.2em; }
+            .nodemgr-rendered blockquote {
+                margin: 0 0 0.9em;
+                padding: 2px 0 2px 12px;
+                border-left: 3px solid #0ff4;
+                color: #bbb;
+            }
+            .nodemgr-rendered code {
+                background: rgba(255,255,255,0.08);
+                border-radius: 3px;
+                padding: 1px 4px;
+                font-family: 'Consolas', 'Monaco', monospace;
+                font-size: 0.92em;
+            }
+            .nodemgr-rendered pre {
+                margin: 0 0 0.9em;
+                padding: 10px 12px;
+                background: rgba(255,255,255,0.05);
+                border: 1px solid #222;
+                border-radius: 6px;
+                /* Its own scroller. A long code line must not widen the page. */
+                overflow-x: auto;
+            }
+            .nodemgr-rendered pre code { background: none; padding: 0; }
+            .nodemgr-rendered hr { border: none; border-top: 1px solid #333; margin: 1.2em 0; }
+            .nodemgr-rendered a { color: #7dd3fc; }
+            .nodemgr-rendered table {
+                border-collapse: collapse;
+                margin: 0 0 0.9em;
+                display: block;
+                overflow-x: auto;
+                max-width: 100%;
+            }
+            .nodemgr-rendered th,
+            .nodemgr-rendered td {
+                border: 1px solid #2a2a2a;
+                padding: 4px 8px;
+                text-align: left;
+            }
+            .nodemgr-rendered th { background: rgba(255,255,255,0.05); }
+
+            /* A link to another node. A button, not an anchor: it navigates this
+               app's own state and has no URL to point at. */
+            .nodemgr-rendered .md-wikilink {
+                background: rgba(0,255,255,0.10);
+                border: 1px solid #0ff4;
+                border-radius: 4px;
+                color: #0ff;
+                font: inherit;
+                padding: 0 5px;
+                cursor: pointer;
+            }
+            .nodemgr-rendered .md-wikilink:hover { background: rgba(0,255,255,0.2); }
+            /* A reference to a node that does not exist yet, which is a normal
+               thing to write. Shown, and marked as going nowhere. */
+            .nodemgr-rendered .md-wikilink.md-unresolved {
+                background: none;
+                border-style: dashed;
+                border-color: #555;
+                color: #888;
+                cursor: default;
+            }
 
             .nodemgr-header {
                 display: flex;
@@ -582,6 +1155,13 @@ export class NodeManagerPanel {
                 white-space: nowrap;
             }
             .nodemgr-meta { flex: 0 0 auto; color: #666; font-size: 11px; }
+            .nodemgr-haspage {
+                flex: 0 0 auto;
+                width: 12px;
+                color: #0ff;
+                font-size: 10px;
+                text-align: center;
+            }
 
             .nodemgr-toolbar {
                 display: flex;
@@ -621,17 +1201,35 @@ export class NodeManagerPanel {
             .nodemgr-status.error { color: #f87171; }
             .nodemgr-empty { padding: 20px 12px; color: #777; text-align: center; }
 
+            /* --- a narrower desktop window ------------------------------- */
+            @media (max-width: 1100px) and (min-width: 721px) {
+                .nodemgr-column-tree { flex: 0 0 280px; }
+            }
+
             /* --- phones -------------------------------------------------- */
             @media (max-width: 720px), (max-height: 500px) {
                 .nodemgr-panel {
-                    top: 44px;
+                    top: calc(var(--dock-top-height, 0px) + 8px);
                     left: 8px;
                     right: 8px;
-                    width: auto;
                     /* Clears the dock; --dock-height comes from shell.css. */
                     bottom: calc(var(--dock-height, 0px) + 8px);
-                    max-height: none;
                 }
+
+                /* One column at a time. 340px of outline plus a page is not
+                   readable on a phone, and a page squeezed to half a phone is not
+                   a page — so the tabs choose, and both get the whole width. */
+                .nodemgr-tabs { display: flex; }
+                .nodemgr-column-tree {
+                    flex: 1 1 auto;
+                    border-right: none;
+                }
+                .nodemgr-panel[data-pane="page"] .nodemgr-column-tree { display: none; }
+                .nodemgr-panel[data-pane="tree"] .nodemgr-column-page { display: none; }
+                /* The header has to give the tabs room. */
+                .nodemgr-header h3 { display: none; }
+                .nodemgr-count { flex: 1; }
+
                 .nodemgr-row { min-height: 40px; }
                 .nodemgr-action {
                     min-height: 40px;
@@ -643,6 +1241,9 @@ export class NodeManagerPanel {
                    "Child" and "Sibling" are both a plus sign and icon-only made
                    the two most-used actions indistinguishable. */
                 .nodemgr-toolbar { padding: 6px; }
+                .nodemgr-rendered { padding: 4px 12px 14px; }
+                .nodemgr-page-head { padding: 8px 12px; }
+                .nodemgr-page-title { font-size: 15px; }
             }
         `;
         document.head.appendChild(style);

@@ -1720,6 +1720,383 @@ if (run_identity) {
     await ctx.close();
 }
 
+// ---------------------------------------------------------------------------
+// 12. Node pages, and whether the surfaces genuinely talk to each other.
+//
+// The map's value is the writing behind each concept, so the page pane has to
+// hold text safely. And the outline, the cone and the 3D view are three views of
+// one selection: the complaint that started this was that they behaved like three
+// unrelated programs. Every direction of that is checked here, because a one-way
+// binding looks correct from whichever side you happen to test.
+// ---------------------------------------------------------------------------
+
+const run_node_pages = section('node pages');
+
+if (run_node_pages) {
+    const { ctx, page } = await openApp(VIEWPORTS[2]);   // desktop
+
+    // --- writing a page
+    const written = await page.evaluate(async () => {
+        const panel = window.nodeManagerPanel;
+        const graph = window.fractalityEngine().nodeGraph;
+        panel.show();
+        const root = graph.getRootNodes()[0];
+        const child = graph.getChildren(root.id)[0];
+        panel.selectNode(root.id);
+        await new Promise((r) => setTimeout(r, 100));
+
+        const editor = document.querySelector('.nodemgr-editor');
+        editor.value = `# ${root.metadata.label}\n\nFlows into [[${child.metadata.label}]].\n\n- one\n- two\n`;
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+        // Longer than the 600ms debounce.
+        await new Promise((r) => setTimeout(r, 900));
+
+        document.querySelector('.nodemgr-mode').click();
+        await new Promise((r) => setTimeout(r, 100));
+
+        const rendered = document.querySelector('.nodemgr-rendered');
+        return {
+            stored: graph.getNode(root.id).metadata.content ?? '',
+            headingText: rendered.querySelector('h1')?.textContent ?? null,
+            items: rendered.querySelectorAll('li').length,
+            wikiLabel: rendered.querySelector('.md-wikilink')?.textContent ?? null,
+            wikiUsable: rendered.querySelector('.md-wikilink')
+                ? !rendered.querySelector('.md-wikilink').disabled : false,
+            indicator: document.querySelector(
+                `.nodemgr-row[data-node-id="${CSS.escape(root.id)}"] .nodemgr-haspage`)?.textContent ?? '',
+            childLabel: child.metadata.label,
+        };
+    });
+
+    if (!written.stored.startsWith('#')) {
+        fail('typing a page did not reach the graph');
+    } else {
+        pass('a page typed into the editor is committed to the node');
+    }
+
+    if (written.headingText === null || written.items !== 2) {
+        fail(`the page did not render (heading ${written.headingText}, ${written.items} items)`);
+    } else {
+        pass(`the page renders as markdown ("${written.headingText}", ${written.items} list items)`);
+    }
+
+    if (written.wikiLabel !== written.childLabel || !written.wikiUsable) {
+        fail(`a [[wiki link]] to an existing node did not resolve (got ${written.wikiLabel})`);
+    } else {
+        pass(`a [[wiki link]] resolves by label ("${written.wikiLabel}")`);
+    }
+
+    if (written.indicator !== '◈') {
+        fail('the outline does not mark which nodes have a page');
+    } else {
+        pass('the outline marks a node that has a page');
+    }
+
+    // --- a wiki link navigates, and takes the whole app with it
+    const jumped = await page.evaluate(async () => {
+        document.querySelector('.nodemgr-rendered .md-wikilink').click();
+        await new Promise((r) => setTimeout(r, 200));
+        return {
+            selected: window.nodeManagerPanel.selectedId,
+            focus: window.fractalityEngine().state.focusNode,
+            title: document.querySelector('.nodemgr-page-title')?.textContent ?? '',
+        };
+    });
+
+    if (jumped.selected !== jumped.focus || jumped.title !== written.childLabel) {
+        fail(`following a wiki link left the app inconsistent (${JSON.stringify(jumped)})`);
+    } else {
+        pass(`following a wiki link moves the selection and the 3D focus together ("${jumped.title}")`);
+    }
+
+    // --- a pending edit must not be written onto the next node
+    //
+    // Type, then switch node inside the debounce window. The commit is keyed on the
+    // id the text was loaded for; without that it lands on whatever is selected
+    // when the timer fires, and the wrong page becomes the only page.
+    const race = await page.evaluate(async () => {
+        const panel = window.nodeManagerPanel;
+        const graph = window.fractalityEngine().nodeGraph;
+        const [a, b] = [...graph.nodes.values()].slice(0, 2);
+        graph.setContent(a.id, '');
+        graph.setContent(b.id, '');
+
+        panel.selectNode(a.id);
+        await new Promise((r) => setTimeout(r, 60));
+        const editor = document.querySelector('.nodemgr-editor');
+        editor.value = 'PAGE FOR A';
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+        panel.selectNode(b.id);              // well inside the debounce
+        await new Promise((r) => setTimeout(r, 900));
+
+        return {
+            a: graph.getNode(a.id).metadata.content ?? '',
+            b: graph.getNode(b.id).metadata.content ?? '',
+        };
+    });
+
+    if (race.a !== 'PAGE FOR A') {
+        fail(`switching node during a pending edit lost it (a = "${race.a}")`);
+    } else if (race.b !== '') {
+        fail(`a pending edit was written onto the newly selected node (b = "${race.b}")`);
+    } else {
+        pass('an edit still pending when the selection changes lands on the right node');
+    }
+
+    // --- hostile page content, in a real browser rather than jsdom
+    const hostile = await page.evaluate(async () => {
+        const panel = window.nodeManagerPanel;
+        const graph = window.fractalityEngine().nodeGraph;
+        const id = graph.getRootNodes()[0].id;
+        window.__xss = 0;
+        graph.setContent(id, [
+            '<script>window.__xss = 1</script>',
+            '<img src=x onerror="window.__xss = 2">',
+            '[go](javascript:window.__xss = 3)',
+            '<iframe src="https://evil.test"></iframe>',
+            '<svg onload="window.__xss = 4"></svg>',
+        ].join('\n\n'));
+        panel.selectNode(id);
+        panel._setEditing(false);
+        await new Promise((r) => setTimeout(r, 400));
+
+        const rendered = document.querySelector('.nodemgr-rendered');
+        return {
+            xss: window.__xss,
+            injected: rendered.querySelectorAll('script, img, iframe, svg, object, embed').length,
+            anchors: rendered.querySelectorAll('a').length,
+            shownAsText: rendered.textContent.includes('<script>'),
+        };
+    });
+
+    if (hostile.xss !== 0) {
+        fail(`page content executed (window.__xss = ${hostile.xss})`);
+    } else if (hostile.injected !== 0) {
+        fail(`page content produced ${hostile.injected} element(s) it should not have`);
+    } else if (hostile.anchors !== 0) {
+        fail('a javascript: link in a page became a real link');
+    } else if (!hostile.shownAsText) {
+        fail('hostile markup was neither rendered nor shown — it vanished');
+    } else {
+        pass('hostile page content is displayed literally and executes nothing');
+    }
+
+    // --- selection is one thing, seen from three places
+    const cone = await page.evaluate(async () => {
+        const graph = window.fractalityEngine().nodeGraph;
+        const target = [...graph.nodes.values()].find((n) => n.depth === 3)
+            ?? [...graph.nodes.values()].sort((a, b) => b.depth - a.depth)[0];
+
+        window.nodeManagerPanel.selectNode(target.id);
+        await new Promise((r) => setTimeout(r, 150));
+        window.nodeManagerPanel.hide();
+        window.coneView.show();
+        await new Promise((r) => setTimeout(r, 300));
+
+        const angle = window.coneView._computeAngles(graph).get(target.id);
+        return {
+            id: target.id,
+            depth: target.depth,
+            tier: Math.round(window.coneView.tierFocus),
+            // The front of the cone is where cos(angle + spin) is 1. A node on the
+            // far side is drawn small, dim and behind everything, which reads as
+            // absent — so highlighting it is not enough, it has to be turned to.
+            frontness: Number(Math.cos(angle + window.coneView.spin).toFixed(3)),
+            readout: document.querySelector('.cone-tier-label')?.textContent ?? '',
+        };
+    });
+
+    if (cone.tier !== cone.depth) {
+        fail(`the cone stayed on tier ${cone.tier} for a node on tier ${cone.depth}`);
+    } else if (cone.frontness < 0.99) {
+        fail(`the cone did not turn to the selected node (frontness ${cone.frontness})`);
+    } else {
+        pass(`selecting in the outline turns the cone to that node (tier ${cone.tier}, front)`);
+    }
+
+    // --- the same thing again with the cone ALREADY open
+    //
+    // A separate check because the one above reaches the cone through show(), which
+    // aims on the way in whatever the listener does. Deleting the listener entirely
+    // left that check passing, so it was proving the wrong thing.
+    const coneLive = await page.evaluate(async () => {
+        const graph = window.fractalityEngine().nodeGraph;
+        // Somewhere else first, so the move is real.
+        const start = graph.getRootNodes()[0];
+        window.fractalityEngine().setFocus(start.id);
+        await new Promise((r) => setTimeout(r, 200));
+        const before = { tier: window.coneView.tierFocus, spin: window.coneView.spin };
+
+        const target = [...graph.nodes.values()].sort((a, b) => b.depth - a.depth)[0];
+        window.fractalityEngine().setFocus(target.id);
+        await new Promise((r) => setTimeout(r, 250));
+
+        const angle = window.coneView._computeAngles(graph).get(target.id);
+        return {
+            depth: target.depth,
+            startDepth: start.depth,
+            before,
+            tier: Math.round(window.coneView.tierFocus),
+            frontness: Number(Math.cos(angle + window.coneView.spin).toFixed(3)),
+            moved: window.coneView.tierFocus !== before.tier
+                || window.coneView.spin !== before.spin,
+        };
+    });
+
+    if (!coneLive.moved) {
+        fail('an open cone did not move at all when the focus changed elsewhere');
+    } else if (coneLive.tier !== coneLive.depth || coneLive.frontness < 0.99) {
+        fail(`an open cone did not follow the focus (tier ${coneLive.tier} for depth `
+            + `${coneLive.depth}, frontness ${coneLive.frontness})`);
+    } else {
+        pass(`an already-open cone follows a focus change made elsewhere `
+            + `(tier ${coneLive.before.tier} -> ${coneLive.tier})`);
+    }
+
+    // --- and back the other way, with the outline closed the whole time
+    const backwards = await page.evaluate(async () => {
+        window.nodeManagerPanel.hide();
+        const before = { spin: window.coneView.spin, tier: window.coneView.tierFocus };
+        const hit = window.coneView._hits[window.coneView._hits.length - 1];
+        window.coneView._handleTap(hit.x, hit.y);
+        await new Promise((r) => setTimeout(r, 150));
+
+        window.coneView.hide();
+        window.nodeManagerPanel.show();
+        await new Promise((r) => setTimeout(r, 200));
+        return {
+            tapped: hit.id,
+            selected: window.nodeManagerPanel.selectedId,
+            row: document.querySelector('.nodemgr-row.selected')?.dataset.nodeId ?? null,
+            // A tap must not snap the cone: the node would move out from under the
+            // finger that just pointed at it.
+            heldStill: window.coneView.spin === before.spin
+                && window.coneView.tierFocus === before.tier,
+        };
+    });
+
+    if (backwards.selected !== backwards.tapped || backwards.row !== backwards.tapped) {
+        fail(`a cone tap did not reach the outline (tapped ${backwards.tapped}, `
+            + `selected ${backwards.selected}, row ${backwards.row})`);
+    } else {
+        pass('a node tapped in the cone is selected in the outline, even if it was closed');
+    }
+
+    if (!backwards.heldStill) {
+        fail('tapping a node in the cone spun the cone under the finger that tapped it');
+    } else {
+        pass('the cone does not re-aim on its own taps');
+    }
+
+    // --- a rename has to be visible on the other surface
+    const renamed = await page.evaluate(async () => {
+        const panel = window.nodeManagerPanel;
+        panel.show();
+        await new Promise((r) => setTimeout(r, 100));
+        const id = panel.selectedId;
+        window.prompt = () => 'RENAMED IN THE OUTLINE';
+        panel._run('rename');
+        await new Promise((r) => setTimeout(r, 150));
+
+        panel.hide();
+        window.coneView.show();
+        await new Promise((r) => setTimeout(r, 350));
+        return {
+            label: window.fractalityEngine().nodeGraph.getNode(id).metadata.label,
+            readout: document.querySelector('.cone-tier-label')?.textContent ?? '',
+        };
+    });
+
+    if (!renamed.readout.includes('RENAMED IN THE OUTLINE')) {
+        fail(`a rename in the outline is not visible in the cone (readout "${renamed.readout}")`);
+    } else {
+        pass('a rename in the outline shows up in the cone');
+    }
+
+    await page.evaluate(() => window.coneView.hide());
+
+    // --- the panel must not cover the controls it sits between
+    const fits = await page.evaluate(() => {
+        window.nodeManagerPanel.show();
+        const panel = document.querySelector('.nodemgr-panel').getBoundingClientRect();
+        const dock = document.querySelector('.app-dock')?.getBoundingClientRect() ?? null;
+        const tree = document.querySelector('.nodemgr-column-tree').getBoundingClientRect();
+        const pageCol = document.querySelector('.nodemgr-column-page').getBoundingClientRect();
+        return {
+            clearsDock: !dock || panel.top >= dock.bottom - 1 || panel.bottom <= dock.top + 1,
+            withinViewport: panel.top >= 0 && panel.bottom <= window.innerHeight + 1,
+            bothColumnsVisible: tree.width > 100 && pageCol.width > 100,
+            // The page is the half that gets written in, so it gets the room.
+            pageIsLarger: pageCol.width > tree.width,
+            noSidewaysScroll: document.documentElement.scrollWidth <= window.innerWidth + 1,
+        };
+    });
+
+    for (const [name, message] of [
+        ['clearsDock', 'the panel does not cover the dock'],
+        ['withinViewport', 'the panel fits the viewport'],
+        ['bothColumnsVisible', 'the outline and the page are both on screen on a desktop'],
+        ['pageIsLarger', 'the page gets the larger half'],
+        ['noSidewaysScroll', 'the panel does not make the document scroll sideways'],
+    ]) {
+        if (fits[name]) pass(message);
+        else fail(`NOT true: ${message}`);
+    }
+
+    await ctx.close();
+
+    // --- on a phone the two halves take turns
+    const { ctx: phoneCtx, page: phone } = await openApp(VIEWPORTS[0]);
+
+    const tabs = await phone.evaluate(async () => {
+        window.nodeManagerPanel.show();
+        await new Promise((r) => setTimeout(r, 200));
+        const visible = (selector) => {
+            const el = document.querySelector(selector);
+            if (!el) return false;
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && r.height > 0;
+        };
+        const onTree = {
+            tabsShown: visible('.nodemgr-tabs'),
+            tree: visible('.nodemgr-column-tree'),
+            page: visible('.nodemgr-column-page'),
+        };
+        document.querySelector('.nodemgr-tab[data-pane="page"]').click();
+        await new Promise((r) => setTimeout(r, 150));
+        const onPage = {
+            tree: visible('.nodemgr-column-tree'),
+            page: visible('.nodemgr-column-page'),
+        };
+        const panel = document.querySelector('.nodemgr-panel').getBoundingClientRect();
+        const dock = document.querySelector('.app-dock')?.getBoundingClientRect() ?? null;
+        return {
+            onTree,
+            onPage,
+            clearsDock: !dock || panel.bottom <= dock.top + 1 || panel.top >= dock.bottom - 1,
+            noSidewaysScroll: document.documentElement.scrollWidth <= window.innerWidth + 1,
+        };
+    });
+
+    if (!tabs.onTree.tabsShown) {
+        fail('a phone has no way to switch between the outline and the page');
+    } else if (!tabs.onTree.tree || tabs.onTree.page) {
+        fail('a phone shows both columns at once, which fits neither');
+    } else if (tabs.onPage.tree || !tabs.onPage.page) {
+        fail('the Page tab did not switch the column');
+    } else {
+        pass('a phone shows one column at a time, chosen by the tabs');
+    }
+
+    if (tabs.clearsDock && tabs.noSidewaysScroll) {
+        pass('the panel clears the dock on a phone without scrolling sideways');
+    } else {
+        fail(`on a phone: clears dock ${tabs.clearsDock}, no sideways scroll ${tabs.noSidewaysScroll}`);
+    }
+
+    await phoneCtx.close();
+}
+
 await browser.close();
 
 console.log('\n' + '='.repeat(62));

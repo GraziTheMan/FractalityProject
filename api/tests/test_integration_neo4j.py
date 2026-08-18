@@ -160,6 +160,7 @@ async def test_replace_nodes_round_trips_the_full_shape(settings, user):
             "type": "concept",
             "tags": ["a", "b"],
             "description": "the root",
+            "content": "# Root\n\nA **markdown** page.\n\n- one\n- two\n",
             "customExtra": "kept",
         },
         energy={"ATP": 0.75, "efficiency": 0.5, "network": "executive"},
@@ -183,6 +184,10 @@ async def test_replace_nodes_round_trips_the_full_shape(settings, user):
     assert got.metadata.label == "Root Node"
     assert got.metadata.type == "concept"
     assert sorted(got.metadata.tags) == ["a", "b"]
+    assert got.metadata.description == "the root"
+    # Markdown is whitespace-significant, so this compares exactly rather than
+    # by substring: a page that comes back with its newlines mangled is broken.
+    assert got.metadata.content == "# Root\n\nA **markdown** page.\n\n- one\n- two\n"
     # Free-form extra metadata must survive the JSON column
     assert got.metadata.model_dump()["customExtra"] == "kept"
     assert got.energy.ATP == 0.75
@@ -195,6 +200,36 @@ async def test_replace_nodes_round_trips_the_full_shape(settings, user):
     got_child = next(n for n in fetched.nodes if n.id == "child")
     assert got_child.parentId == "root"
     assert got_child.depth == 1
+
+
+async def test_a_full_size_page_survives_the_driver(settings, user):
+    """
+    64 KB is the cap the model allows, so the storage layer has to carry it. This
+    is the case that cannot be checked without a real database: an in-memory test
+    proves nothing about what the driver and Neo4j will accept.
+    """
+    summary = await repo.create_map(
+        settings, SUBJECT, "Big Page", "", Visibility.PRIVATE, "root"
+    )
+    page = ("## Section\n\nBody text that is long enough to matter.\n\n" * 900)[:64_000]
+
+    big = MapNode(id="root", depth=0, metadata={"label": "Root", "content": page})
+    await repo.replace_nodes(settings, summary.id, [big], "root")
+
+    got = (await repo.get_map(settings, summary.id)).nodes[0]
+    assert len(got.metadata.content) == len(page)
+    assert got.metadata.content == page
+
+
+async def test_a_node_without_a_page_reads_as_empty_not_null(settings, user):
+    """A null property must not surface as the string "None" or a None body."""
+    summary = await repo.create_map(
+        settings, SUBJECT, "No Page", "", Visibility.PRIVATE, "root"
+    )
+    await repo.replace_nodes(settings, summary.id, [node("root")], "root")
+
+    got = (await repo.get_map(settings, summary.id)).nodes[0]
+    assert got.metadata.content == ""
 
 
 async def test_relationships_are_derived_from_edges_not_properties(settings, user):
