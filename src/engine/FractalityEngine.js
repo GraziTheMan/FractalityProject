@@ -81,6 +81,19 @@ export class FractalityEngine {
         console.log('📊 Loading fractal data...', nodeGraph.stats);
         
         this.nodeGraph = nodeGraph;
+
+        // Normalise depths against the parent links before anything reads them.
+        //
+        // depth IS the tier: the cone view's rings, the Node Manager's tier
+        // numbers and the family layout all take it literally. Graphs arrive from
+        // three places — the generator, an imported file, the API — and any of
+        // them can carry a depth that disagrees with its parentId. The default
+        // generated map did exactly that for 15 of its 36 nodes.
+        //
+        // Cheap, and it makes one guarantee hold everywhere downstream instead of
+        // being re-checked by every consumer.
+        nodeGraph.rebuildIndices();
+
         this.familyView.setNodeGraph(nodeGraph);
         this.cace.analyzeGraph(nodeGraph);
         
@@ -216,6 +229,36 @@ export class FractalityEngine {
         this._emitEvent('focusChanged', { nodeId });
     }
     
+    /**
+     * Tell the engine its graph was edited underneath it.
+     *
+     * Needed because loadData() is the only thing that analyses the graph, and
+     * it also resets focus and view state — which is wrong after an edit, since
+     * it would throw the user back to the root every time they add a node.
+     *
+     * Three caches would otherwise serve stale answers:
+     *   - FamilyViewController keeps visible-node selections for 1 second
+     *   - CACEEngine's analysis is computed once, in loadData()
+     *   - LayoutEngine only recalculates when state.needsLayout is set
+     *
+     * If the focused node was deleted, focus moves to a root rather than
+     * pointing at something that no longer exists.
+     */
+    notifyGraphChanged() {
+        if (!this.nodeGraph) return;
+
+        this.familyView.clearCache();
+        this.cace.clearCache();
+        this.cace.analyzeGraph(this.nodeGraph);
+
+        if (this.state.focusNode && !this.nodeGraph.getNode(this.state.focusNode)) {
+            const roots = this.nodeGraph.getRootNodes();
+            if (roots.length > 0) this.state.setFocus(roots[0].id);
+        }
+
+        this.state.needsLayout = true;
+    }
+
     /**
      * The CACE context score for one node, 0 if unknown.
      *

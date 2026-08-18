@@ -763,6 +763,276 @@ console.log('\n--- every dock entry has an effect ---------------------------');
     await ctx.close();
 }
 
+// ---------------------------------------------------------------------------
+// 7. Node Manager: does editing actually change the graph?
+// ---------------------------------------------------------------------------
+//
+// This is the surface that builds a map, so its failure mode is worse than a
+// dead button: an edit that half-applies leaves a graph whose depths and parent
+// links disagree, and that then gets saved to Neo4j.
+
+console.log('\n--- node manager --------------------------------------------');
+
+{
+    const { ctx, page } = await openApp(VIEWPORTS[0]);
+
+    // The panel drives prompt()/confirm(); answer them so the run is unattended.
+    await page.evaluate(() => {
+        window.prompt = () => 'Check node';
+        window.confirm = () => true;
+    });
+
+    await page.click('#app-dock [data-dock-id="organise"]');
+    await page.waitForTimeout(500);
+
+    const shape = await page.evaluate(() => {
+        const panel = document.querySelector('.nodemgr-panel');
+        if (!panel || panel.classList.contains('hidden')) return null;
+        const r = panel.getBoundingClientRect();
+        return {
+            clipped: r.left < -1 || r.top < -1 || r.right > innerWidth + 1 || r.bottom > innerHeight + 1,
+            rows: document.querySelectorAll('.nodemgr-row').length,
+            nodes: window.fractalityEngine().nodeGraph.nodes.size,
+            shortActions: [...document.querySelectorAll('.nodemgr-action')]
+                .filter((b) => b.getBoundingClientRect().height < 36).length,
+        };
+    });
+
+    if (!shape) fail('the Node Manager did not open');
+    else {
+        if (shape.clipped) fail('the Node Manager panel is clipped by the viewport');
+        else pass('the Node Manager opens fully on screen');
+
+        // It must show the WHOLE tree. Showing only what the 3D view shows would
+        // defeat its purpose: you cannot move a node somewhere you cannot see.
+        if (shape.rows !== shape.nodes) {
+            fail(`the outline shows ${shape.rows} of ${shape.nodes} nodes — it must show all of them`);
+        } else {
+            pass(`the outline shows all ${shape.nodes} nodes`);
+        }
+
+        if (shape.shortActions > 0) fail(`${shape.shortActions} toolbar buttons are too short to tap`);
+        else pass('toolbar buttons are large enough to tap');
+    }
+
+    /** Structural invariants, checked in the page after every edit. */
+    const consistency = () => page.evaluate(() => {
+        const graph = window.fractalityEngine().nodeGraph;
+        const problems = [];
+        for (const node of graph.nodes.values()) {
+            if (node.parentId) {
+                const parent = graph.nodes.get(node.parentId);
+                if (!parent) { problems.push(`${node.id}: dangling parent`); continue; }
+                if (!parent.childIds.includes(node.id)) problems.push(`${node.id}: not in parent's childIds`);
+                if (node.depth !== parent.depth + 1) problems.push(`${node.id}: tier ${node.depth} under tier ${parent.depth}`);
+            } else if (node.depth !== 0) {
+                problems.push(`${node.id}: root at tier ${node.depth}`);
+            }
+            for (const childId of node.childIds) {
+                const child = graph.nodes.get(childId);
+                if (!child) problems.push(`${node.id}: lists missing child ${childId}`);
+                else if (child.parentId !== node.id) problems.push(`${childId}: disagrees about its parent`);
+            }
+        }
+        return problems;
+    });
+
+    const nodeCount = () => page.evaluate(() => window.fractalityEngine().nodeGraph.nodes.size);
+
+    // Select a row deep enough to have somewhere to move in every direction.
+    const selected = await page.evaluate(() => {
+        const rows = [...document.querySelectorAll('.nodemgr-row')];
+        // A row with a tier of 2 or more and at least one sibling above it.
+        const row = rows.find((r, i) => /T[2-9]/.test(r.textContent) && i > 2);
+        (row ?? rows[1]).click();
+        return document.querySelector('.nodemgr-row.selected')?.dataset.nodeId ?? null;
+    });
+    if (!selected) fail('clicking an outline row did not select it');
+    else pass(`selecting a row works (${selected})`);
+
+    const edits = [
+        ['add-child', (before, after) => after === before + 1, 'add a child'],
+        ['add-sibling', (before, after) => after === before + 1, 'add a sibling'],
+        ['rename', (before, after) => after === before, 'rename'],
+        ['promote', (before, after) => after === before, 'move a node out a tier'],
+        ['demote', (before, after) => after === before, 'move a node in a tier'],
+        ['move-up', (before, after) => after === before, 'reorder upward'],
+        ['move-down', (before, after) => after === before, 'reorder downward'],
+    ];
+
+    for (const [action, expect, description] of edits) {
+        const before = await nodeCount();
+        const wasUnavailable = await page.evaluate((a) =>
+            document.querySelector(`.nodemgr-action[data-action="${a}"]`)
+                ?.classList.contains('unavailable'), action);
+
+        await page.click(`.nodemgr-action[data-action="${action}"]`);
+        await page.waitForTimeout(350);
+        const after = await nodeCount();
+
+        if (wasUnavailable) {
+            // Unavailable must mean "explains itself and changes nothing".
+            const status = await page.evaluate(() =>
+                document.querySelector('.nodemgr-status').textContent);
+            if (after !== before) fail(`${description}: unavailable but it still changed the graph`);
+            else if (!status.trim()) fail(`${description}: unavailable and said nothing`);
+            else pass(`${description}: unavailable here, and says why ("${status.trim()}")`);
+        } else if (!expect(before, after)) {
+            fail(`${description}: node count went ${before} -> ${after}, which is not what it should do`);
+        } else {
+            pass(`${description} works (${before} -> ${after} nodes)`);
+        }
+
+        const problems = await consistency();
+        if (problems.length) {
+            fail(`${description} left the graph inconsistent: ${problems.slice(0, 3).join('; ')}`);
+            break;
+        }
+    }
+
+    const problems = await consistency();
+    if (problems.length === 0) pass('the graph is still structurally consistent after every edit');
+
+    // Deleting must actually remove nodes, and confirm() is stubbed to true.
+    const before = await nodeCount();
+    await page.evaluate(() => {
+        const rows = [...document.querySelectorAll('.nodemgr-row')];
+        (rows[rows.length - 1] ?? rows[0]).click();
+    });
+    await page.waitForTimeout(200);
+    await page.click('.nodemgr-action[data-action="delete"]');
+    await page.waitForTimeout(400);
+    const after = await nodeCount();
+    if (after >= before) fail(`delete did not remove anything (${before} -> ${after})`);
+    else pass(`delete removes nodes (${before} -> ${after})`);
+
+    const afterDelete = await consistency();
+    if (afterDelete.length) fail(`delete left the graph inconsistent: ${afterDelete.slice(0, 3).join('; ')}`);
+    else pass('the graph is consistent after a delete');
+
+    // The 3D engine has to be told, or it keeps drawing the old structure.
+    const enginePicksUp = await page.evaluate(() => {
+        const engine = window.fractalityEngine();
+        return typeof engine.notifyGraphChanged === 'function'
+            && engine.nodeGraph.getNode(engine.state.focusNode) !== undefined;
+    });
+    if (!enginePicksUp) fail('the engine is focused on a node that no longer exists after editing');
+    else pass('the engine still points at a node that exists');
+
+    await ctx.close();
+}
+
+// ---------------------------------------------------------------------------
+// 8. Cone view: the gestures are the interface
+// ---------------------------------------------------------------------------
+
+console.log('\n--- cone view -----------------------------------------------');
+
+{
+    const { ctx, page } = await openApp(VIEWPORTS[0]);
+
+    await page.click('#app-dock [data-dock-id="view"]');
+    await page.waitForTimeout(250);
+    await page.click('.dock-sheet-row[data-dock-id="cone"]');
+    await page.waitForTimeout(700);
+
+    const state = () => page.evaluate(() => {
+        const view = window.coneView;
+        const el = document.querySelector('.cone-view');
+        const r = el.getBoundingClientRect();
+        return {
+            open: view.isOpen && !el.classList.contains('hidden'),
+            clipped: r.left < -1 || r.top < -1 || r.right > innerWidth + 1,
+            spin: view.spin,
+            tier: view.tierFocus,
+            hits: view._hits.length,
+            label: document.querySelector('.cone-tier-label').textContent,
+            enginePaused: window.fractalityEngine().paused,
+        };
+    });
+
+    const opened = await state();
+    if (!opened.open) fail('the cone view did not open');
+    else pass('the cone view opens');
+
+    if (opened.clipped) fail('the cone view is clipped by the viewport');
+    else pass('the cone view fits the viewport');
+
+    // Every node must be hit-testable, or tapping one cannot select it.
+    const nodeTotal = await page.evaluate(() => window.fractalityEngine().nodeGraph.nodes.size);
+    if (opened.hits !== nodeTotal) fail(`${opened.hits} of ${nodeTotal} nodes are tappable`);
+    else pass(`all ${nodeTotal} nodes are tappable`);
+
+    // Rendering frames behind a full-screen overlay is battery spent on nothing.
+    if (!opened.enginePaused) fail('the 3D engine keeps running behind the cone view');
+    else pass('the 3D engine is paused while the cone covers it');
+
+    const drag = async (dx, dy) => {
+        await page.mouse.move(195, 400);
+        await page.mouse.down();
+        for (let i = 1; i <= 8; i++) await page.mouse.move(195 + (dx * i) / 8, 400 + (dy * i) / 8);
+        await page.mouse.up();
+        await page.waitForTimeout(250);
+    };
+
+    await drag(130, 0);
+    const spun = await state();
+    if (Math.abs(spun.spin - opened.spin) < 0.05) fail('dragging sideways does not spin the cone');
+    else pass(`dragging sideways spins the cone (${spun.spin.toFixed(2)} rad)`);
+    if (spun.tier !== opened.tier) fail('a sideways drag also changed the tier');
+    else pass('a sideways drag leaves the tier alone');
+
+    await drag(0, -170);
+    const travelled = await state();
+    if (travelled.tier <= spun.tier) fail(`dragging up does not descend the tiers (${spun.tier} -> ${travelled.tier})`);
+    else pass(`dragging up travels down the tiers (tier ${travelled.tier})`);
+    if (!Number.isInteger(travelled.tier)) fail(`the tier settled between two: ${travelled.tier}`);
+    else pass('the tier settles on a whole number when the drag ends');
+    if (!travelled.label.includes(`Tier ${travelled.tier}`)) {
+        fail(`the readout says "${travelled.label}" at tier ${travelled.tier}`);
+    } else {
+        pass(`the readout matches the tier ("${travelled.label}")`);
+    }
+
+    // Tier travel must stay inside the graph.
+    await drag(0, 900);
+    const atTop = await state();
+    if (atTop.tier < 0) fail(`travelling up ran past tier 0 (${atTop.tier})`);
+    else pass('travelling up stops at tier 0');
+
+    await drag(0, -2000);
+    const atBottom = await state();
+    const maxTier = await page.evaluate(() => window.fractalityEngine().nodeGraph.stats.maxDepth);
+    if (atBottom.tier > maxTier) fail(`travelling down ran past the deepest tier (${atBottom.tier} > ${maxTier})`);
+    else pass(`travelling down stops at the deepest tier (${maxTier})`);
+
+    // A tap selects rather than spinning.
+    const before = await page.evaluate(() => window.fractalityEngine().state.focusNode);
+    const target = await page.evaluate(() => {
+        const hit = window.coneView._hits.find((h) =>
+            h.id !== window.fractalityEngine().state.focusNode);
+        return hit ? { x: Math.round(hit.x), y: Math.round(hit.y), id: hit.id } : null;
+    });
+    if (!target) fail('found no cone node to tap');
+    else {
+        await page.touchscreen.tap(target.x, target.y);
+        await page.waitForTimeout(400);
+        const after = await page.evaluate(() => window.fractalityEngine().state.focusNode);
+        if (after === before) fail(`tapping a cone node did not change the selection (still ${before})`);
+        else pass(`tapping a cone node selects it (${before} -> ${after})`);
+    }
+
+    // Closing must hand the 3D view back.
+    await page.click('.cone-close');
+    await page.waitForTimeout(400);
+    const closed = await state();
+    if (closed.open) fail('the cone view did not close');
+    else if (closed.enginePaused) fail('the 3D engine is left paused after the cone closes');
+    else pass('closing the cone view resumes the 3D engine');
+
+    await ctx.close();
+}
+
 await browser.close();
 
 console.log('\n' + '='.repeat(62));

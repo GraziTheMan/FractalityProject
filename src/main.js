@@ -11,6 +11,8 @@ import { NodeDebugPanel } from './ui/NodeDebugPanel.js';
 import { AnimationSystem } from './visualization/AnimationSystem.js';
 
 import { MapsPanel } from './ui/MapsPanel.js';
+import { NodeManagerPanel } from './ui/NodeManagerPanel.js';
+import { ConeView } from './ui/ConeView.js';
 import { mindMapClient, MindMapClient } from './api/mindMapClient.js';
 import { hasCliBridge } from './config/deploy.js';
 import { getToken, hasAuth } from './auth/clerkClient.js';
@@ -106,6 +108,44 @@ const mapsPanel = new MapsPanel({
 });
 
 /**
+ * The Node Manager: the editing surface for the graph's structure.
+ *
+ * Distinct from the node inspector. The 3D view shows one parent's children at a
+ * time by design, which makes reorganising impossible there — you cannot move a
+ * node to somewhere you cannot see.
+ */
+const nodeManagerPanel = new NodeManagerPanel({
+  getGraph: () => fractalityEngine?.nodeGraph ?? null,
+  getFocusedNode: () => fractalityEngine?.state?.focusNode ?? null,
+  onFocusNode: (nodeId) => fractalityEngine?.setFocus(nodeId),
+  // Structural edits invalidate the family-view cache, the CACE analysis and the
+  // layout. notifyGraphChanged() handles all three without resetting focus the
+  // way loadData() would.
+  onGraphChanged: () => fractalityEngine?.notifyGraphChanged(),
+  notify: (message, type) => showNotification(message, type)
+});
+
+/**
+ * The Cone view: a 2D side elevation of the whole map.
+ *
+ * A genuinely separate surface, not a layout of the 3D scene. Tier 0 is the apex,
+ * lower tiers hold more nodes so the silhouette widens, and it is driven by two
+ * gestures — drag sideways to spin, up and down to travel the tiers.
+ */
+const coneView = new ConeView({
+  getGraph: () => fractalityEngine?.nodeGraph ?? null,
+  getFocusedNode: () => fractalityEngine?.state?.focusNode ?? null,
+  onFocusNode: (nodeId) => fractalityEngine?.setFocus(nodeId),
+  notify: (message, type) => showNotification(message, type),
+  // The cone covers the screen, so the 3D engine would otherwise keep drawing
+  // frames nobody can see.
+  onVisibilityChange: (open) => {
+    if (!fractalityEngine) return;
+    open ? fractalityEngine.pause() : fractalityEngine.resume();
+  }
+});
+
+/**
  * The dock's contents.
  *
  * Built as data on every call so that `disabledReason` and `isActive` see the
@@ -161,6 +201,15 @@ function buildDockItems() {
           'Loose clusters linked by strands'),
         { separator: true },
         {
+          id: 'cone',
+          icon: '\u{1f53a}',
+          label: 'Cone view',
+          description: 'Side-on view of every tier; spin and travel by dragging',
+          isActive: () => coneView.isOpen,
+          disabledReason: needsEngine,
+          onSelect: () => coneView.toggle()
+        },
+        {
           id: 'reset-view',
           icon: '\u{1f3af}',
           label: 'Back to centre',
@@ -172,6 +221,18 @@ function buildDockItems() {
           }
         }
       ]
+    },
+
+    // --- editing the structure ---------------------------------------------
+    // Its own dock button rather than a row in a sheet: this is the surface for
+    // building a map, which is the app's main purpose, not an occasional tool.
+    {
+      id: 'organise',
+      icon: '\u{1f5c2}\ufe0f',
+      label: 'Organise',
+      isActive: () => nodeManagerPanel.isOpen,
+      disabledReason: needsEngine,
+      onSelect: () => nodeManagerPanel.toggle()
     },
 
     // --- finding things ----------------------------------------------------
@@ -800,3 +861,5 @@ window.fractalityEngine = () => fractalityEngine;
 window.searchInterface = searchInterface;
 window.nodeDebugPanel = () => nodeDebugPanel;
 window.mapsPanel = mapsPanel;
+window.nodeManagerPanel = nodeManagerPanel;
+window.coneView = coneView;

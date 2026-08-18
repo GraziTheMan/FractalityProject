@@ -72,22 +72,36 @@ export class TestDataGenerator {
                 const childCount = fibonacciScaling ? 
                     fibonacci[level % fibonacci.length] : 
                     Math.floor(Math.random() * 3) + 1;
-                
+
+                // Pinned before the inner loop. `parent` used to be reassigned
+                // to the first child *inside* it, so every later child of the
+                // same level was attached to its own sibling while still being
+                // given the level's depth — producing nodes whose depth equalled
+                // their parent's. 15 of 36 nodes in the default map were wrong
+                // that way, which made every tier number, the cone view's rings
+                // and the family layout wrong with them.
+                const levelParent = parent;
+                let firstChild = null;
+
                 for (let i = 0; i < childCount; i++) {
-                    const child = new NodeData(`spiral-${this.nodeCounter++}`, level + 1, {
+                    // Derived from the parent rather than from `level`, so the
+                    // two cannot disagree again.
+                    const child = new NodeData(`spiral-${this.nodeCounter++}`, levelParent.depth + 1, {
                         label: `Branch ${branch} Level ${level}`,
                         type: 'spiral-node',
                         spiralAngle: (branch / branches) * Math.PI * 2,
                         spiralRadius: level + 1
                     });
-                    
-                    child.parentId = parent.id;
-                    parent.childIds.push(child.id);
+
+                    child.parentId = levelParent.id;
+                    levelParent.childIds.push(child.id);
                     graph.addNode(child);
-                    
-                    // First child becomes the parent for next level
-                    if (i === 0) parent = child;
+
+                    if (i === 0) firstChild = child;
                 }
+
+                // The first child carries the branch down to the next level.
+                parent = firstChild ?? levelParent;
             }
         }
         
