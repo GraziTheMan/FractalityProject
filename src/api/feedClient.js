@@ -82,6 +82,38 @@ export class FeedClient extends MindMapClient {
     listBlocked() {
         return this._request('/pulses/authors/blocked');
     }
+
+    /**
+     * Edit one of your own posts.
+     *
+     * Omitted fields are left alone. The server stamps `edited_at` on every
+     * change, because a feed where posts can be silently rewritten after people
+     * have responded to them is worse than one without editing at all.
+     */
+    updatePulse(pulseId, changes) {
+        return this._request(`/pulses/${encodeURIComponent(pulseId)}`, {
+            method: 'PATCH',
+            body: changes,
+        });
+    }
+
+    // --- profile -----------------------------------------------------------
+
+    /** The caller's profile, creating the local row on a first visit. */
+    getProfile() {
+        return this._request('/me');
+    }
+
+    /**
+     * Change display name or avatar.
+     *
+     * Send a field as null to clear it; omit it to leave it alone. That
+     * distinction is why this is a PATCH — otherwise an avatar could be set and
+     * never removed.
+     */
+    updateProfile(changes) {
+        return this._request('/me', { method: 'PATCH', body: changes });
+    }
 }
 
 /**

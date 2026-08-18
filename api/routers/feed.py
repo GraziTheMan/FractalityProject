@@ -29,7 +29,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from ..auth import Principal, current_user, optional_user
-from ..models import Pulse, PulseCreate, PulseReport
+from ..models import Pulse, PulseCreate, PulseReport, PulseUpdate
 from .. import repository as repo
 from ..settings import Settings, get_settings
 
@@ -167,6 +167,46 @@ async def delete_pulse(
     if not await repo.delete_pulse(settings, principal.subject, pulse_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pulse not found")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.patch("/{pulse_id}", response_model=Pulse)
+async def update_pulse(
+    pulse_id: str,
+    payload: PulseUpdate,
+    principal: Principal = Depends(current_user),
+    settings: Settings = Depends(get_settings),
+):
+    """Edit one of your own pulses.
+
+    Ownership is part of the Cypher MATCH, so a pulse that is not yours is
+    reported as not found rather than refused — the same reasoning as delete.
+
+    Every edit stamps `edited_at`. A reader is entitled to know a post has
+    changed since it was published, and a feed where posts can be silently
+    rewritten after people have responded to them is a worse thing than one
+    without editing at all.
+    """
+    _require_db(settings)
+
+    fields = payload.model_dump(exclude_unset=True)
+    if not fields:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Nothing to change"
+        )
+
+    changes = dict(fields)
+    if "media" in changes:
+        media = changes.pop("media")
+        changes["media"] = media
+        changes["media_json"] = media.model_dump_json() if media else None
+
+    if not await repo.update_pulse(settings, principal.subject, pulse_id, changes):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pulse not found")
+
+    pulse = await repo.get_pulse(settings, pulse_id, principal.subject)
+    if pulse is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pulse not found")
+    return pulse
 
 
 @router.put("/{pulse_id}/resonance", response_model=Pulse)

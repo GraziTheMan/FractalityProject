@@ -402,6 +402,15 @@ export class FeedPanel {
 
         head.append(author, when);
 
+        if (pulse.edited_at) {
+            // A reader is entitled to know a post changed after it was published.
+            const edited = document.createElement('span');
+            edited.className = 'pulsefeed-badge';
+            edited.textContent = 'edited';
+            edited.title = `Edited ${this._timeAgo(pulse.edited_at)}`;
+            head.appendChild(edited);
+        }
+
         if (pulse.visibility === 'private') {
             const badge = document.createElement('span');
             badge.className = 'pulsefeed-badge';
@@ -505,8 +514,15 @@ export class FeedPanel {
         actions.appendChild(spacer);
 
         if (pulse.own) {
-            // Your own post: delete it. No report or block — reporting yourself
-            // is noise, and blocking yourself would empty your own feed.
+            // Your own post: edit and delete. No report or block — reporting
+            // yourself is noise, and blocking yourself would empty your own feed.
+            const edit = document.createElement('button');
+            edit.className = 'pulsefeed-action';
+            edit.type = 'button';
+            edit.textContent = 'Edit';
+            edit.addEventListener('click', () => this._startEdit(pulse));
+            actions.appendChild(edit);
+
             const del = document.createElement('button');
             del.className = 'pulsefeed-action pulsefeed-danger';
             del.type = 'button';
@@ -536,6 +552,107 @@ export class FeedPanel {
         actions.appendChild(block);
 
         return actions;
+    }
+
+    /**
+     * Replace a post's card with an inline editor.
+     *
+     * In place rather than in a dialog: you are editing something you can see, and
+     * a modal would hide the thing being changed.
+     */
+    _startEdit(pulse) {
+        const index = this.pulses.findIndex((p) => p.id === pulse.id);
+        if (index < 0) return;
+
+        const card = this.listEl.children[index];
+        if (!card) return;
+
+        const editor = document.createElement('article');
+        editor.className = 'pulsefeed-pulse pulsefeed-editing';
+
+        const title = document.createElement('input');
+        title.className = 'pulsefeed-input pulsefeed-input-title';
+        title.type = 'text';
+        title.maxLength = 200;
+        title.value = pulse.title ?? '';
+
+        const body = document.createElement('textarea');
+        body.className = 'pulsefeed-input pulsefeed-input-body';
+        body.rows = 3;
+        body.maxLength = 2000;
+        body.value = pulse.preview ?? '';
+
+        const link = document.createElement('input');
+        link.className = 'pulsefeed-input pulsefeed-input-link';
+        link.type = 'url';
+        link.placeholder = 'A link (optional)';
+        link.value = pulse.media?.url ?? '';
+
+        const tags = document.createElement('input');
+        tags.className = 'pulsefeed-input pulsefeed-input-tags';
+        tags.type = 'text';
+        tags.placeholder = 'tags, comma separated';
+        tags.value = (pulse.tags ?? []).join(', ');
+
+        const row = document.createElement('div');
+        row.className = 'pulsefeed-actions';
+
+        const save = document.createElement('button');
+        save.className = 'pulsefeed-action pulsefeed-save';
+        save.type = 'button';
+        save.textContent = 'Save changes';
+
+        const cancel = document.createElement('button');
+        cancel.className = 'pulsefeed-action';
+        cancel.type = 'button';
+        cancel.textContent = 'Cancel';
+        cancel.addEventListener('click', () => this._renderList());
+
+        const spacer = document.createElement('span');
+        spacer.className = 'pulsefeed-spacer';
+        row.append(cancel, spacer, save);
+
+        save.addEventListener('click', async () => {
+            const titleText = title.value.trim();
+            if (!titleText) {
+                this._setStatus('A post needs something in the first field.', 'warning');
+                title.focus();
+                return;
+            }
+
+            const linkText = link.value.trim();
+            if (linkText && !safeUrl(linkText)) {
+                this._setStatus('That link is not a valid http or https URL.', 'warning');
+                link.focus();
+                return;
+            }
+
+            const changes = {
+                title: titleText,
+                preview: body.value.trim(),
+                tags: FeedPanel.normaliseTags(tags.value.split(',')),
+                // Explicitly null when cleared, so removing a link works. Omitting
+                // it would mean "leave it alone".
+                media: linkText ? { kind: 'link', url: linkText } : null,
+            };
+
+            save.disabled = true;
+            this._setStatus('Saving…');
+            try {
+                const updated = await this.client.updatePulse(pulse.id, changes);
+                this.pulses[index] = updated;
+                this._renderList();
+                this._setStatus('Saved.');
+                this.notify('Post updated');
+            } catch (error) {
+                this._setStatus(await this._describe(error), 'error');
+                save.disabled = false;
+            }
+        });
+
+        editor.append(title, body, link, tags, row);
+        this.listEl.replaceChild(editor, card);
+        title.focus();
     }
 
     // --- actions -----------------------------------------------------------
@@ -854,6 +971,14 @@ export class FeedPanel {
                 cursor: pointer;
             }
             .pulsefeed-tag:hover { border-color: #0ff; color: #0ff; }
+
+            .pulsefeed-editing {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+                background: rgba(0,255,255,0.04);
+            }
+            .pulsefeed-save { border-color: #077; color: #0ff; }
 
             .pulsefeed-actions { display: flex; align-items: center; gap: 6px; }
             .pulsefeed-spacer { flex: 1; }

@@ -1477,6 +1477,191 @@ if (run_export_import) {
     await ctx.close();
 }
 
+// ---------------------------------------------------------------------------
+// 11. Identity, visibility and overlay stacking
+// ---------------------------------------------------------------------------
+//
+// Three reported problems, and the first two had the same root cause.
+//
+// "Maps saved on my phone don't show up on desktop" was not a sync failure. The
+// only ways to sign in were a button inside the Maps panel and one inside the
+// feed composer, so a fresh desktop browser was never signed in — and an
+// anonymous visitor sees only PUBLIC maps. The maps were private, and in Neo4j
+// the whole time.
+//
+// "The dock disappears when Cone View is selected" was overlay stacking: the cone
+// is z-index 900 across the whole viewport, and the dock was 30. On a desktop the
+// dock sits at the TOP, where `bottom: var(--dock-height)` clears nothing, so the
+// cone buried it and only a refresh brought it back.
+
+const run_identity = section('identity and overlays');
+
+if (run_identity) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await ctx.newPage();
+    await page.goto(URL, { waitUntil: 'networkidle' });
+    await page.waitForFunction(() => Boolean(window.fractalityEngine?.()), { timeout: 15000 })
+        .catch(() => {});
+    await page.waitForTimeout(2000);
+
+    // --- signing in must be reachable from the dock, not only from inside a panel
+    const accountRow = await page.evaluate(async () => {
+        document.querySelector('#app-dock [data-dock-id="more"]').click();
+        await new Promise((r) => setTimeout(r, 250));
+        const row = document.querySelector('.dock-sheet-row[data-dock-id="account"]');
+        return row ? row.querySelector('.dock-sheet-name')?.textContent : null;
+    });
+    if (!accountRow) fail('there is no Account/Sign in entry in the dock');
+    else pass(`the dock exposes an identity entry ("${accountRow}")`);
+
+    const account = await page.evaluate(async () => {
+        document.querySelector('.dock-sheet-row[data-dock-id="account"]').click();
+        await new Promise((r) => setTimeout(r, 400));
+        const el = document.querySelector('.account-panel');
+        if (!el || el.classList.contains('hidden')) return null;
+        const r = el.getBoundingClientRect();
+        return {
+            clipped: r.left < -1 || r.top < -1 || r.right > innerWidth + 1 || r.bottom > innerHeight + 1,
+            // With no Clerk key configured it must SAY so rather than showing a
+            // sign-in button that cannot work.
+            explainsItself: /not configured|Sign in/i.test(el.textContent),
+        };
+    });
+    if (!account) fail('the account panel did not open');
+    else if (account.clipped) fail('the account panel is clipped by the viewport');
+    else if (!account.explainsItself) fail('the account panel neither offers sign-in nor explains its absence');
+    else pass('the account panel opens and states what is available');
+
+    await page.evaluate(() => window.accountPanel.hide());
+
+    // --- the dock must outrank every overlay
+    await page.evaluate(() => window.coneView.show());
+    await page.waitForTimeout(600);
+    const stacking = await page.evaluate(() => {
+        const dock = document.querySelector('#app-dock');
+        const d = dock.getBoundingClientRect();
+        const at = document.elementFromPoint(d.x + d.width / 2, d.y + d.height / 2);
+        const cone = document.querySelector('.cone-view').getBoundingClientRect();
+        return {
+            dockReachable: at === dock || dock.contains(at),
+            overlaps: cone.top < d.bottom && cone.bottom > d.top
+                   && cone.left < d.right && cone.right > d.left,
+        };
+    });
+    if (!stacking.dockReachable) fail('the dock is unreachable while the Cone view is open — the reported bug');
+    else pass('the dock stays reachable with the Cone view open');
+    if (stacking.overlaps) fail('the Cone view overlaps the dock');
+    else pass('the Cone view does not overlap the dock');
+
+    // --- a rename has somewhere to appear
+    const readout = await page.evaluate(async () => {
+        const graph = window.fractalityEngine().nodeGraph;
+        const root = graph.getRootNodes()[0];
+        graph.renameNode(root.id, 'RENAMED FOR CHECK');
+        window.fractalityEngine().notifyGraphChanged();
+        window.fractalityEngine().setFocus(root.id);
+        await new Promise((r) => setTimeout(r, 800));
+        return document.querySelector('.cone-tier-label').textContent;
+    });
+    if (!readout.includes('RENAMED FOR CHECK')) {
+        // The old behaviour: a name appeared only if the node happened to be on
+        // the focused tier's front third, so a rename looked like it was ignored.
+        fail(`the Cone readout does not name the selected node: "${readout}"`);
+    } else {
+        pass('the Cone readout names the selected node, so a rename is visible');
+    }
+
+    await page.evaluate(() => window.coneView.hide());
+
+    // --- map visibility has a control at all
+    await page.evaluate(() => {
+        const client = window.mapsPanel.client;
+        client.baseUrl = 'https://api.test.invalid';
+        client.getToken = async () => 'tok';
+        window.__patched = [];
+        let maps = [{
+            id: 'm1', title: 'A map', description: '', visibility: 'private',
+            node_count: 3, created_at: Date.now(), updated_at: Date.now(),
+            root_id: 'root', owner_id: 'u1', owner_name: 'Me',
+        }];
+        globalThis.fetch = async (url, opts = {}) => {
+            const u = String(url).replace('https://api.test.invalid', '');
+            const method = opts.method || 'GET';
+            const json = (body, status = 200) => ({
+                ok: status < 400, status, statusText: 'OK',
+                text: async () => JSON.stringify(body),
+            });
+            if (u.startsWith('/maps?') || u.startsWith('/maps/public')) return json(maps);
+            if (method === 'PATCH' && u.startsWith('/maps/')) {
+                const body = JSON.parse(opts.body);
+                window.__patched.push(body);
+                maps = [{ ...maps[0], ...body }];
+                return json(maps[0]);
+            }
+            if (u === '/me') return json({ id: 'u1', display_name: 'Me' });
+            return json({});
+        };
+        window.confirm = () => true;
+    });
+
+    // Rendered with signedIn=true directly. The owner controls only appear for a
+    // signed-in owner, and there is no Clerk key in a local build — so driving
+    // _renderList is the only way to reach that branch here. What is under test is
+    // the control's behaviour, not the session logic that decides to show it.
+    await page.evaluate(async () => {
+        const panel = window.mapsPanel;
+        panel.init();
+        panel.container.classList.remove('hidden');
+        panel.isOpen = true;
+        const maps = await panel.client.listMyMaps().catch(() => panel.client.listPublicMaps());
+        panel._renderList(maps, true);
+    });
+    await page.waitForTimeout(500);
+
+    const visibility = await page.evaluate(async () => {
+        const button = document.querySelector('.maps-visibility');
+        if (!button) return { missing: true };
+        const before = button.textContent;
+        button.click();
+        await new Promise((r) => setTimeout(r, 700));
+        return {
+            before,
+            patched: window.__patched,
+            after: document.querySelector('.maps-visibility')?.textContent,
+        };
+    });
+
+    if (visibility.missing) fail('there is no way to change a map\'s visibility');
+    else if (visibility.patched.length === 0) fail('pressing the visibility control sent nothing');
+    else if (visibility.patched[0].visibility !== 'unlisted') {
+        fail(`private should step to unlisted, got ${visibility.patched[0].visibility}`);
+    } else {
+        pass(`visibility cycles private -> ${visibility.patched[0].visibility} ("${visibility.before}" -> "${visibility.after}")`);
+    }
+
+    // Stepping round to public must be confirmed, and must reach the API.
+    const toPublic = await page.evaluate(async () => {
+        window.__patched = [];
+        const panel = window.mapsPanel;
+        // Re-render as owner: refresh() went through the session path and dropped
+        // the owner controls again.
+        panel._renderList(await panel.client.listMyMaps().catch(() => []), true);
+        await new Promise((r) => setTimeout(r, 100));
+        const button = document.querySelector('.maps-visibility');
+        if (!button) return [];
+        button.click();
+        await new Promise((r) => setTimeout(r, 700));
+        return window.__patched;
+    });
+    if (toPublic[0]?.visibility !== 'public') {
+        fail(`unlisted should step to public, got ${toPublic[0]?.visibility}`);
+    } else {
+        pass('a map can be made public');
+    }
+
+    await ctx.close();
+}
+
 await browser.close();
 
 console.log('\n' + '='.repeat(62));

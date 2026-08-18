@@ -73,6 +73,9 @@
 
 :root {
     --dock-height: 0px;
+    /* The dock is top-anchored on a wide screen, so full-screen overlays measure
+       their TOP from this instead. Exactly one of the two is non-zero. */
+    --dock-top-height: 82px;
     --safe-bottom: env(safe-area-inset-bottom, 0px);
     /* Sheets open downward from a top-anchored dock. */
     --dock-sheet-offset: auto;
@@ -83,7 +86,12 @@
     top: 12px;
     left: 50%;
     transform: translateX(-50%);
-    z-index: 30;
+    /* Above every overlay, including the full-screen Cone view (z-index 900).
+       The dock was 30, so on a desktop — where the dock sits at the TOP and the
+       cone's `bottom: var(--dock-height)` resolves to 0 — the cone covered it
+       completely and the only way back was a page refresh. Navigation must
+       outrank the things it navigates to. */
+    z-index: 1200;
     width: max-content;
     /* max() first: on a 390px screen `calc(100vw - 420px)` alone is NEGATIVE,
        and a negative max-width collapses the element to nothing. */
@@ -156,6 +164,8 @@
 @media (max-width: 720px), (max-height: 500px) {
     :root {
         --dock-height: calc(62px + var(--safe-bottom));
+        /* Bottom-anchored here, so nothing needs clearing at the top. */
+        --dock-top-height: 0px;
         /* Sheets open upward from a bottom-anchored dock. */
         --dock-sheet-offset: 100%;
     }

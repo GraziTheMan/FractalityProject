@@ -15,6 +15,27 @@ import { mindMapClient, MindMapClient, ApiError } from '../api/mindMapClient.js'
 import { apiMapToNodeGraph, graphToCreatePayload, nodeGraphToApiNodes, findRootId } from '../api/graphAdapter.js';
 import { hasAuth, getAuthState, onAuthChange, signIn, signOut } from '../auth/clerkClient.js';
 
+/**
+ * The three visibility states, in order from closed to open.
+ *
+ * `unlisted` is the middle state and is not a lesser `public`: it means "not in
+ * the public list, but anyone holding a share link can read it". That is the state
+ * a share link is for, which is why it sits between the two.
+ */
+const VISIBILITY_ORDER = ['private', 'unlisted', 'public'];
+
+const VISIBILITY_LABELS = {
+    private: '\u{1f512} Private',
+    unlisted: '\u{1f517} Link only',
+    public: '\u{1f30d} Public',
+};
+
+const VISIBILITY_HELP = {
+    private: 'Only you can open this. Tap to allow anyone with the link.',
+    unlisted: 'Anyone with a share link can read it. Tap to list it publicly.',
+    public: 'Listed for everyone to find. Tap to make it private again.',
+};
+
 export class MapsPanel {
     /**
      * @param {object} options
@@ -331,6 +352,17 @@ export class MapsPanel {
                 shareBtn.addEventListener('click', () => this.share(map.id));
                 actions.appendChild(shareBtn);
 
+                // Visibility, which had no control at all: every map was created
+                // private and there was no way to publish one. A cycling button
+                // rather than a dropdown, because the three states have a natural
+                // order from closed to open and it is one tap either way.
+                const visibilityBtn = document.createElement('button');
+                visibilityBtn.className = 'maps-visibility';
+                visibilityBtn.textContent = VISIBILITY_LABELS[map.visibility] ?? map.visibility;
+                visibilityBtn.title = VISIBILITY_HELP[map.visibility] ?? 'Change who can see this';
+                visibilityBtn.addEventListener('click', () => this.cycleVisibility(map));
+                actions.appendChild(visibilityBtn);
+
                 const delBtn = document.createElement('button');
                 delBtn.textContent = 'Delete';
                 delBtn.className = 'danger';
@@ -448,6 +480,38 @@ export class MapsPanel {
         } catch (error) {
             this._setStatus(this._describe(error), 'error');
             this.notify(this._describe(error), 'error');
+        }
+    }
+
+    /**
+     * Move a map one step around private -> link only -> public -> private.
+     *
+     * Publishing is confirmed and un-publishing is not: making something visible
+     * to strangers is the step that cannot be taken back for anyone who has
+     * already seen it.
+     */
+    async cycleVisibility(map) {
+        const current = VISIBILITY_ORDER.indexOf(map.visibility);
+        const next = VISIBILITY_ORDER[(current + 1) % VISIBILITY_ORDER.length];
+
+        if (next === 'public') {
+            const ok = confirm(
+                `Make "${map.title}" public?\n\n`
+                + 'It will be listed for anyone to find and read. '
+                + 'You can make it private again at any time, but you cannot '
+                + 'un-see it for anyone who has already looked.'
+            );
+            if (!ok) return;
+        }
+
+        this._setStatus('Changing visibility…');
+        try {
+            const updated = await this.client.updateMap(map.id, { visibility: next });
+            if (this.currentMap?.id === map.id) this._setCurrentMap(updated);
+            this.notify(`"${map.title}" is now ${VISIBILITY_LABELS[next].replace(/^\S+\s/, '')}`);
+            await this.refresh();
+        } catch (error) {
+            this._setStatus(this._describe(error), 'error');
         }
     }
 
@@ -611,6 +675,7 @@ export class MapsPanel {
             .maps-item-title { font-weight: 600; margin-bottom: 2px; }
             .maps-item-meta { color: #888; font-size: 11px; margin-bottom: 6px; }
             .maps-item-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+            .maps-visibility { white-space: nowrap; }
             .maps-status {
                 padding: 8px 12px;
                 color: #888;

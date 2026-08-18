@@ -311,6 +311,7 @@ export class ConeView {
 
         // Nodes.
         this._hits = [];
+        const labelCandidates = [];
         for (const point of points) {
             const near = (point.nearness + 1) / 2;
             const onTier = point.node.depth === tier;
@@ -334,28 +335,77 @@ export class ConeView {
                 ctx.stroke();
             }
 
-            // Label only the near half of the tier in view: labelling everything
-            // at this density is unreadable, and the far side is behind the cone.
-            // Only the front third of the current tier gets a label. A wider
-            // arc than this and the labels overlap each other, which is worse
-            // than not labelling them at all.
-            if (onTier && point.nearness > 0.45) {
-                ctx.fillStyle = `rgba(255,255,255,${0.35 + near * 0.6})`;
-                ctx.font = '11px system-ui, sans-serif';
-                ctx.textAlign = 'center';
-                ctx.fillText(
-                    this._truncate(point.node.metadata.label || point.node.id, 18),
-                    point.x,
-                    point.y - radius - 5
-                );
-            }
-
             this._hits.push({ id: point.node.id, x: point.x, y: point.y, r: radius + 8 });
+
+            // Labels are collected, not painted yet: they have to be placed
+            // against each other, and painting as we go means the last one wins
+            // every overlap.
+            if (onTier || isFocused) {
+                labelCandidates.push({ point, radius, near, isFocused });
+            }
         }
 
+        this._paintLabels(ctx, labelCandidates);
+
+        // The readout names the SELECTED node, always.
+        //
+        // Previously it only gave a tier and a count, and a node's name appeared
+        // solely if it happened to be on the focused tier's front third. So
+        // renaming a node in the Node Manager and coming here to look at it
+        // showed nothing — which is indistinguishable from the cone ignoring the
+        // rename. It was not ignoring it; there was nowhere for the new name to
+        // appear.
         const count = graph.getNodesAtDepth(tier).length;
-        this.tierLabel.textContent =
-            `Tier ${tier} · ${count} node${count === 1 ? '' : 's'} of ${graph.nodes.size}`;
+        const focused = focusedId ? graph.getNode(focusedId) : null;
+        const parts = [`Tier ${tier} · ${count} node${count === 1 ? '' : 's'} of ${graph.nodes.size}`];
+        if (focused) {
+            parts.push(`selected: ${focused.metadata.label || focused.id}`);
+        }
+        this.tierLabel.textContent = parts.join('  ·  ');
+    }
+
+    /**
+     * Paint labels, skipping any that would collide with one already placed.
+     *
+     * The previous rule was "front third of the focused tier only", which left
+     * most nodes permanently unnamed — a sweep of every tier through a full
+     * rotation labelled 21 of 36. Collision testing means the whole tier can be
+     * labelled and only genuinely overlapping text is dropped, so a name is
+     * reachable by spinning rather than absent.
+     *
+     * The selected node is placed first, so it never loses a collision to a
+     * neighbour.
+     */
+    _paintLabels(ctx, candidates) {
+        ctx.font = '11px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+
+        const ordered = [...candidates].sort((a, b) => {
+            if (a.isFocused !== b.isFocused) return a.isFocused ? -1 : 1;
+            // Then nearest-first: a node at the front of the cone is the one the
+            // user is looking at.
+            return b.near - a.near;
+        });
+
+        const placed = [];
+        for (const { point, radius, near, isFocused } of ordered) {
+            const text = this._truncate(point.node.metadata.label || point.node.id, 20);
+            const width = ctx.measureText(text).width;
+            const x = point.x;
+            const y = point.y - radius - 5;
+            const box = { left: x - width / 2, right: x + width / 2, top: y - 11, bottom: y + 3 };
+
+            const collides = placed.some((other) =>
+                box.left < other.right && other.left < box.right
+                && box.top < other.bottom && other.top < box.bottom);
+            if (collides && !isFocused) continue;
+
+            ctx.fillStyle = isFocused
+                ? 'rgba(0,255,255,0.95)'
+                : `rgba(255,255,255,${0.4 + near * 0.55})`;
+            ctx.fillText(text, x, y);
+            placed.push(box);
+        }
     }
 
     _truncate(text, max) {
@@ -454,6 +504,10 @@ export class ConeView {
             .cone-view {
                 position: fixed;
                 inset: 0;
+                /* Clears the dock at whichever edge it is on: bottom on a phone,
+                   top on a wide screen. --dock-top-height is 0 when the dock is
+                   bottom-anchored, and vice versa. */
+                top: var(--dock-top-height, 0px);
                 bottom: var(--dock-height, 0px);
                 z-index: 900;
                 background: #000;

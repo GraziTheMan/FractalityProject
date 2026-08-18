@@ -45,6 +45,7 @@ from .models import (
     NodeResonance,
     NodeTimestamps,
     NodeVisual,
+    Profile,
     Pulse,
     PulseAuthor,
     PulseCreate,
@@ -626,14 +627,20 @@ def _row_to_pulse(row: Dict[str, Any], viewer_subject: Optional[str] = None) -> 
         title=row.get("title") or "",
         preview=row.get("preview") or "",
         author=PulseAuthor(
+            # display_name first: it is the one the user chose. `username` comes
+            # from the auth provider and is usually absent, which is why posts
+            # were attributed to "Anonymous".
             id=row.get("author_id") or "unknown",
-            name=row.get("author_name") or "Anonymous",
+            name=row.get("author_display_name")
+                 or row.get("author_name")
+                 or "Anonymous",
             avatar=row.get("author_avatar"),
         ),
         tags=list(row.get("tags") or []),
         media=media,
         visibility=Visibility(row.get("visibility") or "public"),
         timestamp=int(row.get("created_at") or 0),
+        edited_at=int(row["edited_at"]) if row.get("edited_at") else None,
         resonance=round(resonance, 4),
         resonators=resonators,
         resonated=bool(row.get("resonated")),
@@ -656,10 +663,10 @@ CREATE (p:Pulse {
 CREATE (u)-[:POSTED]->(p)
 RETURN p.id AS id, p.title AS title, p.preview AS preview, p.tags AS tags,
        p.media_json AS media_json, p.visibility AS visibility,
-       p.created_at AS created_at,
+       p.created_at AS created_at, p.edited_at AS edited_at,
        0 AS resonators, false AS resonated,
        u.id AS author_id, u.username AS author_name, u.subject AS author_subject,
-       null AS author_avatar
+       u.display_name AS author_display_name, u.avatar_url AS author_avatar
 """
 
 
@@ -701,11 +708,12 @@ WITH p, author, count(r) AS resonators
 OPTIONAL MATCH (p)<-[mine:RESONATED_WITH]-(:User {subject: $viewer})
 RETURN p.id AS id, p.title AS title, p.preview AS preview, p.tags AS tags,
        p.media_json AS media_json, p.visibility AS visibility,
-       p.created_at AS created_at,
+       p.created_at AS created_at, p.edited_at AS edited_at,
        resonators,
        mine IS NOT NULL AS resonated,
        author.id AS author_id, author.username AS author_name,
-       author.subject AS author_subject, null AS author_avatar
+       author.subject AS author_subject,
+       author.display_name AS author_display_name, author.avatar_url AS author_avatar
 ORDER BY p.created_at DESC
 SKIP $skip LIMIT $limit
 """
@@ -736,11 +744,12 @@ WITH p, author, count(r) AS resonators
 OPTIONAL MATCH (p)<-[mine:RESONATED_WITH]-(:User {subject: $subject})
 RETURN p.id AS id, p.title AS title, p.preview AS preview, p.tags AS tags,
        p.media_json AS media_json, p.visibility AS visibility,
-       p.created_at AS created_at,
+       p.created_at AS created_at, p.edited_at AS edited_at,
        resonators,
        mine IS NOT NULL AS resonated,
        author.id AS author_id, author.username AS author_name,
-       author.subject AS author_subject, null AS author_avatar
+       author.subject AS author_subject,
+       author.display_name AS author_display_name, author.avatar_url AS author_avatar
 ORDER BY p.created_at DESC
 SKIP $skip LIMIT $limit
 """
@@ -763,11 +772,12 @@ WITH p, author, count(r) AS resonators
 OPTIONAL MATCH (p)<-[mine:RESONATED_WITH]-(:User {subject: $viewer})
 RETURN p.id AS id, p.title AS title, p.preview AS preview, p.tags AS tags,
        p.media_json AS media_json, p.visibility AS visibility,
-       p.created_at AS created_at,
+       p.created_at AS created_at, p.edited_at AS edited_at,
        resonators,
        mine IS NOT NULL AS resonated,
        author.id AS author_id, author.username AS author_name,
-       author.subject AS author_subject, null AS author_avatar
+       author.subject AS author_subject,
+       author.display_name AS author_display_name, author.avatar_url AS author_avatar
 """
 
 
@@ -935,3 +945,94 @@ async def count_recent_pulses(settings: Settings, subject: str, window_ms: int) 
         since=now_ms() - window_ms,
     )
     return int(rows[0]["recent"]) if rows else 0
+
+
+# --- profile ---------------------------------------------------------------
+
+GET_PROFILE = """
+MATCH (u:User {subject: $subject})
+RETURN u.id AS id, u.display_name AS display_name, u.avatar_url AS avatar_url,
+       u.username AS username, u.email AS email
+"""
+
+
+async def get_profile(settings: Settings, subject: str) -> Optional[Profile]:
+    rows = await db.run_read(settings, GET_PROFILE, subject=subject)
+    return Profile(**rows[0]) if rows else None
+
+
+UPDATE_PROFILE = """
+MATCH (u:User {subject: $subject})
+SET u.display_name = CASE WHEN $set_name   THEN $display_name ELSE u.display_name END,
+    u.avatar_url   = CASE WHEN $set_avatar THEN $avatar_url   ELSE u.avatar_url   END
+RETURN u.id AS id, u.display_name AS display_name, u.avatar_url AS avatar_url,
+       u.username AS username, u.email AS email
+"""
+
+
+async def update_profile(
+    settings: Settings,
+    subject: str,
+    display_name: Optional[str] = None,
+    avatar_url: Optional[str] = None,
+    set_name: bool = False,
+    set_avatar: bool = False,
+) -> Optional[Profile]:
+    """Partial profile update.
+
+    The `set_*` flags exist because null is a meaningful value here: omitting a
+    field must leave it alone, while explicitly sending null must clear it. A
+    plain `coalesce($x, u.x)` cannot express the difference, so a user could never
+    remove an avatar once set.
+    """
+    rows = await db.run_write(
+        settings,
+        UPDATE_PROFILE,
+        subject=subject,
+        display_name=display_name,
+        avatar_url=avatar_url,
+        set_name=set_name,
+        set_avatar=set_avatar,
+    )
+    return Profile(**rows[0]) if rows else None
+
+
+UPDATE_PULSE = """
+MATCH (u:User {subject: $subject})-[:POSTED]->(p:Pulse {id: $pulse_id})
+SET p.title      = CASE WHEN $set_title      THEN $title      ELSE p.title      END,
+    p.preview    = CASE WHEN $set_preview    THEN $preview    ELSE p.preview    END,
+    p.tags       = CASE WHEN $set_tags       THEN $tags       ELSE p.tags       END,
+    p.media_json = CASE WHEN $set_media      THEN $media_json ELSE p.media_json END,
+    p.visibility = CASE WHEN $set_visibility THEN $visibility ELSE p.visibility END,
+    p.edited_at  = $now
+RETURN count(*) AS updated
+"""
+
+
+async def update_pulse(
+    settings: Settings, subject: str, pulse_id: str, changes: Dict[str, Any]
+) -> bool:
+    """Edit one of the caller's own pulses.
+
+    Ownership is in the MATCH, so this cannot reach another author's pulse and
+    there is no window between checking and writing. `edited_at` is always set:
+    a reader is entitled to know a post has changed since it was published.
+    """
+    rows = await db.run_write(
+        settings,
+        UPDATE_PULSE,
+        subject=subject,
+        pulse_id=pulse_id,
+        title=changes.get("title"),
+        preview=changes.get("preview"),
+        tags=changes.get("tags"),
+        media_json=changes.get("media_json"),
+        visibility=changes.get("visibility"),
+        set_title="title" in changes,
+        set_preview="preview" in changes,
+        set_tags="tags" in changes,
+        set_media="media" in changes,
+        set_visibility="visibility" in changes,
+        now=now_ms(),
+    )
+    return bool(rows and rows[0].get("updated"))

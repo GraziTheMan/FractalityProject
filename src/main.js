@@ -16,6 +16,8 @@ import { NodeManagerPanel } from './ui/NodeManagerPanel.js';
 import { ConeView } from './ui/ConeView.js';
 import { FeedPanel } from './ui/FeedPanel.js';
 import { feedClient } from './api/feedClient.js';
+import { AccountPanel } from './ui/AccountPanel.js';
+import { onAuthChange, getAuthState } from './auth/clerkClient.js';
 import { mindMapClient, MindMapClient } from './api/mindMapClient.js';
 import { hasCliBridge } from './config/deploy.js';
 import { getToken, hasAuth } from './auth/clerkClient.js';
@@ -127,6 +129,56 @@ const nodeManagerPanel = new NodeManagerPanel({
   onGraphChanged: () => fractalityEngine?.notifyGraphChanged(),
   notify: (message, type) => showNotification(message, type)
 });
+
+/**
+ * Account: signing in, signing out, and how you appear to other people.
+ *
+ * Signing in previously had no home of its own — only a button inside the Maps
+ * panel and one inside the feed composer. So on a fresh desktop browser there was
+ * no obvious way to sign in, and an anonymous visitor sees only PUBLIC maps.
+ * That is why maps saved on a phone looked missing on a desktop: they were
+ * private, and the desktop was never signed in.
+ */
+const accountPanel = new AccountPanel({
+  client: feedClient,
+  notify: (message, type) => showNotification(message, type),
+  // The feed renders author names, and the Maps panel's list depends on who you
+  // are, so both need to re-read after a profile or session change.
+  onProfileChanged: () => {
+    if (feedPanel.isOpen) feedPanel.refresh();
+    if (mapsPanel.isOpen) mapsPanel.refresh();
+    refreshDock();
+  }
+});
+
+/**
+ * Seed the display name from the auth provider, once.
+ *
+ * Clerk's client knows the user's name; its session JWT does not carry one, so
+ * the API cannot. This copies it across on first sign-in — and ONLY when no name
+ * has been set, so a name the user chose is never overwritten by the provider's
+ * on a later sign-in.
+ */
+async function seedDisplayName() {
+  if (!feedClient.available) return;
+  const state = getAuthState();
+  if (!state.signedIn) return;
+
+  try {
+    const profile = await feedClient.getProfile();
+    if (profile.display_name) return;
+
+    const fromProvider = state.user?.name;
+    if (!fromProvider) return;
+
+    await feedClient.updateProfile({ display_name: fromProvider });
+    console.log(`Seeded display name from the auth provider: ${fromProvider}`);
+  } catch (error) {
+    // Never fatal: a missing display name degrades to "Anonymous" on posts,
+    // which is survivable, and the account panel can set one by hand.
+    console.warn('Could not seed the display name:', error.message);
+  }
+}
 
 /**
  * The feed.
@@ -288,6 +340,19 @@ function buildDockItems() {
       icon: '\u2630',
       label: 'More',
       items: [
+        // Identity first: it is what most of the rest depends on, and having no
+        // reachable sign-in is what made cloud maps look broken.
+        {
+          id: 'account',
+          icon: '\u{1f464}',
+          label: () => (accountPanel.signedIn ? 'Account' : 'Sign in'),
+          description: () => (accountPanel.signedIn
+            ? 'Display name, avatar, sign out'
+            : 'Sign in to save maps and post'),
+          isActive: () => accountPanel.isOpen,
+          onSelect: () => accountPanel.toggle()
+        },
+        { separator: true },
         {
           id: 'export-json',
           icon: '\u{1f4e4}',
@@ -416,8 +481,19 @@ function buildDock() {
     notify: (message, type) => showNotification(message, type)
   });
 
-  // Keep the dock's highlights honest when panels close themselves.
+  // Keep the dock's highlights honest when panels close themselves, and keep the
+  // Account entry reading "Sign in" or "Account" as the session changes.
   setInterval(syncDock, 750);
+
+  // Seed the display name once a session exists. Registered here rather than at
+  // module scope so it cannot run before the client has its token getter.
+  if (hasAuth()) {
+    onAuthChange(() => {
+      if (getAuthState().signedIn) seedDisplayName();
+      refreshDock();
+    });
+    if (getAuthState().signedIn) seedDisplayName();
+  }
 
   if (hasCliBridge()) {
     // Only poll when there is a bridge to poll. Without one this was a
@@ -997,3 +1073,4 @@ window.mapsPanel = mapsPanel;
 window.nodeManagerPanel = nodeManagerPanel;
 window.coneView = coneView;
 window.feedPanel = feedPanel;
+window.accountPanel = accountPanel;

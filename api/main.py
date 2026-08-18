@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import db
-from .routers import feed, mindmaps
+from .routers import feed, me, mindmaps
 from .settings import get_settings
 
 settings = get_settings()
@@ -73,6 +73,7 @@ app.add_middleware(
 
 app.include_router(mindmaps.router)
 app.include_router(feed.router)
+app.include_router(me.router)
 
 
 @app.get("/health", tags=["meta"])

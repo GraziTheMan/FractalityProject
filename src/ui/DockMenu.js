@@ -23,8 +23,12 @@
  * @typedef {object} DockItem
  * @property {string} id                      stable identity, used for state
  * @property {string} icon                    one emoji
- * @property {string} label                   short; shown on wide screens and
- *                                            as the accessible name everywhere
+ * @property {string|(() => string)} label   short; shown on wide screens and as
+ *                                            the accessible name everywhere. A
+ *                                            function is re-evaluated on every
+ *                                            refresh(), which is how one entry
+ *                                            can read "Sign in" or "Account"
+ *                                            depending on session state.
  * @property {() => void} [onSelect]          action items
  * @property {DockItem[]} [items]             group items: children for the sheet
  * @property {boolean} [exclusive]
@@ -39,6 +43,11 @@
  *           explains why. This is the honest alternative to a button that
  *           looks live and silently does nothing.
  */
+
+/** Resolve a value that may be a plain string or a function returning one. */
+function text(value) {
+    return typeof value === 'function' ? value() : value;
+}
 
 export class DockMenu {
     /**
@@ -162,10 +171,10 @@ export class DockMenu {
 
         const label = document.createElement('span');
         label.className = 'dock-label';
-        label.textContent = item.label;
+        label.textContent = text(item.label);
 
         button.append(icon, label);
-        button.setAttribute('aria-label', item.label);
+        button.setAttribute('aria-label', text(item.label));
 
         if (isGroup) {
             button.setAttribute('aria-expanded', 'false');
@@ -181,6 +190,24 @@ export class DockMenu {
     }
 
     _applyState(button, item) {
+        // Dynamic labels are re-resolved here so refresh() updates them. Without
+        // this, a label that depends on session state would only change on a full
+        // rebuild — and rebuilding closes any open sheet.
+        if (typeof item.label === 'function') {
+            const resolved = text(item.label);
+            const labelEl = button.querySelector('.dock-label');
+            if (labelEl && labelEl.textContent !== resolved) labelEl.textContent = resolved;
+            button.setAttribute('aria-label', resolved);
+
+            const nameEl = button.querySelector('.dock-sheet-name');
+            if (nameEl && nameEl.textContent !== resolved) nameEl.textContent = resolved;
+        }
+        if (typeof item.description === 'function') {
+            const descEl = button.querySelector('.dock-sheet-description');
+            const resolved = text(item.description);
+            if (descEl && descEl.textContent !== resolved) descEl.textContent = resolved;
+        }
+
         const reason = item.disabledReason?.() || false;
 
         // Deliberately NOT the `disabled` attribute. A disabled button swallows
@@ -189,7 +216,7 @@ export class DockMenu {
         // itself; aria-disabled carries the state to assistive tech.
         button.classList.toggle('unavailable', Boolean(reason));
         button.setAttribute('aria-disabled', reason ? 'true' : 'false');
-        button.title = reason || item.label;
+        button.title = reason || text(item.label);
 
         const active = item.items
             ? (!item.exclusive && this._groupHasActiveChild(item))
@@ -215,7 +242,7 @@ export class DockMenu {
             item.onSelect?.();
         } catch (error) {
             console.error(`DockMenu: "${item.id}" failed:`, error);
-            this.notify(`${item.label} failed: ${error.message}`, 'error');
+            this.notify(`${text(item.label)} failed: ${error.message}`, 'error');
         }
         this.refresh();
     }
@@ -241,11 +268,11 @@ export class DockMenu {
         // A radio set is a radiogroup, not a menu: its rows already carry
         // aria-checked, and the two roles read very differently aloud.
         sheet.setAttribute('role', item.exclusive ? 'radiogroup' : 'menu');
-        sheet.setAttribute('aria-label', item.label);
+        sheet.setAttribute('aria-label', text(item.label));
 
         const heading = document.createElement('div');
         heading.className = 'dock-sheet-heading';
-        heading.textContent = item.label;
+        heading.textContent = text(item.label);
         sheet.appendChild(heading);
 
         for (const child of item.items) {
@@ -282,21 +309,23 @@ export class DockMenu {
         icon.textContent = child.icon ?? '';
         icon.setAttribute('aria-hidden', 'true');
 
-        const text = document.createElement('span');
-        text.className = 'dock-sheet-text';
+        // Named textWrap, not text: the module-level text() helper resolves
+        // callable labels, and a local of the same name would shadow it.
+        const textWrap = document.createElement('span');
+        textWrap.className = 'dock-sheet-text';
 
         const name = document.createElement('span');
         name.className = 'dock-sheet-name';
-        name.textContent = child.label;
-        text.appendChild(name);
+        name.textContent = text(child.label);
+        textWrap.appendChild(name);
 
         // A one-line description earns its space here in a way it would not on
         // the dock itself: these are choices the user is making deliberately.
         if (child.description) {
             const description = document.createElement('span');
             description.className = 'dock-sheet-description';
-            description.textContent = child.description;
-            text.appendChild(description);
+            description.textContent = text(child.description);
+            textWrap.appendChild(description);
         }
 
         const check = document.createElement('span');
@@ -304,12 +333,12 @@ export class DockMenu {
         check.textContent = '✓';
         check.setAttribute('aria-hidden', 'true');
 
-        row.append(icon, text, check);
+        row.append(icon, textWrap, check);
 
         const reason = child.disabledReason?.() || false;
         row.classList.toggle('unavailable', Boolean(reason));
         row.setAttribute('aria-disabled', reason ? 'true' : 'false');
-        if (reason) row.title = reason;
+        row.title = reason || text(child.label);
 
         const active = Boolean(child.isActive?.());
         row.classList.toggle('active', active);

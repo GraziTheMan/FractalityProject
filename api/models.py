@@ -198,6 +198,55 @@ class ShareLink(BaseModel):
         return self.expires_at is None or self.expires_at > _now_ms()
 
 
+# --- profile ---------------------------------------------------------------
+#
+# Identity lives with Clerk; this is the local, user-editable projection of it.
+#
+# It exists because Clerk's session JWT carries no name. The token has `sub`,
+# `iss`, `exp` and little else unless a custom JWT template is configured, so
+# `Principal.username` is None for a normal Clerk setup — which is why every feed
+# post was attributed to "Anonymous". The display name has to be stored somewhere
+# this API can read it.
+
+
+class Profile(BaseModel):
+    id: str
+    display_name: Optional[str] = None
+    avatar_url: Optional[str] = None
+    #: From the auth provider, if it happened to supply one. Read-only here.
+    username: Optional[str] = None
+    email: Optional[str] = None
+
+
+class ProfileUpdate(BaseModel):
+    display_name: Optional[str] = Field(default=None, max_length=60)
+    avatar_url: Optional[str] = Field(default=None, max_length=2_000)
+
+    @field_validator("display_name", mode="before")
+    @classmethod
+    def _clean_name(cls, value: Any) -> Any:
+        """Trim before the length check, and treat blank as 'clear it'."""
+        if not isinstance(value, str):
+            return value
+        cleaned = value.strip()
+        return cleaned or None
+
+    @field_validator("avatar_url", mode="before")
+    @classmethod
+    def _clean_avatar(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        # http/https only, same reasoning as PulseMedia: this URL ends up in an
+        # <img src> or an href, and javascript:/data: there is a stored XSS.
+        lowered = cleaned.lower()
+        if not (lowered.startswith("http://") or lowered.startswith("https://")):
+            raise ValueError("avatar url must be http or https")
+        return cleaned
+
+
 # --- feed / pulses ---------------------------------------------------------
 #
 # A "pulse" is a feed post. The field names are set by what
@@ -323,6 +372,11 @@ class Pulse(BaseModel):
     #: Epoch milliseconds, matching the frontend's "time ago" rendering.
     timestamp: int
 
+    #: Set when the post has been edited since publishing. Exposed so a reader can
+    #: see that it changed — a feed where posts are silently rewritten after people
+    #: have responded to them is worse than one without editing at all.
+    edited_at: Optional[int] = None
+
     #: 0..1, drawn as a ring by the feed UI. Derived from resonators, not stored
     #: independently, so the two can never disagree.
     resonance: float = 0.0
@@ -335,6 +389,27 @@ class Pulse(BaseModel):
     #: True when the caller is the author, which is what the UI uses to decide
     #: whether to offer a delete.
     own: bool = False
+
+
+class PulseUpdate(BaseModel):
+    """Partial edit of a pulse. Omitted fields are left alone.
+
+    Reuses PulseCreate's validators by construction rather than by copying them:
+    a link that would be refused on the way in must not become acceptable on an
+    edit.
+    """
+
+    title: Optional[str] = Field(default=None, min_length=1, max_length=MAX_PULSE_TITLE)
+    preview: Optional[str] = Field(default=None, max_length=MAX_PULSE_TEXT)
+    tags: Optional[List[str]] = None
+    media: Optional[PulseMedia] = None
+    visibility: Optional[Visibility] = None
+
+    _strip = field_validator("title", "preview", mode="before")(
+        PulseCreate._strip.__func__
+    )
+    _clean_tags = field_validator("tags")(PulseCreate._clean_tags.__func__)
+    _no_unlisted = field_validator("visibility")(PulseCreate._no_unlisted.__func__)
 
 
 class PulseReport(BaseModel):
