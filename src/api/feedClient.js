@@ -50,16 +50,43 @@ export class FeedClient extends MindMapClient {
     }
 
     /**
-     * Resonate with a pulse, or take it back.
+     * Record how much a pulse resonates with you, from -2 to +2.
      *
-     * Returns the updated pulse, so the caller never has to guess the new count —
-     * incrementing locally and hoping is how a like count drifts from reality.
+     * 0 clears the rating rather than storing a neutral one, so returning the
+     * slider to the middle is the same state as never having touched it.
+     *
+     * Returns the updated pulse, which carries your rating and your own predicted
+     * resonance — and no tally of anyone else's, by design. There is nothing to
+     * increment locally and hope about.
      */
-    setResonance(pulseId, on = true) {
+    setResonance(pulseId, value = 0) {
+        const clamped = Math.max(-2, Math.min(2, Math.round(Number(value) || 0)));
         return this._request(
-            `/pulses/${encodeURIComponent(pulseId)}/resonance?on=${on ? 'true' : 'false'}`,
+            `/pulses/${encodeURIComponent(pulseId)}/resonance?value=${clamped}`,
             { method: 'PUT' }
         );
+    }
+
+    /**
+     * Tell the server which pulses the reader has seen.
+     *
+     * The model's denominator: without it there is no way to tell a post that
+     * landed badly from one that was barely shown. Fire-and-forget on purpose —
+     * nothing on screen depends on it, so a failure here must never surface to the
+     * reader or interrupt their scrolling.
+     */
+    async recordImpressions(pulseIds) {
+        const ids = [...new Set(pulseIds)].filter(Boolean).slice(0, 200);
+        if (ids.length === 0) return false;
+        try {
+            await this._request('/pulses/impressions', {
+                method: 'POST',
+                body: { pulse_ids: ids }
+            });
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     /** Report a pulse. `reason` must be one the API recognises. */

@@ -23,6 +23,7 @@
 import { ApiError } from '../api/feedClient.js';
 import { safeUrl } from '../utils/sanitize.js';
 import { hasAuth, getAuthState, signIn } from '../auth/clerkClient.js';
+import { createResonanceSlider, createResonanceGauge } from './ResonanceControl.js';
 
 /** Report reasons the API accepts. Kept in step with PulseReport in models.py. */
 const REPORT_REASONS = [
@@ -130,6 +131,9 @@ export class FeedPanel {
     }
 
     hide() {
+        // Closing is the last chance to report what was read. Waiting out the batch
+        // timer would lose the final screenful every time.
+        this._flushImpressions();
         if (this.container) this.container.classList.add('hidden');
         this.isOpen = false;
     }
@@ -140,6 +144,9 @@ export class FeedPanel {
 
     destroy() {
         Promise.resolve(this._unsubscribe).then((fn) => fn?.());
+        clearTimeout(this._impressionTimer);
+        this._impressionObserver?.disconnect();
+        this._impressionObserver = null;
         this.container?.remove();
         this.container = null;
     }
@@ -369,6 +376,72 @@ export class FeedPanel {
         }
     }
 
+    // --- impressions -------------------------------------------------------
+    //
+    // The model's denominator: without it a post that landed badly and a post that
+    // was barely shown are the same thing, because both have no ratings.
+    //
+    // Nothing read from this is ever shown to anybody — not to a post's author and
+    // not as a per-viewer record. It is not a reading log: what is recorded is that
+    // a reader saw a post, once, and never how long they looked or how often.
+
+    /** Report `pulseId` as seen once its card has been on screen. */
+    _watchForImpression(card, pulseId) {
+        if (typeof IntersectionObserver === 'undefined') {
+            // No observer (an old browser, or a test environment). Falling back to
+            // "the server sent it" would be the wrong denominator, so nothing is
+            // recorded at all: a missing measurement beats a wrong one.
+            return;
+        }
+
+        if (!this._impressionObserver) {
+            this._pendingImpressions = new Set();
+            this._impressionObserver = new IntersectionObserver((entries) => {
+                for (const entry of entries) {
+                    if (!entry.isIntersecting) continue;
+                    const id = entry.target.dataset.pulseId;
+                    if (id) this._pendingImpressions.add(id);
+                    // One impression per post per reader, so there is nothing left
+                    // to watch for on this card.
+                    this._impressionObserver.unobserve(entry.target);
+                }
+                this._scheduleImpressionFlush();
+            }, {
+                // Half the card, so a post clipped at the bottom edge of the screen
+                // as the reader stops scrolling does not count as read.
+                threshold: 0.5
+            });
+        }
+
+        this._impressionObserver.observe(card);
+    }
+
+    _scheduleImpressionFlush() {
+        clearTimeout(this._impressionTimer);
+        // Batched: a screenful of cards intersects at once, and thirty requests to
+        // say "I scrolled" is absurd.
+        this._impressionTimer = setTimeout(() => this._flushImpressions(), 1500);
+    }
+
+    async _flushImpressions() {
+        clearTimeout(this._impressionTimer);
+        if (!this._pendingImpressions?.size) return;
+        if (hasAuth() && !getAuthState().signedIn) {
+            // An anonymous reader has no model to feed, so there is nothing to
+            // record and nobody it would be recorded against.
+            this._pendingImpressions.clear();
+            return;
+        }
+
+        const ids = [...this._pendingImpressions];
+        this._pendingImpressions.clear();
+        // Fire and forget. Nothing on screen depends on this, so a failure must
+        // never surface to the reader — but the ids are dropped rather than retried,
+        // because a queue that grows while offline would eventually send a batch
+        // claiming the reader saw everything at once.
+        await this.client.recordImpressions(ids);
+    }
+
     _renderMore() {
         this.moreEl.innerHTML = '';
         if (!this.hasMore || this.pulses.length === 0) return;
@@ -386,6 +459,10 @@ export class FeedPanel {
         const card = document.createElement('article');
         card.className = 'pulsefeed-pulse';
         card.dataset.pulseId = pulse.id;
+        // Counted as seen only once it is actually on screen. Counting everything
+        // the API returned would inflate the denominator with posts nobody scrolled
+        // to, which makes every post look like it landed worse than it did.
+        if (!pulse.own) this._watchForImpression(card, pulse.id);
 
         // --- who and when
         const head = document.createElement('div');
@@ -484,30 +561,30 @@ export class FeedPanel {
 
         const signedIn = !hasAuth() || getAuthState().signedIn;
 
-        // --- resonate
-        const resonate = document.createElement('button');
-        resonate.className = 'pulsefeed-action pulsefeed-resonate';
-        resonate.type = 'button';
-        resonate.classList.toggle('on', Boolean(pulse.resonated));
-        resonate.textContent = pulse.resonators > 0
-            ? `◈ ${pulse.resonators}`
-            : '◈';
-        resonate.title = pulse.resonated ? 'Take back your resonance' : 'Resonate';
-        resonate.addEventListener('click', () => this._toggleResonance(pulse, resonate));
-        actions.appendChild(resonate);
+        // --- how much this resonates with you
+        //
+        // A five-notch slider rather than one button. A single button can only mean
+        // approval, and a scale with no way to say "this did not land for me"
+        // collects agreement instead of reactions.
+        //
+        // No count anywhere near it. Nothing here reports how anyone else rated the
+        // post, to the reader or to its author: the ratings exist so the feed can
+        // learn what resonates with each person, and a visible tally would turn that
+        // into a scoreboard.
+        actions.appendChild(createResonanceSlider({
+            value: pulse.my_rating ?? 0,
+            enabled: signedIn,
+            onChange: (value) => this._rate(pulse, value)
+        }));
 
-        // A strength bar rather than a number: the count is already on the
-        // button, and this is the "resonance" the API computes.
-        if (pulse.resonance > 0) {
-            const bar = document.createElement('span');
-            bar.className = 'pulsefeed-resonance';
-            const fill = document.createElement('span');
-            fill.className = 'pulsefeed-resonance-fill';
-            fill.style.width = `${Math.round(pulse.resonance * 100)}%`;
-            bar.appendChild(fill);
-            bar.title = `Resonance ${Math.round(pulse.resonance * 100)}%`;
-            actions.appendChild(bar);
-        }
+        // What YOU are predicted to make of it, from your own past ratings. Absent
+        // until there is enough history to mean anything, which for a new reader is
+        // most of the time — that is the honest state, not a broken one.
+        const gauge = createResonanceGauge({
+            predicted: pulse.predicted,
+            confidence: pulse.prediction_confidence ?? 0
+        });
+        if (gauge) actions.appendChild(gauge);
 
         const spacer = document.createElement('span');
         spacer.className = 'pulsefeed-spacer';
@@ -657,26 +734,35 @@ export class FeedPanel {
 
     // --- actions -----------------------------------------------------------
 
-    async _toggleResonance(pulse, button) {
+    /**
+     * Record this reader's rating of a pulse.
+     *
+     * The API returns the pulse with the rating applied AND a freshly computed
+     * prediction, because this rating is part of the reader's history now — so the
+     * gauge is re-read from the server rather than guessed locally.
+     */
+    async _rate(pulse, value) {
         if (hasAuth() && !getAuthState().signedIn) {
-            this._setStatus('Sign in to resonate.', 'warning');
+            this._setStatus('Sign in to say how something resonates with you.', 'warning');
             return;
         }
 
-        button.disabled = true;
+        const at = this.pulses.findIndex((p) => p.id === pulse.id);
         try {
-            // The API returns the updated pulse, so the count comes from the
-            // server rather than being guessed locally and drifting.
-            const updated = await this.client.setResonance(pulse.id, !pulse.resonated);
-            const at = this.pulses.findIndex((p) => p.id === pulse.id);
+            const updated = await this.client.setResonance(pulse.id, value);
             if (at >= 0) {
                 this.pulses[at] = updated;
                 this.listEl.replaceChild(this._renderPulse(updated), this.listEl.children[at]);
             }
         } catch (error) {
             this._setStatus(await this._describe(error), 'error');
-        } finally {
-            button.disabled = false;
+            // Redraw from what we still believe, so the slider does not sit showing
+            // a rating the server never accepted.
+            if (at >= 0) {
+                this.listEl.replaceChild(
+                    this._renderPulse(this.pulses[at]), this.listEl.children[at]
+                );
+            }
         }
     }
 
@@ -994,18 +1080,86 @@ export class FeedPanel {
                 cursor: pointer;
             }
             .pulsefeed-action:hover { border-color: #555; color: #fff; }
-            .pulsefeed-resonate.on { border-color: #0ff; color: #0ff; }
             .pulsefeed-danger:hover { border-color: #ef4444; color: #f87171; }
 
+            /* --- the resonance slider ------------------------------------ */
             .pulsefeed-resonance {
-                display: inline-block;
-                width: 52px;
-                height: 3px;
-                background: rgba(255,255,255,0.10);
-                border-radius: 2px;
-                overflow: hidden;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                min-width: 0;
             }
-            .pulsefeed-resonance-fill { display: block; height: 100%; background: #0ff; }
+            .pulsefeed-resonance-end {
+                color: #555;
+                font-size: 9px;
+                letter-spacing: 0.4px;
+                text-transform: uppercase;
+                white-space: nowrap;
+            }
+            .pulsefeed-notches {
+                display: flex;
+                align-items: center;
+                gap: 2px;
+                padding: 2px;
+                background: rgba(255,255,255,0.04);
+                border: 1px solid #2c2c2c;
+                border-radius: 999px;
+            }
+            .pulsefeed-notch {
+                width: 26px;
+                height: 26px;
+                padding: 0;
+                background: none;
+                border: 1px solid transparent;
+                border-radius: 50%;
+                color: #666;
+                font-family: inherit;
+                font-size: 10px;
+                line-height: 1;
+                cursor: pointer;
+            }
+            /* The middle notch is smaller and dimmer: it is the default and the
+               absence of an opinion, so it should not look like a third choice
+               competing with the other two sides. */
+            .pulsefeed-notch.neutral { color: #444; font-size: 9px; }
+            .pulsefeed-notch:hover { border-color: #555; color: #ccc; }
+            .pulsefeed-notch.dissonant:hover { border-color: #f8717188; color: #f87171; }
+            .pulsefeed-notch.resonant:hover { border-color: #0ff8; color: #0ff; }
+
+            .pulsefeed-notch.chosen.dissonant {
+                background: rgba(248,113,113,0.16);
+                border-color: #f87171;
+                color: #fca5a5;
+            }
+            .pulsefeed-notch.chosen.resonant {
+                background: rgba(0,255,255,0.16);
+                border-color: #0ff;
+                color: #0ff;
+            }
+            .pulsefeed-notch.chosen.neutral {
+                background: rgba(255,255,255,0.08);
+                border-color: #555;
+                color: #999;
+            }
+            /* Clickable while unavailable, so a press can explain itself rather
+               than doing nothing to a reader who is not signed in. */
+            .pulsefeed-notch.unavailable { opacity: 0.4; }
+
+            /* --- the prediction gauge ------------------------------------ */
+            .pulsefeed-gauge { display: inline-flex; align-items: center; flex: 0 0 auto; }
+            .pulsefeed-gauge svg { display: block; }
+            .pulsefeed-gauge-track {
+                fill: none;
+                stroke: rgba(255,255,255,0.10);
+                stroke-width: 2.5;
+            }
+            .pulsefeed-gauge-arc {
+                fill: none;
+                stroke-width: 2.5;
+                stroke-linecap: round;
+            }
+            .pulsefeed-gauge.resonant .pulsefeed-gauge-arc { stroke: #0ff; }
+            .pulsefeed-gauge.dissonant .pulsefeed-gauge-arc { stroke: #f87171; }
 
             .pulsefeed-more { padding: 0 12px; }
             .pulsefeed-load-more {

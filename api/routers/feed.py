@@ -29,7 +29,15 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from ..auth import Principal, current_user, optional_user
-from ..models import Pulse, PulseCreate, PulseReport, PulseUpdate
+from ..models import (
+    MAX_RATING,
+    MIN_RATING,
+    ImpressionBatch,
+    Pulse,
+    PulseCreate,
+    PulseReport,
+    PulseUpdate,
+)
 from .. import repository as repo
 from ..settings import Settings, get_settings
 
@@ -80,17 +88,24 @@ async def list_feed(
 
     Open to anonymous callers by design — the feed is the part of this app a
     visitor should be able to read before deciding to sign up. Signing in adds
-    two things: pulses from blocked authors disappear, and `resonated` reflects
-    what you have already resonated with.
+    three things: pulses from blocked authors disappear, `my_rating` reflects what
+    you have already rated, and each pulse carries a prediction of how it will land
+    for you.
+
+    Strictly reverse-chronological, still. The predictions are shown to the reader,
+    not used to order the feed: an order chosen by a model is a feed that decides
+    what you see, which is the thing this is meant to be an alternative to.
     """
     _require_db(settings)
-    return await repo.list_feed(
+    viewer = principal.subject if principal else None
+    pulses = await repo.list_feed(
         settings,
-        viewer_subject=principal.subject if principal else None,
+        viewer_subject=viewer,
         skip=skip,
         limit=limit,
         tag=tag,
     )
+    return repo.apply_predictions(pulses, await repo.load_reader_model(settings, viewer))
 
 
 @router.get("/mine", response_model=List[Pulse])
@@ -212,33 +227,60 @@ async def update_pulse(
 @router.put("/{pulse_id}/resonance", response_model=Pulse)
 async def resonate(
     pulse_id: str,
-    on: bool = Query(default=True),
+    value: int = Query(default=0, ge=MIN_RATING, le=MAX_RATING),
     principal: Principal = Depends(current_user),
     settings: Settings = Depends(get_settings),
 ):
-    """Resonate with a pulse, or take it back.
+    """Record how much a pulse resonates with you, from -2 to +2.
 
-    Idempotent in both directions: the underlying MERGE/DELETE means a double tap
-    cannot produce two relationships or fail on the second removal. Returns the
-    updated pulse so the client does not have to guess the new count.
+    0 removes the rating rather than storing a neutral one, so moving the slider
+    back to the middle is the same state as never having touched it. Idempotent in
+    every direction: the underlying MERGE/SET means rating twice replaces rather
+    than accumulates, and a double tap cannot produce two relationships.
+
+    Returns the updated pulse — which carries your rating and your prediction, and
+    no tally of anyone else's.
     """
     _require_db(settings)
     await repo.upsert_user(settings, principal.subject, principal.username, principal.email)
 
-    if not await repo.set_resonance(settings, principal.subject, pulse_id, on):
-        # Either the pulse is gone, or resonance was already in the requested
-        # state. Re-read to tell the two apart.
-        pulse = await repo.get_pulse(settings, pulse_id, principal.subject)
-        if pulse is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Pulse not found"
-            )
-        return pulse
+    # The write reports whether it changed anything, which is NOT the same as
+    # whether it succeeded: clearing a rating that was never set changes nothing and
+    # is still the right outcome. So the pulse is re-read either way, and only a
+    # missing pulse is an error.
+    await repo.set_resonance(settings, principal.subject, pulse_id, value)
 
     pulse = await repo.get_pulse(settings, pulse_id, principal.subject)
     if pulse is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pulse not found")
-    return pulse
+
+    # Re-read the model rather than the one from before the write: this rating is
+    # part of the reader's history now, and the gauge it produces should reflect it.
+    model = await repo.load_reader_model(settings, principal.subject)
+    return repo.apply_predictions([pulse], model)[0]
+
+
+@router.post("/impressions", status_code=status.HTTP_204_NO_CONTENT)
+async def record_impressions(
+    payload: ImpressionBatch,
+    principal: Principal = Depends(current_user),
+    settings: Settings = Depends(get_settings),
+):
+    """Note that the caller has seen these pulses.
+
+    The denominator for the resonance model: without it there is no way to tell a
+    post that landed badly from one that was barely shown, and both look identical
+    as "nobody rated it".
+
+    204 and no body, because there is nothing to report back. Nothing read from
+    this is ever shown to any user — not to the author of the post, and not as a
+    per-viewer record to anyone. It exists so the model can weigh a rating against
+    how many people had the chance to give one.
+    """
+    _require_db(settings)
+    await repo.upsert_user(settings, principal.subject, principal.username, principal.email)
+    await repo.record_impressions(settings, principal.subject, payload.pulse_ids)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/{pulse_id}/report", status_code=status.HTTP_202_ACCEPTED)

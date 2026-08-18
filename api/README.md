@@ -44,23 +44,45 @@ pytest api/tests/test_integration_neo4j.py -v      # 33 tests, 17 of them feed
 
 ```
 (:User)-[:POSTED]->(:Pulse)
-(:User)-[:RESONATED_WITH]->(:Pulse)
+(:User)-[:RESONATED_WITH {value, at}]->(:Pulse)
+(:User)-[:SAW {at}]->(:Pulse)
 (:User)-[:REPORTED {reason, at}]->(:Pulse)
 (:User)-[:BLOCKED]->(:User)
 ```
 
-Two values are derived rather than stored, deliberately:
+### Resonance is a private rating, not a public count
 
-- **`resonators`** is a count of `RESONATED_WITH` relationships. A counter
-  property beside them could drift, and a like count that disagrees with who
-  liked it is worse than a slightly slower query.
-- **`resonance`** (0..1) is computed from that count with a saturating curve.
-  There is no meaningful denominator on a feed, and 10 resonators should read as
-  clearly stronger than 1 without needing 1000 to fill the ring.
+`RESONATED_WITH` carries a signed **`value` from -2 to +2**: dissonant through
+neutral to resonant. A rating of `0` deletes the relationship rather than storing a
+zero, so "moved the slider back to the middle" and "never touched it" are one state.
 
-`MERGE` is used for resonance, reports and blocks, so all three are idempotent: a
-double tap cannot create two relationships, and one person cannot inflate a
-report count by pressing repeatedly.
+**No aggregate of any kind is exposed.** There is no resonator count and no score on
+the wire — not for readers, and not for the author of a post either. The only
+resonance figure on a `Pulse` is `my_rating`, the caller's own. Ratings are collected
+so the feed can learn what resonates with each *reader*; a visible tally turns that
+into a scoreboard and turns writing into competing. This is enforced by tests that
+assert the absence of those fields, because a field that exists eventually gets
+rendered.
+
+Each pulse also carries `predicted` (-1..+1) and `prediction_confidence` (0..1),
+computed in `api/resonance.py` from the caller's **own** rating history and nobody
+else's. Two readers must get different answers about the same post; if they ever get
+the same one it has become a popularity measure with a personal label on it. It is
+`None` — not neutral — whenever there is too little history to say anything honest.
+
+`SAW` is the model's denominator: without it, a post that landed badly and a post
+nobody was shown both look like "no ratings". It records only *that* a reader saw a
+post, once. Not how long, not how often, and it is never read back to any user. The
+client counts a post as seen when its card has been half on screen, not when the API
+returned it.
+
+The feed stays strictly reverse-chronological. Predictions are shown to the reader;
+they do not order the feed.
+
+`MERGE` is used for ratings, impressions, reports and blocks, so all four are
+idempotent: a double tap cannot create two relationships, rating twice replaces
+rather than accumulates, and one person cannot inflate a report count by pressing
+repeatedly.
 
 The block filter is **inside** the feed query rather than applied afterwards. In
 Python it would make `limit` mean "up to N, minus however many were blocked", so
@@ -214,7 +236,7 @@ prefixed `itest-`; **never point them at production.**
 (:User    {id, subject, username, email, created_at})
 (:MindMap {id, title, description, visibility, node_count,
            root_id, created_at, updated_at})
-(:MapNode {map_id, id, depth, label, type, tags, description,
+(:MapNode {map_id, id, depth, label, type, tags, description, content,
            metadata_json, energy_json, resonance_json, visual_json,
            created, modified, last_visited})
 (:ShareLink {token, permission, created_at, expires_at, revoked})
@@ -235,7 +257,9 @@ wire.
 **Nested objects are JSON strings.** Neo4j properties must be primitives or
 arrays of primitives. `energy`, `resonance`, `visual` and any free-form extra
 metadata are stored as JSON; fields worth querying or indexing (`label`, `type`,
-`tags`, `depth`) are real properties.
+`tags`, `depth`) are real properties. So is `content` — a node's markdown page, up
+to 64 KB — which is the one field a reader may want without the rest of the node and
+the one large enough to be worth projecting away.
 
 Node ids are unique **per map**, not globally — the constraint is composite, so
 two maps can each have a node called `root`.

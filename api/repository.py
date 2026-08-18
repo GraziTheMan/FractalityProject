@@ -56,6 +56,7 @@ from .models import (
     ShareLink,
     Visibility,
 )
+from .resonance import ReaderModel
 from .settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -602,17 +603,20 @@ async def count_maps_for_owner(settings: Settings, subject: str) -> int:
 # Data model:
 #
 #   (:User)-[:POSTED]->(:Pulse)
-#   (:User)-[:RESONATED_WITH]->(:Pulse)
+#   (:User)-[:RESONATED_WITH {value, at}]->(:Pulse)
+#   (:User)-[:SAW {at}]->(:Pulse)
 #   (:User)-[:REPORTED {reason, at}]->(:Pulse)
 #   (:User)-[:BLOCKED]->(:User)
 #
-# Two things are deliberately derived rather than stored:
+# RESONATED_WITH carries a signed value, -2..+2. A rating of 0 deletes the
+# relationship rather than storing a zero, so "has no opinion" and "never saw it"
+# are one state in the data and the model does not have to tell them apart.
 #
-#   * `resonators` is the count of RESONATED_WITH relationships. Keeping a
-#     counter property beside them would let the two drift, and a like count that
-#     disagrees with who liked it is worse than a slower query.
-#   * `resonance` (0..1) is computed from that count. It is a display value, so
-#     storing it would mean recomputing every row on every scale change anyway.
+# Nothing here is aggregated for display. There is no resonator count and no score
+# on the wire, for viewers or for authors: the ratings exist so the feed can learn
+# what resonates with each reader, and a visible tally turns that into a
+# scoreboard. SAW exists only to give the model a denominator — it is never read
+# back to a user, and never per-viewer.
 #
 # Media is stored as a JSON string for the same reason node metadata is: Neo4j
 # properties must be primitives or arrays of primitives.
@@ -621,13 +625,11 @@ async def count_maps_for_owner(settings: Settings, subject: str) -> int:
 def _row_to_pulse(row: Dict[str, Any], viewer_subject: Optional[str] = None) -> Pulse:
     """Build a Pulse from a query row.
 
-    Resonance is a saturating curve rather than a ratio: there is no meaningful
-    denominator on a feed, and 10 resonators should read as clearly stronger than
-    1 without 1000 being needed to fill the ring.
+    Carries no aggregate of any kind. Earlier versions returned a resonator count
+    and a 0..1 score derived from it, which was a like count with a curve on it —
+    and any visible tally makes posting a competition. The only resonance figure
+    here is the caller's own rating.
     """
-    resonators = int(row.get("resonators") or 0)
-    resonance = 1.0 - (1.0 / (1.0 + resonators / 5.0)) if resonators else 0.0
-
     media_raw = row.get("media_json")
     media = None
     if media_raw:
@@ -657,9 +659,7 @@ def _row_to_pulse(row: Dict[str, Any], viewer_subject: Optional[str] = None) -> 
         visibility=Visibility(row.get("visibility") or "public"),
         timestamp=int(row.get("created_at") or 0),
         edited_at=int(row["edited_at"]) if row.get("edited_at") else None,
-        resonance=round(resonance, 4),
-        resonators=resonators,
-        resonated=bool(row.get("resonated")),
+        my_rating=int(row.get("my_rating") or 0),
         own=bool(viewer_subject) and row.get("author_subject") == viewer_subject,
     )
 
@@ -680,7 +680,7 @@ CREATE (u)-[:POSTED]->(p)
 RETURN p.id AS id, p.title AS title, p.preview AS preview, p.tags AS tags,
        p.media_json AS media_json, p.visibility AS visibility,
        p.created_at AS created_at, p.edited_at AS edited_at,
-       0 AS resonators, false AS resonated,
+       0 AS my_rating,
        u.id AS author_id, u.username AS author_name, u.subject AS author_subject,
        u.display_name AS author_display_name, u.avatar_url AS author_avatar
 """
@@ -719,14 +719,11 @@ WHERE p.visibility = 'public'
       MATCH (v:User {subject: $viewer})-[:BLOCKED]->(author)
   })
   AND ($tag IS NULL OR $tag IN p.tags)
-OPTIONAL MATCH (p)<-[r:RESONATED_WITH]-(:User)
-WITH p, author, count(r) AS resonators
 OPTIONAL MATCH (p)<-[mine:RESONATED_WITH]-(:User {subject: $viewer})
 RETURN p.id AS id, p.title AS title, p.preview AS preview, p.tags AS tags,
        p.media_json AS media_json, p.visibility AS visibility,
        p.created_at AS created_at, p.edited_at AS edited_at,
-       resonators,
-       mine IS NOT NULL AS resonated,
+       coalesce(mine.value, 0) AS my_rating,
        author.id AS author_id, author.username AS author_name,
        author.subject AS author_subject,
        author.display_name AS author_display_name, author.avatar_url AS author_avatar
@@ -755,14 +752,11 @@ async def list_feed(
 
 LIST_OWN_PULSES = """
 MATCH (author:User {subject: $subject})-[:POSTED]->(p:Pulse)
-OPTIONAL MATCH (p)<-[r:RESONATED_WITH]-(:User)
-WITH p, author, count(r) AS resonators
 OPTIONAL MATCH (p)<-[mine:RESONATED_WITH]-(:User {subject: $subject})
 RETURN p.id AS id, p.title AS title, p.preview AS preview, p.tags AS tags,
        p.media_json AS media_json, p.visibility AS visibility,
        p.created_at AS created_at, p.edited_at AS edited_at,
-       resonators,
-       mine IS NOT NULL AS resonated,
+       coalesce(mine.value, 0) AS my_rating,
        author.id AS author_id, author.username AS author_name,
        author.subject AS author_subject,
        author.display_name AS author_display_name, author.avatar_url AS author_avatar
@@ -783,14 +777,11 @@ async def list_own_pulses(
 
 GET_PULSE = """
 MATCH (author:User)-[:POSTED]->(p:Pulse {id: $pulse_id})
-OPTIONAL MATCH (p)<-[r:RESONATED_WITH]-(:User)
-WITH p, author, count(r) AS resonators
 OPTIONAL MATCH (p)<-[mine:RESONATED_WITH]-(:User {subject: $viewer})
 RETURN p.id AS id, p.title AS title, p.preview AS preview, p.tags AS tags,
        p.media_json AS media_json, p.visibility AS visibility,
        p.created_at AS created_at, p.edited_at AS edited_at,
-       resonators,
-       mine IS NOT NULL AS resonated,
+       coalesce(mine.value, 0) AS my_rating,
        author.id AS author_id, author.username AS author_name,
        author.subject AS author_subject,
        author.display_name AS author_display_name, author.avatar_url AS author_avatar
@@ -831,10 +822,15 @@ async def delete_pulse(settings: Settings, subject: str, pulse_id: str) -> bool:
 RESONATE = """
 MATCH (u:User {subject: $subject})
 MATCH (p:Pulse {id: $pulse_id})
-MERGE (u)-[:RESONATED_WITH]->(p)
+MERGE (u)-[r:RESONATED_WITH]->(p)
+SET r.value = $value, r.at = $now
 RETURN count(*) AS ok
 """
 
+# Rating 0 means "no opinion", which is the absence of a rating rather than a
+# rating of zero. Storing it would leave rows the model has to skip and would make
+# "moved the slider back to the middle" different from "never touched it" for no
+# reason anybody benefits from.
 UNRESONATE = """
 MATCH (:User {subject: $subject})-[r:RESONATED_WITH]->(:Pulse {id: $pulse_id})
 DELETE r
@@ -843,17 +839,124 @@ RETURN count(*) AS ok
 
 
 async def set_resonance(
-    settings: Settings, subject: str, pulse_id: str, on: bool
+    settings: Settings, subject: str, pulse_id: str, value: int
 ) -> bool:
-    """Add or remove the caller's resonance.
+    """Record the caller's rating of a pulse, -2..+2.
 
-    MERGE, not CREATE: resonating twice is the same as resonating once, and a
-    double tap on a phone must not produce two relationships.
+    MERGE with SET, not CREATE: rating a post twice replaces the rating rather
+    than accumulating, and a double tap on a phone must not produce two
+    relationships. Changing your mind is the normal case here, not an edge one.
     """
-    rows = await db.run_write(
-        settings, RESONATE if on else UNRESONATE, subject=subject, pulse_id=pulse_id
-    )
+    if value == 0:
+        rows = await db.run_write(
+            settings, UNRESONATE, subject=subject, pulse_id=pulse_id
+        )
+    else:
+        rows = await db.run_write(
+            settings,
+            RESONATE,
+            subject=subject,
+            pulse_id=pulse_id,
+            value=int(value),
+            now=now_ms(),
+        )
     return bool(rows and rows[0].get("ok"))
+
+
+# --- impressions -----------------------------------------------------------
+#
+# The denominator. Without it there is no way to tell a post that landed badly
+# from one that was barely shown, and both look identical as "no ratings".
+#
+# MERGE, so one viewer counts once however many times a post scrolls past. That is
+# also what keeps this from being a reading log: the graph records that you saw a
+# post, not how often or for how long, and nothing reads it back to any user.
+
+RECORD_IMPRESSIONS = """
+MATCH (u:User {subject: $subject})
+UNWIND $pulse_ids AS pid
+MATCH (p:Pulse {id: pid})
+WHERE NOT (u)-[:POSTED]->(p)
+MERGE (u)-[s:SAW]->(p)
+ON CREATE SET s.at = $now
+RETURN count(s) AS seen
+"""
+
+
+async def record_impressions(
+    settings: Settings, subject: str, pulse_ids: List[str]
+) -> int:
+    """Note that this viewer has seen these pulses.
+
+    Skips the viewer's own posts: seeing your own writing says nothing about what
+    resonates with you, and counting it would let a prolific poster's own feed
+    dominate their model.
+    """
+    if not pulse_ids:
+        return 0
+    rows = await db.run_write(
+        settings,
+        RECORD_IMPRESSIONS,
+        subject=subject,
+        pulse_ids=list(pulse_ids)[:200],
+        now=now_ms(),
+    )
+    return int(rows[0].get("seen") or 0) if rows else 0
+
+
+# --- what resonates with one reader ----------------------------------------
+#
+# Only ever the caller's own ratings. No other user's ratings enter this query,
+# which is what makes the prediction a statement about the reader rather than a
+# measure of the post's popularity.
+
+READER_RATINGS = """
+MATCH (:User {subject: $subject})-[r:RESONATED_WITH]->(p:Pulse)
+OPTIONAL MATCH (a:User)-[:POSTED]->(p)
+WITH r, p, a
+ORDER BY coalesce(r.at, 0) DESC
+LIMIT $limit
+RETURN r.value AS value, p.tags AS tags, a.id AS author_id
+"""
+
+
+async def load_reader_model(
+    settings: Settings, subject: Optional[str], limit: int = 2000
+) -> ReaderModel:
+    """Build the caller's affinity model from their rating history.
+
+    Bounded to the most recent `limit` ratings. That is a cap on the work, but it
+    is also the right model: what resonated with someone three years and ten
+    thousand posts ago is weaker evidence about them now than what resonated last
+    week.
+    """
+    if not subject:
+        # An anonymous reader has no history, so there is nothing to predict from
+        # and nothing that could be predicted about them.
+        return ReaderModel.empty()
+
+    rows = await db.run_read(settings, READER_RATINGS, subject=subject, limit=limit)
+    return ReaderModel.from_ratings(
+        (
+            int(row.get("value") or 0),
+            list(row.get("tags") or []),
+            row.get("author_id"),
+        )
+        for row in rows
+    )
+
+
+def apply_predictions(pulses: List[Pulse], model: ReaderModel) -> List[Pulse]:
+    """Fill in each pulse's predicted resonance for this reader, in place.
+
+    Mutates rather than rebuilding: a Pulse is a plain model and the caller
+    already owns this list.
+    """
+    for pulse in pulses:
+        prediction = model.predict(pulse.tags, pulse.author.id)
+        pulse.predicted = prediction.value
+        pulse.prediction_confidence = prediction.confidence
+    return pulses
 
 
 # --- moderation ------------------------------------------------------------

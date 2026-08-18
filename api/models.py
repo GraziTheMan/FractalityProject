@@ -276,6 +276,13 @@ MEDIA_KINDS = {"link"}
 
 #: Cap on a pulse body. Long enough for a real thought, short enough that the
 #: feed stays scannable and one post cannot dominate a page of results.
+# The resonance scale. Five notches, 0 in the middle, so "this does not resonate
+# with me" is expressible without a separate button and without being a verdict on
+# the author. Symmetric on purpose: an asymmetric scale (say -1..+3) quietly tells
+# people which answer is expected.
+MIN_RATING = -2
+MAX_RATING = 2
+
 MAX_PULSE_TEXT = 2_000
 MAX_PULSE_TITLE = 200
 MAX_PULSE_TAGS = 8
@@ -390,14 +397,25 @@ class Pulse(BaseModel):
     #: have responded to them is worse than one without editing at all.
     edited_at: Optional[int] = None
 
-    #: 0..1, drawn as a ring by the feed UI. Derived from resonators, not stored
-    #: independently, so the two can never disagree.
-    resonance: float = 0.0
-    resonators: int = 0
+    #: The caller's own rating, -2..+2, 0 meaning they have not moved the slider.
+    #:
+    #: This is the ONLY resonance figure on the wire. There is deliberately no
+    #: count of who rated a post and no aggregate of how they rated it — not for
+    #: viewers and not for the author either. A visible tally is the thing people
+    #: get addicted to, and it turns writing into competing. The ratings are
+    #: collected to learn what resonates with each reader, which is a private
+    #: question about the reader, not a public score for the post.
+    my_rating: int = Field(default=0, ge=MIN_RATING, le=MAX_RATING)
 
-    #: Whether the calling user has resonated with this pulse. Absent for
-    #: anonymous callers.
-    resonated: bool = False
+    #: What this reader is predicted to make of the post, -1..+1, or None when
+    #: there is not enough of their history to say anything honest. Computed from
+    #: the caller's OWN past ratings, so it describes them and not the post's
+    #: popularity.
+    predicted: Optional[float] = None
+
+    #: 0..1, how much history backs `predicted`. The UI uses it to decide how
+    #: firmly to draw the gauge; at 0 it draws nothing at all.
+    prediction_confidence: float = 0.0
 
     #: True when the caller is the author, which is what the UI uses to decide
     #: whether to offer a delete.
@@ -423,6 +441,30 @@ class PulseUpdate(BaseModel):
     )
     _clean_tags = field_validator("tags")(PulseCreate._clean_tags.__func__)
     _no_unlisted = field_validator("visibility")(PulseCreate._no_unlisted.__func__)
+
+
+class ImpressionBatch(BaseModel):
+    """Pulses the caller has seen, sent in one batch.
+
+    Batched rather than one request per post because a feed page produces a
+    screenful of impressions at once, and thirty requests to say "I scrolled" is
+    absurd. Capped so a client cannot use it to write unbounded amounts.
+    """
+
+    pulse_ids: List[str] = Field(default_factory=list, max_length=200)
+
+    @field_validator("pulse_ids")
+    @classmethod
+    def _clean(cls, v: List[str]) -> List[str]:
+        # Deduplicated here as well as by the MERGE in Cypher. The MERGE is what
+        # makes it correct; this is what keeps a client's repeated ids from using up
+        # the cap and silently dropping real ones.
+        seen: List[str] = []
+        for pulse_id in v:
+            trimmed = (pulse_id or "").strip()
+            if trimmed and trimmed not in seen:
+                seen.append(trimmed)
+        return seen
 
 
 class PulseReport(BaseModel):

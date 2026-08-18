@@ -473,7 +473,7 @@ async def test_create_and_read_a_pulse(settings, user):
     assert created is not None
     assert created.title == "itest pulse"
     assert created.author.name == "itest"
-    assert created.resonators == 0
+    assert created.my_rating == 0
     assert created.own is True
 
     fetched = await repo.get_pulse(settings, created.id, SUBJECT)
@@ -533,33 +533,237 @@ async def test_the_tag_filter_matches_and_excludes(settings, user):
     assert tagged.id in ids_hash
 
 
-async def test_resonance_counts_once_per_user_and_can_be_taken_back(settings, user, other_user):
+async def test_a_rating_is_stored_once_per_user_and_can_be_changed(settings, user, other_user):
     pulse = await repo.create_pulse(settings, SUBJECT, pulse_create())
 
-    # MERGE, so pressing twice is still one resonance.
-    assert await repo.set_resonance(settings, OTHER_SUBJECT, pulse.id, True)
-    await repo.set_resonance(settings, OTHER_SUBJECT, pulse.id, True)
+    # MERGE with SET, so rating twice replaces rather than accumulating.
+    assert await repo.set_resonance(settings, OTHER_SUBJECT, pulse.id, 2)
+    await repo.set_resonance(settings, OTHER_SUBJECT, pulse.id, -1)
+
+    rows = await db.run_read(
+        settings,
+        "MATCH (:User {subject: $s})-[r:RESONATED_WITH]->(:Pulse {id: $p}) "
+        "RETURN count(r) AS n, collect(r.value) AS values",
+        s=OTHER_SUBJECT,
+        p=pulse.id,
+    )
+    assert rows[0]["n"] == 1, "a second rating must not create a second relationship"
+    assert rows[0]["values"] == [-1], "the latest rating wins"
 
     seen = await repo.get_pulse(settings, pulse.id, OTHER_SUBJECT)
-    assert seen.resonators == 1, "a double tap must not create two relationships"
-    assert seen.resonated is True
-    assert seen.resonance > 0
-
-    await repo.set_resonance(settings, OTHER_SUBJECT, pulse.id, False)
-    after = await repo.get_pulse(settings, pulse.id, OTHER_SUBJECT)
-    assert after.resonators == 0
-    assert after.resonated is False
-    assert after.resonance == 0
+    assert seen.my_rating == -1
 
 
-async def test_resonance_is_per_viewer(settings, user, other_user):
+async def test_the_whole_scale_round_trips_through_the_database(settings, user, other_user):
+    """Signed values have to survive the driver, negatives included."""
     pulse = await repo.create_pulse(settings, SUBJECT, pulse_create())
-    await repo.set_resonance(settings, OTHER_SUBJECT, pulse.id, True)
 
-    # The author has not resonated with it; the count is still 1.
+    for value in (-2, -1, 1, 2):
+        await repo.set_resonance(settings, OTHER_SUBJECT, pulse.id, value)
+        seen = await repo.get_pulse(settings, pulse.id, OTHER_SUBJECT)
+        assert seen.my_rating == value
+
+
+async def test_rating_zero_deletes_the_relationship(settings, user, other_user):
+    """
+    0 is the absence of an opinion, not an opinion of zero. Storing it would leave
+    rows the model has to skip, and would make "moved the slider back" different
+    from "never touched it" for no benefit to anybody.
+    """
+    pulse = await repo.create_pulse(settings, SUBJECT, pulse_create())
+    await repo.set_resonance(settings, OTHER_SUBJECT, pulse.id, 2)
+    await repo.set_resonance(settings, OTHER_SUBJECT, pulse.id, 0)
+
+    rows = await db.run_read(
+        settings,
+        "MATCH (:User {subject: $s})-[r:RESONATED_WITH]->(:Pulse {id: $p}) RETURN count(r) AS n",
+        s=OTHER_SUBJECT,
+        p=pulse.id,
+    )
+    assert rows[0]["n"] == 0
+    assert (await repo.get_pulse(settings, pulse.id, OTHER_SUBJECT)).my_rating == 0
+
+
+async def test_clearing_a_rating_that_was_never_set_is_harmless(settings, user, other_user):
+    pulse = await repo.create_pulse(settings, SUBJECT, pulse_create())
+    # Reports no change, which is not the same as failing.
+    assert await repo.set_resonance(settings, OTHER_SUBJECT, pulse.id, 0) is False
+    assert (await repo.get_pulse(settings, pulse.id, OTHER_SUBJECT)).my_rating == 0
+
+
+async def test_a_rating_is_private_to_the_reader_who_gave_it(settings, user, other_user):
+    """
+    The author must not be able to see what anyone thought. This is the property the
+    whole design rests on, so it is asserted against the database rather than only
+    against the wire format.
+    """
+    pulse = await repo.create_pulse(settings, SUBJECT, pulse_create())
+    await repo.set_resonance(settings, OTHER_SUBJECT, pulse.id, -2)
+
     as_author = await repo.get_pulse(settings, pulse.id, SUBJECT)
-    assert as_author.resonators == 1
-    assert as_author.resonated is False
+    assert as_author.my_rating == 0, "the author sees their own rating, which is none"
+
+    # And no aggregate of anyone else's reaches the author by any field.
+    body = as_author.model_dump()
+    for forbidden in ("resonators", "resonance", "resonated", "ratings", "seen"):
+        assert forbidden not in body
+
+    as_rater = await repo.get_pulse(settings, pulse.id, OTHER_SUBJECT)
+    assert as_rater.my_rating == -2
+
+
+async def test_an_anonymous_read_carries_no_rating(settings, user, other_user):
+    pulse = await repo.create_pulse(settings, SUBJECT, pulse_create())
+    await repo.set_resonance(settings, OTHER_SUBJECT, pulse.id, 2)
+
+    assert (await repo.get_pulse(settings, pulse.id)).my_rating == 0
+
+
+# --- impressions -----------------------------------------------------------
+
+
+async def test_an_impression_is_recorded_once_per_viewer(settings, user, other_user):
+    pulse = await repo.create_pulse(settings, SUBJECT, pulse_create())
+
+    await repo.record_impressions(settings, OTHER_SUBJECT, [pulse.id])
+    await repo.record_impressions(settings, OTHER_SUBJECT, [pulse.id, pulse.id])
+
+    rows = await db.run_read(
+        settings,
+        "MATCH (:User {subject: $s})-[r:SAW]->(:Pulse {id: $p}) RETURN count(r) AS n",
+        s=OTHER_SUBJECT,
+        p=pulse.id,
+    )
+    assert rows[0]["n"] == 1, "a post scrolling past twice is one impression"
+
+
+async def test_your_own_posts_are_not_counted_as_impressions(settings, user):
+    """
+    Seeing your own writing says nothing about what resonates with you, and counting
+    it would let a prolific poster's own feed dominate their model.
+    """
+    pulse = await repo.create_pulse(settings, SUBJECT, pulse_create())
+    await repo.record_impressions(settings, SUBJECT, [pulse.id])
+
+    rows = await db.run_read(
+        settings,
+        "MATCH (:User {subject: $s})-[r:SAW]->(:Pulse {id: $p}) RETURN count(r) AS n",
+        s=SUBJECT,
+        p=pulse.id,
+    )
+    assert rows[0]["n"] == 0
+
+
+async def test_impressions_survive_a_missing_pulse_in_the_batch(settings, user, other_user):
+    """A client's batch can name a post that was deleted while they were reading."""
+    pulse = await repo.create_pulse(settings, SUBJECT, pulse_create())
+    seen = await repo.record_impressions(
+        settings, OTHER_SUBJECT, [pulse.id, "p-does-not-exist"]
+    )
+    assert seen == 1
+
+
+async def test_deleting_a_pulse_removes_its_impressions(settings, user, other_user):
+    pulse = await repo.create_pulse(settings, SUBJECT, pulse_create())
+    await repo.record_impressions(settings, OTHER_SUBJECT, [pulse.id])
+    await repo.delete_pulse(settings, SUBJECT, pulse.id)
+
+    rows = await db.run_read(
+        settings,
+        "MATCH (:User {subject: $s})-[r:SAW]->() RETURN count(r) AS n",
+        s=OTHER_SUBJECT,
+    )
+    assert rows[0]["n"] == 0
+
+
+# --- the reader model ------------------------------------------------------
+
+
+async def test_the_reader_model_is_built_from_real_ratings(settings, user, other_user):
+    """
+    The aggregating query, against a real database. Ten ratings on one tag is past
+    the prediction threshold, so this also proves the threshold is reachable.
+    """
+    from api.resonance import MIN_RATINGS_FOR_PREDICTION
+
+    ids = []
+    for i in range(MIN_RATINGS_FOR_PREDICTION + 2):
+        pulse = await repo.create_pulse(
+            settings, SUBJECT, pulse_create(title=f"Post {i}", tags=["fractal"])
+        )
+        ids.append(pulse.id)
+        await repo.set_resonance(settings, OTHER_SUBJECT, pulse.id, 2)
+
+    model = await repo.load_reader_model(settings, OTHER_SUBJECT)
+    assert model.total_ratings == len(ids)
+    assert "fractal" in model.tags
+    assert model.tags["fractal"].count == len(ids)
+
+    prediction = model.predict(["fractal"], None)
+    assert prediction.value is not None and prediction.value > 0
+
+
+async def test_the_reader_model_only_sees_its_own_readers_ratings(settings, user, other_user):
+    """
+    The property the design rests on. If another reader's ratings could reach this
+    model, the prediction would be a popularity measure wearing a personal label.
+    """
+    from api.resonance import MIN_RATINGS_FOR_PREDICTION
+
+    for i in range(MIN_RATINGS_FOR_PREDICTION + 2):
+        pulse = await repo.create_pulse(
+            settings, SUBJECT, pulse_create(title=f"Loved {i}", tags=["fractal"])
+        )
+        # OTHER loves it; the author rates nothing.
+        await repo.set_resonance(settings, OTHER_SUBJECT, pulse.id, 2)
+
+    author_model = await repo.load_reader_model(settings, SUBJECT)
+    assert author_model.total_ratings == 0
+    assert author_model.predict(["fractal"], None).value is None
+
+    other_model = await repo.load_reader_model(settings, OTHER_SUBJECT)
+    assert other_model.predict(["fractal"], None).value > 0
+
+
+async def test_a_cleared_rating_leaves_the_model(settings, user, other_user):
+    from api.resonance import MIN_RATINGS_FOR_PREDICTION
+
+    ids = []
+    for i in range(MIN_RATINGS_FOR_PREDICTION):
+        pulse = await repo.create_pulse(
+            settings, SUBJECT, pulse_create(title=f"Post {i}", tags=["fractal"])
+        )
+        ids.append(pulse.id)
+        await repo.set_resonance(settings, OTHER_SUBJECT, pulse.id, 2)
+
+    await repo.set_resonance(settings, OTHER_SUBJECT, ids[0], 0)
+
+    model = await repo.load_reader_model(settings, OTHER_SUBJECT)
+    assert model.total_ratings == len(ids) - 1
+    assert model.tags["fractal"].count == len(ids) - 1
+
+
+async def test_the_feed_carries_a_prediction_for_the_reader(settings, user, other_user):
+    """End to end: rate enough posts, then read the feed and find a gauge value."""
+    from api.resonance import MIN_RATINGS_FOR_PREDICTION
+
+    for i in range(MIN_RATINGS_FOR_PREDICTION + 2):
+        pulse = await repo.create_pulse(
+            settings, SUBJECT, pulse_create(title=f"Post {i}", tags=["fractal"])
+        )
+        await repo.set_resonance(settings, OTHER_SUBJECT, pulse.id, 2)
+
+    fresh = await repo.create_pulse(
+        settings, SUBJECT, pulse_create(title="Brand new", tags=["fractal"])
+    )
+
+    feed = await repo.list_feed(settings, viewer_subject=OTHER_SUBJECT, limit=50)
+    repo.apply_predictions(feed, await repo.load_reader_model(settings, OTHER_SUBJECT))
+
+    predicted = next(p for p in feed if p.id == fresh.id)
+    assert predicted.predicted is not None and predicted.predicted > 0
+    assert predicted.prediction_confidence > 0
+    assert predicted.my_rating == 0, "an unrated post carries no rating"
 
 
 async def test_only_the_author_can_delete_a_pulse(settings, user, other_user):
@@ -575,7 +779,7 @@ async def test_only_the_author_can_delete_a_pulse(settings, user, other_user):
 async def test_deleting_a_pulse_removes_its_resonance(settings, user, other_user):
     """DETACH DELETE, so no relationship outlives the node it pointed at."""
     pulse = await repo.create_pulse(settings, SUBJECT, pulse_create())
-    await repo.set_resonance(settings, OTHER_SUBJECT, pulse.id, True)
+    await repo.set_resonance(settings, OTHER_SUBJECT, pulse.id, 2)
     await repo.delete_pulse(settings, SUBJECT, pulse.id)
 
     rows = await db.run_read(

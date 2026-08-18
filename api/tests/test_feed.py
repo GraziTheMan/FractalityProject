@@ -24,6 +24,7 @@ from api import repository as repo
 from api.auth import Principal, current_user, optional_user
 from api.main import app
 from api.models import Pulse, PulseAuthor, PulseMedia, Visibility
+from api.resonance import ReaderModel
 from api.settings import Settings, get_settings
 
 AUTHOR = "user_author"
@@ -45,9 +46,7 @@ def make_pulse(**overrides):
         media=None,
         visibility=Visibility.PUBLIC,
         timestamp=now_ms(),
-        resonance=0.0,
-        resonators=0,
-        resonated=False,
+        my_rating=0,
         own=False,
     )
     base.update(overrides)
@@ -75,6 +74,10 @@ def client(monkeypatch, settings):
         "created": [],
         "deleted": [],
         "resonance": [],
+        "impressions": [],
+        "models_loaded": [],
+        # (rating, tags, author_id) triples standing in for the caller's history.
+        "reader_ratings": [],
         "reports": {},
         "blocks": [],
         "feed": [make_pulse()],
@@ -109,9 +112,22 @@ def client(monkeypatch, settings):
         state["deleted"].append(pulse_id)
         return True
 
-    async def fake_set_resonance(_s, subject, pulse_id, on):
-        state["resonance"].append((subject, pulse_id, on))
+    async def fake_set_resonance(_s, subject, pulse_id, value):
+        state["resonance"].append((subject, pulse_id, value))
         return True
+
+    async def fake_load_reader_model(_s, subject, limit=2000):
+        state["models_loaded"].append(subject)
+        # Mirrors the real function's early return. Without this the fake would be
+        # more capable than the thing it stands for, and the anonymous case would
+        # pass here while failing in production.
+        if not subject:
+            return ReaderModel.empty()
+        return ReaderModel.from_ratings(state["reader_ratings"])
+
+    async def fake_record_impressions(_s, subject, pulse_ids):
+        state["impressions"].append((subject, list(pulse_ids)))
+        return len(pulse_ids)
 
     async def fake_report(_s, subject, pulse_id, reason):
         # MERGE semantics: one report per reporter, however many times pressed.
@@ -138,6 +154,8 @@ def client(monkeypatch, settings):
         ("create_pulse", fake_create_pulse),
         ("delete_pulse", fake_delete_pulse),
         ("set_resonance", fake_set_resonance),
+        ("load_reader_model", fake_load_reader_model),
+        ("record_impressions", fake_record_impressions),
         ("report_pulse", fake_report),
         ("set_block", fake_set_block),
         ("list_blocked", fake_list_blocked),
@@ -341,17 +359,167 @@ def test_resonance_requires_sign_in(client):
     assert client.state["resonance"] == []
 
 
-def test_resonance_is_recorded_against_the_caller(client):
+def test_a_rating_is_recorded_against_the_caller(client):
     client.state["principal"] = READER
-    response = client.put(f"/pulses/{PULSE_ID}/resonance")
+    response = client.put(f"/pulses/{PULSE_ID}/resonance?value=2")
     assert response.status_code == 200
-    assert client.state["resonance"] == [(READER, PULSE_ID, True)]
+    assert client.state["resonance"] == [(READER, PULSE_ID, 2)]
 
 
-def test_resonance_can_be_taken_back(client):
+def test_the_whole_scale_is_accepted(client):
     client.state["principal"] = READER
-    client.put(f"/pulses/{PULSE_ID}/resonance?on=false")
-    assert client.state["resonance"] == [(READER, PULSE_ID, False)]
+    for value in (-2, -1, 0, 1, 2):
+        assert client.put(f"/pulses/{PULSE_ID}/resonance?value={value}").status_code == 200
+    assert [v for _, _, v in client.state["resonance"]] == [-2, -1, 0, 1, 2]
+
+
+def test_a_rating_off_the_scale_is_refused(client):
+    """The scale is the vocabulary. A client that can send 97 has a different one."""
+    client.state["principal"] = READER
+    for value in (-3, 3, 100, -100):
+        assert client.put(f"/pulses/{PULSE_ID}/resonance?value={value}").status_code == 422
+    assert client.state["resonance"] == []
+
+
+def test_a_rating_can_be_taken_back_with_zero(client):
+    client.state["principal"] = READER
+    client.put(f"/pulses/{PULSE_ID}/resonance?value=0")
+    assert client.state["resonance"] == [(READER, PULSE_ID, 0)]
+
+
+def test_no_tally_of_anyone_else_is_ever_returned(client):
+    """
+    The core of the design, asserted as an absence.
+
+    A count of who rated a post, or any aggregate of how they rated it, turns
+    writing into competing. This checks the wire format itself rather than the UI,
+    because a field that exists will eventually get rendered.
+    """
+    client.state["principal"] = READER
+    for body in (
+        client.get("/pulses").json(),
+        [client.get(f"/pulses/{PULSE_ID}").json()],
+        [client.put(f"/pulses/{PULSE_ID}/resonance?value=1").json()],
+    ):
+        for pulse in body:
+            for forbidden in ("resonators", "resonance", "resonated", "score",
+                              "likes", "ratings", "rating_count", "seen"):
+                assert forbidden not in pulse, f"{forbidden} is on the wire"
+            assert "my_rating" in pulse
+
+
+# --- what the reader is predicted to make of a post ------------------------
+
+def test_no_prediction_without_enough_history(client):
+    """
+    Below the threshold the arithmetic still produces a number, and that number is
+    noise. A confident-looking gauge invites the reader to believe it.
+    """
+    client.state["principal"] = READER
+    client.state["reader_ratings"] = [(2, ["fractal"], "u-author")]
+
+    pulse = client.get("/pulses").json()[0]
+    assert pulse["predicted"] is None
+    assert pulse["prediction_confidence"] == 0
+
+
+def test_a_prediction_appears_once_there_is_history(client):
+    client.state["principal"] = READER
+    client.state["reader_ratings"] = [(2, ["fractal"], "u-author")] * 10
+
+    pulse = client.get("/pulses").json()[0]
+    assert pulse["predicted"] is not None
+    assert pulse["predicted"] > 0
+    assert pulse["prediction_confidence"] > 0
+
+
+def test_a_history_of_dissonance_predicts_dissonance(client):
+    client.state["principal"] = READER
+    client.state["reader_ratings"] = [(-2, ["fractal"], "u-author")] * 10
+
+    assert client.get("/pulses").json()[0]["predicted"] < 0
+
+
+def test_an_anonymous_reader_gets_no_prediction(client):
+    """Nothing to predict from, and nothing that could be predicted about them."""
+    client.state["principal"] = None
+    client.state["reader_ratings"] = [(2, ["fractal"], "u-author")] * 10
+
+    pulse = client.get("/pulses").json()[0]
+    assert pulse["predicted"] is None
+
+
+def test_rating_a_pulse_returns_a_freshly_computed_prediction(client):
+    """
+    The new rating is part of the reader's history now, so the gauge the response
+    carries must reflect it rather than the model from before the write.
+    """
+    client.state["principal"] = READER
+    client.state["reader_ratings"] = [(2, ["fractal"], "u-author")] * 10
+
+    body = client.put(f"/pulses/{PULSE_ID}/resonance?value=2").json()
+    assert body["predicted"] is not None
+    # Loaded after the write, not before: the model call happens on the way out.
+    assert client.state["models_loaded"][-1] == READER
+
+
+async def _no_db(*_a, **_k):
+    raise AssertionError("the database must not be touched for an anonymous reader")
+
+
+def test_the_real_loader_returns_an_empty_model_for_anonymous(monkeypatch, settings):
+    """
+    Tests the real repository function, not the fake above.
+
+    The fake mirrors this early return, and a fake that agrees with itself proves
+    nothing — so the guard is also asserted against the code that ships. Patching
+    the database to explode proves the return happens BEFORE any query, which is
+    what makes it safe to call on every anonymous feed request.
+    """
+    import asyncio
+    from api import db
+
+    monkeypatch.setattr(db, "run_read", _no_db)
+    model = asyncio.run(repo.load_reader_model(settings, None))
+
+    assert model.total_ratings == 0
+    assert model.predict(["fractal"], "u-author").value is None
+
+
+# --- impressions -----------------------------------------------------------
+
+def test_impressions_require_sign_in(client):
+    response = client.post("/pulses/impressions", json={"pulse_ids": [PULSE_ID]})
+    assert response.status_code == 401
+    assert client.state["impressions"] == []
+
+
+def test_impressions_are_recorded_for_the_caller(client):
+    client.state["principal"] = READER
+    response = client.post("/pulses/impressions", json={"pulse_ids": [PULSE_ID, "p-2"]})
+    assert response.status_code == 204
+    assert client.state["impressions"] == [(READER, [PULSE_ID, "p-2"])]
+
+
+def test_repeated_ids_in_one_batch_are_collapsed(client):
+    client.state["principal"] = READER
+    client.post("/pulses/impressions", json={"pulse_ids": [PULSE_ID, PULSE_ID, "p-2"]})
+    assert client.state["impressions"] == [(READER, [PULSE_ID, "p-2"])]
+
+
+def test_an_oversized_impression_batch_is_refused(client):
+    client.state["principal"] = READER
+    response = client.post(
+        "/pulses/impressions", json={"pulse_ids": [f"p-{i}" for i in range(201)]}
+    )
+    assert response.status_code == 422
+    assert client.state["impressions"] == []
+
+
+def test_an_empty_impression_batch_is_accepted_and_writes_nothing(client):
+    client.state["principal"] = READER
+    assert client.post("/pulses/impressions", json={"pulse_ids": []}).status_code == 204
+    assert client.state["impressions"] == [(READER, [])]
 
 
 # --- moderation ------------------------------------------------------------

@@ -1086,6 +1086,8 @@ if (run_feed) {
         client.getToken = async () => 'tok';
 
         window.__posted = [];
+        window.__rated = [];
+        window.__impressions = [];
         window.__pwned = null;
 
         let pulses = [
@@ -1094,20 +1096,20 @@ if (run_feed) {
                 preview: 'Consciousness may be what recursion feels like from the inside.',
                 author: { id: 'u2', name: 'Ada' }, tags: ['consciousness'],
                 media: null, visibility: 'public', timestamp: Date.now() - 3600e3,
-                resonance: 0.5, resonators: 5, resonated: false, own: false,
+                my_rating: 0, predicted: 0.7, prediction_confidence: 0.9, own: false,
             },
             {
                 id: 'p2', title: 'A link post', preview: '',
                 author: { id: 'u3', name: 'Bo' }, tags: ['links'],
                 media: { kind: 'link', url: 'https://example.com/thing?a=1&b=2', title: 'example.com' },
                 visibility: 'public', timestamp: Date.now() - 7200e3,
-                resonance: 0, resonators: 0, resonated: false, own: false,
+                my_rating: 0, predicted: -0.8, prediction_confidence: 0.9, own: false,
             },
             {
                 id: 'p3', title: 'Mine', preview: 'my own post',
                 author: { id: 'u1', name: 'Nick' }, tags: [],
                 media: null, visibility: 'public', timestamp: Date.now() - 60e3,
-                resonance: 0, resonators: 0, resonated: false, own: true,
+                my_rating: 0, predicted: null, prediction_confidence: 0, own: true,
             },
             {
                 // Hostile on every field that reaches the DOM.
@@ -1116,7 +1118,7 @@ if (run_feed) {
                 author: { id: 'u4', name: '<b>Evil</b>' }, tags: ['x'],
                 media: { kind: 'link', url: 'javascript:window.__pwned=3', title: 'click me' },
                 visibility: 'public', timestamp: Date.now(),
-                resonance: 0, resonators: 0, resonated: false, own: false,
+                my_rating: 0, predicted: null, prediction_confidence: 0, own: false,
             },
         ];
 
@@ -1136,18 +1138,22 @@ if (run_feed) {
                     id: 'new', title: body.title, preview: body.preview,
                     author: { id: 'u1', name: 'Nick' }, tags: body.tags,
                     media: body.media ?? null, visibility: body.visibility,
-                    timestamp: Date.now(), resonance: 0, resonators: 0,
-                    resonated: false, own: true,
+                    timestamp: Date.now(), my_rating: 0,
+                    predicted: null, prediction_confidence: 0, own: true,
                 }, ...pulses];
                 return json(pulses[0], 201);
             }
             if (method === 'PUT' && u.includes('/resonance')) {
                 const id = u.split('/')[2];
-                const on = u.includes('on=true');
+                const value = Number(new URLSearchParams(u.split('?')[1] || '').get('value') || 0);
                 const target = pulses.find((x) => x.id === id);
-                target.resonated = on;
-                target.resonators += on ? 1 : -1;
+                window.__rated.push({ id, value });
+                target.my_rating = value;
                 return json(target);
+            }
+            if (method === 'POST' && u === '/pulses/impressions') {
+                window.__impressions.push(...JSON.parse(opts.body).pulse_ids);
+                return json(null, 204);
             }
             if (method === 'DELETE' && u.startsWith('/pulses/')) {
                 const id = u.split('/')[2];
@@ -1228,15 +1234,202 @@ if (run_feed) {
         pass('outbound links carry rel=noopener');
     }
 
-    // --- resonance comes from the server, not a local guess
-    const before = await page.evaluate(() =>
-        document.querySelector('.pulsefeed-resonate').textContent);
-    await page.click('.pulsefeed-resonate');
-    await page.waitForTimeout(400);
-    const after = await page.evaluate(() =>
-        document.querySelector('.pulsefeed-resonate').textContent);
-    if (before === after) fail(`resonating did not change the count (${before})`);
-    else pass(`resonating updates the count from the server (${before} -> ${after})`);
+    // --- the five-notch slider, and the absence of any tally
+    const slider = await page.evaluate(() => {
+        const card = document.querySelector('.pulsefeed-pulse');
+        const notches = [...card.querySelectorAll('.pulsefeed-notch')];
+        return {
+            count: notches.length,
+            marks: notches.map((n) => n.textContent),
+            values: notches.map((n) => n.dataset.value),
+            ends: [...card.querySelectorAll('.pulsefeed-resonance-end')].map((e) => e.textContent),
+            chosen: notches.filter((n) => n.classList.contains('chosen')).map((n) => n.dataset.value),
+            hasOldButton: Boolean(document.querySelector('.pulsefeed-resonate')),
+        };
+    });
+
+    if (slider.count !== 5) {
+        fail(`the resonance control has ${slider.count} notches, not 5`);
+    } else if (slider.values.join(',') !== '-2,-1,0,1,2') {
+        fail(`the notches are ${slider.values.join(',')}, not -2..+2`);
+    } else if (slider.marks.join(',') !== '2,1,0,1,2') {
+        fail(`the notch marks read ${slider.marks.join(',')}`);
+    } else {
+        pass('the slider has five notches from -2 to +2, marked 2 1 0 1 2');
+    }
+
+    if (slider.ends.join(' / ') !== 'Dissonant / Resonant') {
+        fail(`the ends read "${slider.ends.join(' / ')}"`);
+    } else {
+        pass('the ends are labelled Dissonant and Resonant');
+    }
+
+    if (slider.chosen.join(',') !== '0') {
+        fail(`the default selection is ${slider.chosen.join(',') || 'nothing'}, not neutral`);
+    } else {
+        pass('an unrated post starts at neutral');
+    }
+
+    if (slider.hasOldButton) fail('the old resonate button is still rendered');
+
+    // Every notch has to reach the server as the value it shows.
+    const sent = await page.evaluate(async () => {
+        window.__rated = [];
+        for (const value of ['-2', '-1', '1', '2']) {
+            document.querySelector(`.pulsefeed-pulse .pulsefeed-notch[data-value="${value}"]`).click();
+            await new Promise((r) => setTimeout(r, 250));
+        }
+        return window.__rated;
+    });
+
+    if (sent.map((r) => r.value).join(',') !== '-2,-1,1,2') {
+        fail(`the notches sent ${sent.map((r) => r.value).join(',')}`);
+    } else {
+        pass('each notch sends its own value, negatives included');
+    }
+
+    // Pressing the notch you are already on clears the rating: the only way back
+    // to "no opinion" once one has been given.
+    const backToNeutral = await page.evaluate(async () => {
+        const press = async (value) => {
+            document.querySelector(
+                `.pulsefeed-pulse .pulsefeed-notch[data-value="${value}"]`).click();
+            await new Promise((r) => setTimeout(r, 250));
+        };
+        // The starting state has to be established, not assumed: the sweep above
+        // left this card rated, and pressing 2 from "already 2" is the clearing
+        // case rather than the setting one. Getting that wrong made this check fail
+        // on correct behaviour.
+        await press(-2);
+        window.__rated = [];
+        await press(2);    // sets
+        await press(2);    // and again on the chosen notch clears
+        return window.__rated;
+    });
+
+    if (backToNeutral.map((r) => r.value).join(',') !== '2,0') {
+        fail(`re-pressing a chosen notch sent ${backToNeutral.map((r) => r.value).join(',')}, not 2 then 0`);
+    } else {
+        pass('pressing the chosen notch again clears the rating');
+    }
+
+    // The chosen notch has to survive the redraw the server response triggers.
+    const stuck = await page.evaluate(async () => {
+        document.querySelector('.pulsefeed-pulse .pulsefeed-notch[data-value="-1"]').click();
+        await new Promise((r) => setTimeout(r, 350));
+        const card = document.querySelector('.pulsefeed-pulse');
+        return [...card.querySelectorAll('.pulsefeed-notch.chosen')].map((n) => n.dataset.value);
+    });
+
+    if (stuck.join(',') !== '-1') {
+        fail(`after rating, the shown selection is ${stuck.join(',') || 'nothing'}`);
+    } else {
+        pass('the rating you gave is the one still shown after the redraw');
+    }
+
+    // --- the gauge is a prediction for this reader, not a score for the post
+    const gauges = await page.evaluate(() =>
+        [...document.querySelectorAll('.pulsefeed-pulse')].map((card) => {
+            const gauge = card.querySelector('.pulsefeed-gauge');
+            return {
+                id: card.dataset.pulseId,
+                present: Boolean(gauge),
+                resonant: gauge?.classList.contains('resonant') ?? null,
+                dissonant: gauge?.classList.contains('dissonant') ?? null,
+                title: gauge?.getAttribute('title') ?? null,
+            };
+        }));
+
+    const positive = gauges.find((g) => g.id === 'p1');
+    const negative = gauges.find((g) => g.id === 'p2');
+    const unknown = gauges.find((g) => g.id === 'p4');
+
+    if (!positive?.present || !positive.resonant) {
+        fail('a post predicted to resonate has no resonant gauge');
+    } else if (!negative?.present || !negative.dissonant) {
+        fail('a post predicted to be dissonant has no dissonant gauge');
+    } else {
+        pass('the gauge shows the predicted direction for this reader');
+    }
+
+    if (unknown?.present) {
+        fail('a post with no prediction still drew a gauge, which reads as zero');
+    } else {
+        pass('no prediction draws no gauge, so unknown does not read as neutral');
+    }
+
+    if (!positive?.title?.includes('Only you see this')) {
+        fail(`the gauge does not say it is private (title: ${positive?.title})`);
+    } else {
+        pass('the gauge says in words that only this reader sees it');
+    }
+
+    // --- impressions are reported for what was actually seen
+    //
+    // The model's denominator. Counting everything the API returned would inflate it
+    // with posts nobody scrolled to, so this asserts the ids come from cards that
+    // were on screen — and that the reader's own post is not among them.
+    const impressions = await page.evaluate(async () => {
+        window.__impressions = [];
+        // Scroll the list so the observer fires, then wait past the 1500ms batch.
+        const list = document.querySelector('.pulsefeed-list');
+        list.scrollTop = 0;
+        await new Promise((r) => setTimeout(r, 2200));
+        const own = [...document.querySelectorAll('.pulsefeed-pulse')]
+            .filter((c) => c.textContent.includes('Delete'))
+            .map((c) => c.dataset.pulseId);
+        return { sent: [...new Set(window.__impressions)], own };
+    });
+
+    if (impressions.sent.length === 0) {
+        fail('nothing was reported as seen, so the model has no denominator');
+    } else if (impressions.sent.some((id) => impressions.own.includes(id))) {
+        fail(`the reader's own post was counted as an impression: ${impressions.sent.join(', ')}`);
+    } else {
+        pass(`impressions are reported for posts that were on screen (${impressions.sent.length})`);
+    }
+
+    // One batch never names the same post twice.
+    //
+    // Narrower than it first looks, and deliberately so. An earlier version of this
+    // check asserted that a post already reported is never reported again, and it
+    // passed with the client's unobserve() deleted — because IntersectionObserver
+    // only fires on CHANGES, so a page that sits still never re-fires whatever the
+    // code does. It was testing the browser, not this app.
+    //
+    // What the client actually guarantees is that one request carries distinct ids.
+    // Idempotence across renders is the server's MERGE, which has its own
+    // integration test (test_an_impression_is_recorded_once_per_viewer).
+    const dedupe = await page.evaluate(async () => {
+        window.__impressions = [];
+        await window.feedPanel.client.recordImpressions(['p1', 'p1', 'p1', 'p2']);
+        return window.__impressions;
+    });
+
+    if (dedupe.join(',') !== 'p1,p2') {
+        fail(`one impression batch carried repeats: ${dedupe.join(',')}`);
+    } else {
+        pass('one impression batch names each post once');
+    }
+
+    // --- no tally, anywhere on screen
+    const tallies = await page.evaluate(() => ({
+        // The old UI rendered "◈ 5" for five resonators.
+        diamondCount: /◈\s*\d/.test(document.querySelector('.pulsefeed-list').textContent),
+        // Any digits on a card's action row other than the notch marks would be a
+        // count by another name.
+        strayNumbers: [...document.querySelectorAll('.pulsefeed-actions')]
+            .map((a) => a.textContent.replace(/[^0-9]/g, ''))
+            .filter((digits) => digits !== '21012'),
+    }));
+
+    if (tallies.diamondCount) {
+        fail('a resonator count is still rendered');
+    } else if (tallies.strayNumbers.length > 0) {
+        fail(`something numeric other than the notches is on a card: ${JSON.stringify(tallies.strayNumbers)}`);
+    } else {
+        pass('no card shows a count of how anyone else rated it');
+    }
 
     // --- composing
     const composeCollapsed = await page.evaluate(() =>
