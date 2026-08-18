@@ -487,54 +487,24 @@ input[type="text"]:focus {
   color: #fff;
 }
 
-/* Notifications - Compact for radial UI */
-.notification {
-  position: fixed;
-  bottom: 20px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(0, 0, 0, 0.9);
-  border: 1px solid #00ff00;
-  border-radius: 20px;
-  padding: 10px 20px;
-  color: #fff;
-  font-size: 13px;
-  z-index: 10001;
-  animation: slideUp 0.3s ease;
-  max-width: 400px;
-  text-align: center;
-}
+/* Notifications: removed.
+ *
+ * These rules styled `.notification`, which src/main.js also styled from an
+ * injected <style>. Neither fully overrode the other, so the live toast picked
+ * up `bottom: 20px` and `transform: translateX(-50%)` from here on top of the
+ * `top`/`left`/`right` set there — 814px tall on an 844px screen, and 185px off
+ * the left edge of a phone.
+ *
+ * The toast is now `.fractality-toast`, styled in exactly one place. Nothing in
+ * the live app renders `.notification` any more (only archive/ does, and that is
+ * not served), so these are deleted rather than corrected: a second definition
+ * is the bug, and keeping a fixed one invites the same collision back.
+ */
 
-.notification.error {
-  border-color: #ff0000;
-  color: #ff6666;
-}
-
-.notification.fade-out {
-  animation: slideDown 0.3s ease;
-}
-
-@keyframes slideUp {
-  from {
-    transform: translate(-50%, 100%);
-    opacity: 0;
-  }
-  to {
-    transform: translate(-50%, 0);
-    opacity: 1;
-  }
-}
-
-@keyframes slideDown {
-  from {
-    transform: translate(-50%, 0);
-    opacity: 1;
-  }
-  to {
-    transform: translate(-50%, 100%);
-    opacity: 0;
-  }
-}
+/* slideUp / slideDown removed with the .notification rules above: they were
+ * that toast's animations and nothing else referenced them. @keyframes names are
+ * global, so leaving unused ones around is exactly how a stylesheet reaches into
+ * a component it was never meant to style. */
 
 /* Scrollbar styling for results */
 .results-list::-webkit-scrollbar {

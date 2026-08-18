@@ -279,6 +279,107 @@ for (const [pkgName, sites] of undeclared) {
   );
 }
 
+// --- 5b. Selectors styled from two places ----------------------------------
+//
+// Several components style themselves by injecting a <style> at runtime, while
+// src/styles/*.css style the page globally. When both target the same selector,
+// neither wins outright — each property is resolved separately, so a component
+// silently inherits whichever declarations it did not happen to override.
+//
+// That is not hypothetical here. `.notification` was styled both in main.css and
+// in an injected block in main.js. The injected rules set top/left/right; the
+// stylesheet contributed `bottom` and a `transform`, which nothing overrode. The
+// result was a toast 814px tall on an 844px screen, shifted 185px off the left
+// edge of a phone — and it looked correct in the DOM.
+//
+// Only positioning and layout declarations are compared. Sharing a colour is
+// usually deliberate; sharing an edge or a transform is how elements end up off
+// screen.
+
+const LAYOUT_PROPS = new Set([
+  'position', 'top', 'right', 'bottom', 'left',
+  'transform', 'width', 'height', 'max-width', 'max-height',
+  'display', 'margin', 'z-index'
+]);
+
+/** Selector -> Set of layout properties it declares, per source file. */
+function layoutDeclarations(css) {
+  const found = new Map();
+  const stripped = css.replace(/\/\*[\s\S]*?\*\//g, '');
+
+  for (const m of stripped.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const head = m[1].trim();
+    if (head.startsWith('@') || head.includes('%')) continue;
+
+    const props = new Set();
+    for (const decl of m[2].split(';')) {
+      const name = decl.split(':')[0]?.trim().toLowerCase();
+      if (name && LAYOUT_PROPS.has(name)) props.add(name);
+    }
+    if (props.size === 0) continue;
+
+    for (let sel of head.split(',')) {
+      sel = sel.trim();
+      // Compare the base class only: `.x` and `.x.open` are the same element.
+      const base = sel.match(/^(\.[A-Za-z0-9_-]+)/);
+      if (!base) continue;
+      if (!found.has(base[1])) found.set(base[1], new Set());
+      for (const prop of props) found.get(base[1]).add(prop);
+    }
+  }
+  return found;
+}
+
+const layoutBySelector = new Map();   // selector -> Map<file, Set<prop>>
+
+function collectLayout(file, css) {
+  for (const [sel, props] of layoutDeclarations(css)) {
+    if (!layoutBySelector.has(sel)) layoutBySelector.set(sel, new Map());
+    const perFile = layoutBySelector.get(sel);
+    if (!perFile.has(file)) perFile.set(file, new Set());
+    for (const prop of props) perFile.get(file).add(prop);
+  }
+}
+
+for (const f of files.filter(f => f.endsWith('.css'))) {
+  if (path.relative(ROOT, f).startsWith(ARCHIVE_PREFIX)) continue;
+  collectLayout(f, fs.readFileSync(f, 'utf8'));
+}
+
+// Styles injected from JS: `style.textContent = \`...\`` and friends.
+const INJECTED_CSS_RE = /textContent\s*=\s*`([\s\S]*?)`/g;
+for (const f of jsFiles) {
+  if (path.relative(ROOT, f).startsWith(ARCHIVE_PREFIX)) continue;
+  const src = fs.readFileSync(f, 'utf8');
+  INJECTED_CSS_RE.lastIndex = 0;
+  for (const m of src.matchAll(INJECTED_CSS_RE)) {
+    // Only template literals that actually look like a stylesheet.
+    if (!/\{[^}]*:[^}]*\}/.test(m[1])) continue;
+    collectLayout(f, m[1]);
+  }
+}
+
+for (const [sel, perFile] of layoutBySelector) {
+  if (perFile.size < 2) continue;
+
+  const sources = [...perFile.keys()];
+  // Report only where the SAME layout property is set from two places, since
+  // that is the case where the outcome depends on load order.
+  const counts = new Map();
+  for (const props of perFile.values()) {
+    for (const prop of props) counts.set(prop, (counts.get(prop) ?? 0) + 1);
+  }
+  const contested = [...counts.entries()].filter(([, n]) => n > 1).map(([p]) => p);
+  if (contested.length === 0) continue;
+
+  report(
+    'warn',
+    sources[0],
+    `"${sel}" has its layout set from ${perFile.size} places, contesting: ${contested.join(', ')}`,
+    `also in ${sources.slice(1).map(f => path.relative(ROOT, f)).join(', ')}`
+  );
+}
+
 // --- 6. Chat-paste damage signatures --------------------------------------
 
 for (const f of [...jsFiles, ...htmlFiles, ...pyFiles]) {

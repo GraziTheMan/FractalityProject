@@ -435,66 +435,99 @@ function updateStateIndicator(text) {
   }
 }
 
-// ENHANCED: Show notification with better styling
+/**
+ * Transient toast.
+ *
+ * The class is `fractality-toast`, not `notification`, and that matters.
+ *
+ * main.css also styles `.notification` — it belongs to the older DOM that
+ * stylesheet targets (see the note in index.html) — and the two rule sets
+ * partially overrode each other. This block set top/right/left; main.css
+ * contributed `bottom: 20px` and `transform: translateX(-50%)`, which nothing
+ * here overrode. Together that produced a toast 814px tall on an 844px screen,
+ * shifted 185px off the left edge of the phone.
+ *
+ * A unique class name is the fix rather than another layer of overrides: no
+ * stylesheet written for some other DOM can reach this element at all. The
+ * keyframes are prefixed for the same reason — @keyframes names are global, and
+ * main.css defines its own `slideUp`.
+ */
 function showNotification(message, type = 'info') {
   const notification = document.createElement('div');
-  notification.className = `notification ${type}`;
+  notification.className = `fractality-toast ${type}`;
 
   const icon = document.createElement('span');
-  icon.className = 'notification-icon';
-  icon.textContent = type === 'error' ? '❌' : type === 'warning' ? '⚠️' : '✅';
+  icon.className = 'fractality-toast-icon';
+  icon.textContent = type === 'error' ? '\u274c' : type === 'warning' ? '\u26a0\ufe0f' : '\u2705';
 
   // textContent, not innerHTML: messages now carry server-supplied error text
   // (API `detail` fields), which must never be parsed as markup.
   const text = document.createElement('span');
-  text.className = 'notification-text';
+  text.className = 'fractality-toast-text';
   text.textContent = message;
 
   notification.append(icon, text);
 
-  // Add notification styles if not present
-  if (!document.getElementById('notification-styles')) {
+  // Add toast styles if not present
+  if (!document.getElementById('fractality-toast-styles')) {
     const style = document.createElement('style');
-    style.id = 'notification-styles';
+    style.id = 'fractality-toast-styles';
     style.textContent = `
-      .notification {
+      .fractality-toast {
         position: fixed;
         top: 20px;
         right: 20px;
-        background: rgba(0, 0, 0, 0.9);
+        /* Every edge is stated. Leaving bottom unset is what let another
+           stylesheet supply one and stretch the toast down the whole screen. */
+        bottom: auto;
+        left: auto;
+        transform: none;
+        max-width: min(420px, calc(100vw - 40px));
+        background: rgba(0, 0, 0, 0.92);
         color: white;
         padding: 12px 16px;
         border-radius: 8px;
         border: 2px solid #4ade80;
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         gap: 8px;
+        font-size: 13px;
+        line-height: 1.4;
         z-index: 1002;
         backdrop-filter: blur(10px);
-        transition: all 0.3s ease;
+        transition: opacity 0.3s ease, transform 0.3s ease;
+        animation: fractality-toast-in 0.25s ease;
       }
-      .notification.error { border-color: #ef4444; }
-      .notification.warning { border-color: #f59e0b; }
-      .notification.fade-out { opacity: 0; transform: translateX(100px); }
+      .fractality-toast.error { border-color: #ef4444; }
+      .fractality-toast.warning { border-color: #f59e0b; }
+      .fractality-toast-icon { flex: 0 0 auto; }
+      .fractality-toast-text { flex: 1; min-width: 0; word-break: break-word; }
+      .fractality-toast.fade-out { opacity: 0; transform: translateX(40px); }
 
-      /* On a phone a right-anchored toast with a long message (the cold-start
-         explanation, for instance) runs off the side of the screen. Full width
-         and wrapping instead. */
+      @keyframes fractality-toast-in {
+        from { opacity: 0; transform: translateX(40px); }
+        to   { opacity: 1; transform: translateX(0); }
+      }
+
+      /* On a phone, span the width instead: a right-anchored toast carrying a
+         long message — the CORS diagnosis, for instance — has nowhere to go. */
       @media (max-width: 720px) {
-        .notification {
+        .fractality-toast {
           left: 10px;
           right: 10px;
           top: 10px;
-          font-size: 13px;
-          align-items: flex-start;
+          max-width: none;
         }
-        .notification-text { flex: 1; }
-        .notification.fade-out { transform: translateY(-20px); }
+        .fractality-toast.fade-out { transform: translateY(-20px); }
+        @keyframes fractality-toast-in {
+          from { opacity: 0; transform: translateY(-20px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
       }
     `;
     document.head.appendChild(style);
   }
-  
+
   document.body.appendChild(notification);
   
   setTimeout(() => {

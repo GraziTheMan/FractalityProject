@@ -245,6 +245,39 @@ console.log('\n--- panels (phone portrait) ----------------------------------');
     else if (!shown || hidden) fail(`the performance overlay does not toggle (shown=${shown}, hidden again=${hidden})`);
     else pass('performance overlay defaults off and toggles both ways');
 
+    // Toasts. This one shipped visibly broken: main.css and the injected block
+    // both styled `.notification`, and the leftovers from the stylesheet
+    // (`bottom` and a `translateX(-50%)`) combined with the injected
+    // top/left/right to produce a toast 814px tall and 185px off the left edge.
+    // Nothing about the DOM looked wrong — only its geometry did.
+    {
+        const toast = await page.evaluate(async () => {
+            window.mapsPanel.notify('Opened "A map with a fairly long name"');
+            await new Promise((r) => setTimeout(r, 300));
+            const el = document.querySelector('.fractality-toast');
+            if (!el) return null;
+            const r = el.getBoundingClientRect();
+            return {
+                x: Math.round(r.x), y: Math.round(r.y),
+                w: Math.round(r.width), h: Math.round(r.height),
+                vw: innerWidth, vh: innerHeight,
+            };
+        });
+
+        if (!toast) fail('a toast was requested but no .fractality-toast rendered');
+        else {
+            const offScreen = toast.x < 0 || toast.y < 0
+                || toast.x + toast.w > toast.vw || toast.y + toast.h > toast.vh;
+            // A toast is one or two lines. Anything approaching full height means
+            // opposing edges are both set, which is the collision signature.
+            const oversized = toast.h > toast.vh * 0.4;
+
+            if (offScreen) fail(`the toast is off screen: ${JSON.stringify(toast)}`);
+            else if (oversized) fail(`the toast is stretched to ${toast.h}px tall — opposing edges are both set`);
+            else pass(`a toast fits on screen (${toast.w}x${toast.h} at ${toast.x},${toast.y})`);
+        }
+    }
+
     // Tapping a node. Sweeping with the engine's own raycaster is retried
     // because the sweep can legitimately land mid-layout and find nothing.
     let tapped = null;

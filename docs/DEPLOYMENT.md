@@ -238,6 +238,10 @@ whitespace around each entry is stripped:
 CORS_ORIGIN = https://fractiverse.com,https://www.fractiverse.com
 ```
 
+This is the setting that broke the deployed app, and both entries are what fixed
+it — the site was reachable on `www` and the variable listed only that, so every
+call from the bare domain was blocked.
+
 Both entries are needed if both hostnames resolve. `https://www.fractiverse.com`
 is a **different origin** from `https://fractiverse.com` as far as a browser is
 concerned — matching is exact on scheme, host and port, with no trailing slash
