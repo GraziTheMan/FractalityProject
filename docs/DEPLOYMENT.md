@@ -206,9 +206,36 @@ npm run browser-check             # 38 checks at three viewports
 
 It drives the real page at phone-portrait, phone-landscape and desktop sizes and
 asserts that every control is reachable, that panels close again, that tapping a
-node works, and that the node geometry recovers from low-poly. Every check in it
-exists because the corresponding bug shipped. See Part 6 of
-`docs/AUDIT-2026-08.md`.
+node works, that the node geometry recovers from low-poly, and that a save
+followed by a failed list reload still reports the save as succeeded and still
+offers a share link. Every check in it exists because the corresponding bug
+shipped. See Parts 6 and 7 of `docs/AUDIT-2026-08.md`.
+
+## When the Maps panel says it cannot reach the server
+
+A failed cross-origin `fetch` gives JavaScript no reason — a cold start, a
+restart, a dropped connection and a **CORS rejection** all look identical. The
+panel now probes `/health` and tells you which it is. To check by hand:
+
+```bash
+curl -i https://<your-api-host>/health
+```
+
+- **No answer / connection refused** — the service is down or restarting. Look at
+  the Render logs for the API service. An out-of-memory kill on the free plan
+  shows up as exit status 137.
+- **Answers, `"database"` not `"ok"`** — AuraDB credentials, or a Free instance
+  paused after a few days idle. Run `python scripts/check_neo4j.py`.
+- **Answers `{"status":"ok",...}` but the browser still fails** — it is CORS. The
+  API's `CORS_ORIGIN` must contain the site's origin **exactly**: scheme, host,
+  no trailing slash, and `https://www.fractiverse.com` is a *different* origin
+  from `https://fractiverse.com`. List both if both resolve. Requests carry an
+  `Authorization` header, so `*` is rejected outright by the browser.
+
+Free-plan cold starts are a real cost here: the API spins down after about 15
+minutes idle and the next request waits ~50s for it to boot. Reads now retry
+through that, but the first interaction after a quiet period will feel slow.
+Moving the API to a paid instance is the only thing that removes it.
 
 Then in the browser, with the API configured: sign in, click **🗺 Maps → Save
 current**, and confirm the map appears in the list. Click **Share**, open the

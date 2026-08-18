@@ -374,6 +374,124 @@ console.log('\n--- adaptive quality ----------------------------------------');
     await ctx.close();
 }
 
+// ---------------------------------------------------------------------------
+// 4. The cloud path, with the API stood in for
+// ---------------------------------------------------------------------------
+//
+// Reproduces the combination that was reported from a phone: a save that
+// succeeds, followed by a list request that fails at the transport layer.
+//
+// That pairing is what made the bug confusing. The map WAS saved, but
+// saveCurrent() finishes by reloading the list, and the reload's error replaced
+// the success message — so a committed save read as a failed one, and Share was
+// unreachable because it only existed inside a list row that never rendered.
+
+console.log('\n--- cloud path (API stubbed) ---------------------------------');
+
+{
+    const { ctx, page } = await openApp(VIEWPORTS[0]);
+
+    await page.evaluate(() => {
+        const client = window.mapsPanel.client;
+        client.baseUrl = 'https://api.test.invalid';
+        client.getToken = async () => 'test-token';
+
+        window.__calls = [];
+        const json = (body) => ({
+            ok: true, status: 200, statusText: 'OK',
+            text: async () => JSON.stringify(body),
+        });
+
+        globalThis.fetch = async (url, opts = {}) => {
+            const u = String(url);
+            const method = opts.method || 'GET';
+            window.__calls.push(`${method} ${u.replace('https://api.test.invalid', '')}`);
+
+            if (u.endsWith('/health')) return json({ status: 'ok', database: 'ok', auth: 'configured' });
+            if (method === 'POST' && u.includes('/shares')) return json({ token: 'share-token-abc', permission: 'view' });
+            if (method === 'POST' && u.includes('/maps')) {
+                return json({ id: 'map-1', title: 'My Mind Map', node_count: 36, visibility: 'private' });
+            }
+            // Reads fail the way a restarting instance or a CORS rejection does.
+            if (method === 'GET' && u.includes('/maps')) throw new TypeError('Failed to fetch');
+            return json({});
+        };
+
+        window.prompt = () => 'My Mind Map';
+        window.__copied = null;
+        Object.defineProperty(navigator, 'clipboard', {
+            configurable: true,
+            value: { writeText: async (t) => { window.__copied = t; } },
+        });
+    });
+
+    // Wait for the status to settle rather than guessing a duration: reads
+    // retry with backoff and then probe /health.
+    const settle = async () => {
+        await page.waitForFunction(() => {
+            const t = document.querySelector('.maps-status')?.textContent ?? '';
+            return t && !/retrying|Loading|Saving/i.test(t);
+        }, { timeout: 30000 });
+        await page.waitForTimeout(300);
+    };
+
+    await page.click('#open-maps');
+    await settle();
+
+    if (await page.evaluate(() => document.querySelector('.maps-share').disabled !== true)) {
+        fail('Share is enabled before any map exists to share');
+    } else {
+        pass('Share starts disabled with no current map');
+    }
+
+    await page.evaluate(() => { window.__calls = []; });
+    await page.click('.maps-save');
+    await settle();
+
+    const state = await page.evaluate(() => ({
+        status: document.querySelector('.maps-status').textContent,
+        isError: document.querySelector('.maps-status').classList.contains('error'),
+        shareDisabled: document.querySelector('.maps-share').disabled,
+        calls: window.__calls,
+    }));
+
+    if (state.isError) fail('a committed save is reported as an error when the list reload fails');
+    else pass('a committed save is not reported as an error when the list reload fails');
+
+    if (!/saved/i.test(state.status)) fail(`the status loses the fact that the map saved: "${state.status}"`);
+    else pass('the status still says the map was saved');
+
+    // The diagnosis has to survive too — both facts matter, and an earlier
+    // version of this let an unawaited /health probe overwrite the reassurance.
+    if (!/could not be reloaded/i.test(state.status)) fail('the status drops the reason the list failed');
+    else pass('the status keeps the reason the list failed');
+
+    if (state.shareDisabled) fail('Share is unusable after saving when the list fails — the original bug');
+    else pass('Share becomes usable after saving, without the list loading');
+
+    const listCalls = state.calls.filter((c) => /^GET \/maps(\?|\/public)/.test(c));
+    if (listCalls.length !== 3) fail(`the failing read was tried ${listCalls.length} times, expected 3 (1 + 2 retries)`);
+    else pass('a failing read is retried twice before giving up');
+
+    const writes = state.calls.filter((c) => c.startsWith('POST /maps') && !c.includes('/shares'));
+    if (writes.length !== 1) fail(`the save was sent ${writes.length} times — a retried write can duplicate data`);
+    else pass('the save was sent exactly once');
+
+    if (state.calls.filter((c) => c.includes('/health')).length !== 1) fail('health was not probed to narrow down the cause');
+    else pass('health is probed once to narrow down the cause');
+
+    await page.click('.maps-share');
+    await page.waitForTimeout(600);
+    const copied = await page.evaluate(() => window.__copied);
+    if (typeof copied !== 'string' || !copied.includes('map=map-1') || !copied.includes('token=share-token-abc')) {
+        fail(`Share produced no usable link: ${copied}`);
+    } else {
+        pass('Share copies a link carrying the map id and share token');
+    }
+
+    await ctx.close();
+}
+
 await browser.close();
 
 console.log('\n' + '='.repeat(62));

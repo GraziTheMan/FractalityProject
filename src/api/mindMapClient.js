@@ -46,7 +46,35 @@ export class MindMapClient {
         return Boolean(this.baseUrl);
     }
 
-    async _request(path, { method = 'GET', body, token, signal } = {}) {
+    /**
+     * True for a request that never got a response: DNS failure, TLS failure,
+     * connection refused, a server that closed the connection mid-flight, or a
+     * CORS rejection. The browser deliberately withholds which of those it was.
+     *
+     * Matched by shape, not message text — Chrome says "Failed to fetch",
+     * Safari "Load failed", Firefox "NetworkError when attempting to fetch
+     * resource".
+     */
+    static isNetworkError(error) {
+        if (!error) return false;
+        if (error.name === 'AbortError' || error.name === 'TimeoutError') return true;
+        if (!(error instanceof TypeError)) return false;
+        return /fetch|network|load failed/i.test(error.message || '');
+    }
+
+    async _request(path, {
+        method = 'GET',
+        body,
+        token,
+        signal,
+        // Retries apply to network-level failures only, and by default only to
+        // reads. Retrying a POST or DELETE that failed without a response is
+        // NOT safe: the request may well have reached the server and only the
+        // response been lost, so a retry would write twice. Callers that know a
+        // write is idempotent can opt in.
+        retries = method === 'GET' ? 2 : 0,
+        onRetry,
+    } = {}) {
         if (!this.baseUrl) {
             throw new ApiError('No API configured (set VITE_API_BASE)', 0, null);
         }
@@ -59,12 +87,28 @@ export class MindMapClient {
         const authToken = await this.getToken();
         if (authToken) headers.Authorization = `Bearer ${authToken}`;
 
-        const response = await fetch(`${this.baseUrl}${path}`, {
-            method,
-            headers,
-            body: body === undefined ? undefined : JSON.stringify(body),
-            signal
-        });
+        let response;
+        for (let attempt = 0; ; attempt++) {
+            try {
+                response = await fetch(`${this.baseUrl}${path}`, {
+                    method,
+                    headers,
+                    body: body === undefined ? undefined : JSON.stringify(body),
+                    signal
+                });
+                break;
+            } catch (error) {
+                // An HTTP error response is not thrown by fetch, so anything
+                // caught here is a transport failure. A Render instance that is
+                // cold-starting, restarting, or was just killed refuses
+                // connections for a few seconds; that is worth waiting out
+                // rather than reporting as a dead server.
+                if (!MindMapClient.isNetworkError(error) || attempt >= retries) throw error;
+                const waitMs = 1500 * 2 ** attempt;   // 1.5s, then 3s
+                if (onRetry) onRetry({ attempt: attempt + 1, of: retries, waitMs });
+                await new Promise((resolve) => setTimeout(resolve, waitMs));
+            }
+        }
 
         if (response.status === 204) return null;
 
@@ -94,13 +138,30 @@ export class MindMapClient {
     // --- maps --------------------------------------------------------------
 
     /** Maps owned by the signed-in user. */
-    listMyMaps({ skip = 0, limit = 50 } = {}) {
-        return this._request(`/maps?skip=${skip}&limit=${limit}`);
+    listMyMaps({ skip = 0, limit = 50, onRetry } = {}) {
+        return this._request(`/maps?skip=${skip}&limit=${limit}`, { onRetry });
     }
 
     /** Publicly discoverable maps. No authentication needed. */
-    listPublicMaps({ skip = 0, limit = 50 } = {}) {
-        return this._request(`/maps/public?skip=${skip}&limit=${limit}`);
+    listPublicMaps({ skip = 0, limit = 50, onRetry } = {}) {
+        return this._request(`/maps/public?skip=${skip}&limit=${limit}`, { onRetry });
+    }
+
+    /**
+     * Probe the API's own health endpoint.
+     *
+     * Needs no auth and touches no user data, which makes it the one request
+     * that can distinguish "the whole service is unreachable" from "this
+     * particular request was rejected". Returns the parsed body, or null if the
+     * service could not be reached at all.
+     */
+    async checkHealth() {
+        try {
+            return await this._request('/health', { retries: 0 });
+        } catch (error) {
+            if (MindMapClient.isNetworkError(error)) return null;
+            throw error;
+        }
     }
 
     /**

@@ -51,6 +51,7 @@ export class MapsPanel {
             </div>
             <div class="maps-actions">
                 <button class="maps-save" title="Save the current view as a new map">💾 Save current</button>
+                <button class="maps-share" title="Copy a share link for the saved map" disabled>🔗 Share</button>
                 <button class="maps-refresh" title="Reload the list">🔄</button>
             </div>
             <div class="maps-list"></div>
@@ -68,6 +69,18 @@ export class MapsPanel {
             .addEventListener('click', () => this.refresh());
         this.container.querySelector('.maps-save')
             .addEventListener('click', () => this.saveCurrent());
+
+        // Share the map that is currently loaded or was just saved.
+        //
+        // Until now Share existed only as a small button inside a list row,
+        // which made it unreachable in exactly the situation where you most
+        // want it: right after saving, when the list request has failed and
+        // there are no rows to put a button in. The map is known at that point
+        // — it is in this.currentMap — so sharing does not need the list.
+        this.shareBtn = this.container.querySelector('.maps-share');
+        this.shareBtn.addEventListener('click', () => {
+            if (this.currentMap) this.share(this.currentMap.id);
+        });
 
         this._injectStyles();
 
@@ -145,6 +158,21 @@ export class MapsPanel {
         this.statusEl.className = `maps-status ${type}`;
     }
 
+    /**
+     * Assign this.currentMap and keep the header Share button in step.
+     *
+     * Everything that changes the current map goes through here, so the button
+     * cannot drift out of sync with what it would act on.
+     */
+    _setCurrentMap(map) {
+        this.currentMap = map ?? null;
+        if (!this.shareBtn) return;
+        this.shareBtn.disabled = !this.currentMap;
+        this.shareBtn.title = this.currentMap
+            ? `Copy a share link for "${this.currentMap.title}"`
+            : 'Save or open a map first';
+    }
+
     // --- listing -----------------------------------------------------------
 
     async refresh() {
@@ -157,18 +185,27 @@ export class MapsPanel {
                 'Local-only mode: set VITE_API_BASE to enable saving and sharing.',
                 'warning'
             );
-            return;
+            return { ok: false, message: 'no API configured' };
         }
 
         this._setStatus('Loading…');
 
+        let ok = false;
+        let message = '';
+
         try {
             const signedIn = hasAuth() && getAuthState().signedIn;
+            const onRetry = ({ attempt, of }) =>
+                this._setStatus(
+                    `Server did not respond — retrying (${attempt}/${of})…`,
+                    'warning'
+                );
             const maps = signedIn
-                ? await this.client.listMyMaps()
-                : await this.client.listPublicMaps();
+                ? await this.client.listMyMaps({ onRetry })
+                : await this.client.listPublicMaps({ onRetry });
 
             this._renderList(maps, signedIn);
+            ok = true;
             this._setStatus(
                 maps.length === 0
                     ? signedIn
@@ -180,8 +217,61 @@ export class MapsPanel {
             );
         } catch (error) {
             this.listEl.innerHTML = '';
-            this._setStatus(this._describe(error), 'error');
+            message = this._describe(error);
+
+            // A transport failure says nothing about WHY. /health needs no auth
+            // and touches no data, so whether it answers separates "the service
+            // is down or restarting" from "this one request was rejected" —
+            // which are different problems with different fixes.
+            //
+            // Awaited deliberately: when this ran unawaited it resolved after
+            // the caller had already written its own status line and silently
+            // overwrote it, so a successful save reported a CORS error.
+            if (MindMapClient.isNetworkError(error)) {
+                message = (await this._diagnose()) ?? message;
+            }
+            this._setStatus(message, 'error');
         }
+
+        return { ok, message };
+    }
+
+    /**
+     * Probe /health after a transport failure and describe what it implies.
+     *
+     * Returns replacement status text, or null when the probe taught us nothing.
+     * It does not touch the status itself — the caller owns that, so the two
+     * cannot race.
+     */
+    async _diagnose() {
+        let health;
+        try {
+            health = await this.client.checkHealth();
+        } catch {
+            return null;   // an HTTP error from /health is not worth interpreting
+        }
+
+        if (health === null) {
+            return 'The API is not reachable at all — /health does not answer '
+                 + 'either. It is probably restarting or down; check the '
+                 + 'service logs.';
+        }
+
+        // /health answered, so the service is up and the browser can reach it.
+        // That narrows it to this specific request. The usual cause is CORS,
+        // because a CORS rejection reaches JavaScript as a transport failure
+        // indistinguishable from the server being gone.
+        const notReady = [];
+        if (health.database && health.database !== 'ok') notReady.push(`database: ${health.database}`);
+        if (health.auth && health.auth !== 'configured') notReady.push(`auth: ${health.auth}`);
+
+        if (notReady.length) {
+            return `The API is up but not ready — ${notReady.join(', ')}.`;
+        }
+
+        return 'The API is up, so this request specifically was blocked. The '
+             + 'usual cause is CORS: the API\'s CORS_ORIGIN must list this '
+             + 'exact origin.';
     }
 
     _renderList(maps, signedIn) {
@@ -253,7 +343,7 @@ export class MapsPanel {
             const graph = apiMapToNodeGraph(apiMap);
 
             await this.onLoadMap(graph, apiMap);
-            this.currentMap = apiMap;
+            this._setCurrentMap(apiMap);
 
             this._setStatus(`Opened "${apiMap.title}"`);
             this.notify(`Opened "${apiMap.title}"`);
@@ -286,13 +376,38 @@ export class MapsPanel {
             const payload = graphToCreatePayload(graph, { title });
             const created = await this.client.createMap(payload);
 
-            this.currentMap = created;
+            this._setCurrentMap(created);
             this.notify(`Saved "${created.title}" (${created.node_count} nodes)`);
-            await this.refresh();
+            // The save is already committed. Reloading the list is a courtesy,
+            // and its failure used to overwrite the success message with an
+            // error — so a save that worked read as a save that failed, and the
+            // map looked lost when it was not.
+            await this._refreshAfterWrite(`Saved "${created.title}"`);
         } catch (error) {
             this._setStatus(this._describe(error), 'error');
             this.notify(this._describe(error), 'error');
         }
+    }
+
+    /**
+     * Reload the list after a write that already succeeded.
+     *
+     * Keeps the write's own outcome in the status line if the reload fails, so
+     * a committed save is never reported as an error.
+     */
+    async _refreshAfterWrite(successText) {
+        const { ok, message } = await this.refresh();
+        if (ok) return;
+
+        // Both facts matter and neither replaces the other: the write is safe,
+        // AND something is wrong with reading. Leading with the reassurance
+        // stops a committed save from reading as a lost one, while keeping the
+        // diagnosis so the underlying problem is still actionable.
+        this._setStatus(
+            `${successText} — your map is saved. Press 🔗 Share for its link. `
+            + `The list could not be reloaded: ${message}`,
+            'warning'
+        );
     }
 
     async overwrite(mapId) {
@@ -312,9 +427,9 @@ export class MapsPanel {
                 rootId: findRootId(graph)
             });
 
-            this.currentMap = updated;
+            this._setCurrentMap(updated);
             this.notify(`Updated "${updated.title}" (${updated.node_count} nodes)`);
-            await this.refresh();
+            await this._refreshAfterWrite(`Updated "${updated.title}"`);
         } catch (error) {
             this._setStatus(this._describe(error), 'error');
             this.notify(this._describe(error), 'error');
@@ -362,7 +477,7 @@ export class MapsPanel {
 
         try {
             await this.client.deleteMap(map.id);
-            if (this.currentMap?.id === map.id) this.currentMap = null;
+            if (this.currentMap?.id === map.id) this._setCurrentMap(null);
             this.notify(`Deleted "${map.title}"`);
             await this.refresh();
         } catch (error) {
@@ -389,27 +504,18 @@ export class MapsPanel {
         // On a free Render instance the overwhelmingly common one is cold start:
         // the service spins down when idle and the first request after that
         // fails while it wakes.
-        if (this._isNetworkError(error)) {
-            return 'Could not reach the server. It may be waking up from '
-                 + 'idle — wait a few seconds and press \u{1f504} to retry.';
+        if (MindMapClient.isNetworkError(error)) {
+            // Say what is known, not what is guessed. The browser withholds the
+            // reason, and it is genuinely ambiguous: a cold start, a restart, a
+            // CORS rejection and a dropped connection are indistinguishable
+            // from here. _diagnose() narrows it by probing /health.
+            return 'No response from the server. Retrying did not help — '
+                 + 'checking why…';
         }
 
         return error?.message || 'Something went wrong';
     }
 
-    /**
-     * True for a fetch that failed before getting a response at all.
-     *
-     * Matched by shape rather than message text, because the message differs
-     * per browser: Chrome "Failed to fetch", Safari "Load failed", Firefox
-     * "NetworkError when attempting to fetch resource".
-     */
-    _isNetworkError(error) {
-        if (!error) return false;
-        if (error.name === 'AbortError' || error.name === 'TimeoutError') return true;
-        if (!(error instanceof TypeError)) return false;
-        return /fetch|network|load failed/i.test(error.message || '');
-    }
 
     _injectStyles() {
         if (document.getElementById('maps-panel-styles')) return;
@@ -474,6 +580,13 @@ export class MapsPanel {
                 border-bottom: 1px solid #222;
             }
             .maps-actions .maps-save { flex: 1; }
+            .maps-actions .maps-share { flex: 0 0 auto; white-space: nowrap; }
+            .maps-share:disabled {
+                opacity: 0.4;
+                cursor: default;
+                border-color: #333;
+            }
+            .maps-share:disabled:hover { border-color: #333; }
             .maps-list { overflow-y: auto; flex: 1; }
             .maps-item {
                 padding: 10px 12px;

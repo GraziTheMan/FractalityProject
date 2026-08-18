@@ -656,8 +656,10 @@ document.addEventListener('DOMContentLoaded', () => {
   AppState.setView('bubble');
 });
 
-// Export for debugging
+// Export for debugging. Also what scripts/browser-check.mjs drives, since the
+// cloud paths cannot be exercised without standing in for the API.
 window.nodeBridge = nodeBridge;
 window.fractalityEngine = () => fractalityEngine;
 window.searchInterface = searchInterface;
 window.nodeDebugPanel = () => nodeDebugPanel;
+window.mapsPanel = mapsPanel;
