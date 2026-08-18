@@ -13,6 +13,7 @@ import { AnimationSystem } from './visualization/AnimationSystem.js';
 
 import { MapsPanel } from './ui/MapsPanel.js';
 import { mindMapClient, MindMapClient } from './api/mindMapClient.js';
+import { hasCliBridge } from './config/deploy.js';
 import { getToken, hasAuth } from './auth/clerkClient.js';
 
 import { ECS } from './ecs/ECS.js';
@@ -148,65 +149,88 @@ function addCLISyncStatus() {
 // ENHANCED: Add search button and debug toggle to CLI controls
 function addCLIControls() {
   const desktopDock = document.getElementById('desktop-dock');
-  
+
+  // Auto-sync and the server status light both need the local Python CLI
+  // bridge. On a deployed site there is no localhost to reach, so they were a
+  // permanently-red indicator, a button that could only fail, and a 5-second
+  // polling timer that never had anything to report. Omit them entirely.
+  //
+  // Export and Import stay: they are file download/upload, which works in any
+  // browser.
+  const bridge = hasCliBridge();
+
+  // Every label is wrapped in .dock-label so shell.css can drop to emoji-only
+  // on a phone, where six labelled buttons need roughly three screen widths.
   const cliControls = document.createElement('div');
   cliControls.className = 'cli-controls';
   cliControls.innerHTML = `
-    <button id="cli-export" class="dock-button">📤 Export to CLI</button>
-    <button id="cli-import" class="dock-button">📥 Import from CLI</button>
-    <button id="cli-sync" class="dock-button">🔄 Auto-Sync Off</button>
-    <button id="open-search" class="dock-button">🔍 Search</button>
-    <button id="toggle-debug" class="dock-button">🧠 Debug</button>
-    <button id="open-maps" class="dock-button">🗺 Maps</button>
+    <button id="cli-export" class="dock-button" title="Export to CLI">📤<span class="dock-label">Export</span></button>
+    <button id="cli-import" class="dock-button" title="Import from CLI">📥<span class="dock-label">Import</span></button>
+    ${bridge ? `
+    <button id="cli-sync" class="dock-button" title="Toggle CLI auto-sync">🔄<span class="dock-label">Auto-Sync Off</span></button>
+    ` : ''}
+    <button id="open-search" class="dock-button" title="Search nodes">🔍<span class="dock-label">Search</span></button>
+    <button id="toggle-debug" class="dock-button" title="Node debug panel">🧠<span class="dock-label">Debug</span></button>
+    <button id="toggle-perf" class="dock-button" title="Performance overlay">📈<span class="dock-label">Perf</span></button>
+    <button id="open-maps" class="dock-button" title="Cloud maps">🗺<span class="dock-label">Maps</span></button>
+    ${bridge ? `
     <div class="cli-status-mini">
       <span class="server-status-indicator" id="server-status-mini">🔗 Checking...</span>
     </div>
+    ` : ''}
   `;
-  
+
   desktopDock.innerHTML = ''; // Clear placeholder text
   desktopDock.appendChild(cliControls);
-  
+
   // Setup CLI control handlers
   setupCLIHandlers();
 }
 
 // ENHANCED: Setup CLI control handlers with search integration
 function setupCLIHandlers() {
-  // Export handler (existing)
-  document.getElementById('cli-export').addEventListener('click', exportToCLI);
-  
-  // Import handler (existing)
-  document.getElementById('cli-import').addEventListener('click', showImportDialog);
-  
-  // Auto-sync toggle (existing)
+  // The bridge-only controls are absent unless a CLI bridge is configured, so
+  // every lookup is optional. A missing element used to throw here and abort
+  // the rest of the wiring.
+  const on = (id, handler) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('click', handler);
+    return el;
+  };
+
+  on('cli-export', exportToCLI);
+  on('cli-import', showImportDialog);
+
+  // Auto-sync toggle. Only rendered when the CLI bridge is reachable.
   let autoSyncEnabled = false;
-  document.getElementById('cli-sync').addEventListener('click', (e) => {
+  on('cli-sync', (e) => {
+    // The label lives in a child span, so write to that rather than to the
+    // button, which would delete the emoji along with it.
+    const button = e.currentTarget;
+    const label = button.querySelector('.dock-label') || button;
+
     autoSyncEnabled = !autoSyncEnabled;
     if (autoSyncEnabled) {
       const exportPath = prompt('Enter CLI export file path:', 'fractal-export.json');
       if (exportPath) {
         nodeBridge.enableAutoSync(exportPath);
-        e.target.textContent = '🔄 Auto-Sync On';
-        e.target.classList.add('active');
+        label.textContent = 'Auto-Sync On';
+        button.classList.add('active');
         updateSyncStatus('connected');
       } else {
         autoSyncEnabled = false;
       }
     } else {
       nodeBridge.disableAutoSync();
-      e.target.textContent = '🔄 Auto-Sync Off';
-      e.target.classList.remove('active');
+      label.textContent = 'Auto-Sync Off';
+      button.classList.remove('active');
       updateSyncStatus('disconnected');
     }
   });
-  
-  // NEW: Search interface integration
-  document.getElementById('open-search').addEventListener('click', () => {
-    searchInterface.show();
-  });
-  
-  // NEW: Debug panel toggle
-  document.getElementById('toggle-debug').addEventListener('click', () => {
+
+  on('open-search', () => searchInterface.toggle());
+
+  on('toggle-debug', () => {
     if (nodeDebugPanel) {
       nodeDebugPanel.toggle();
     } else {
@@ -214,13 +238,27 @@ function setupCLIHandlers() {
     }
   });
 
-  // Cloud maps panel
-  document.getElementById('open-maps').addEventListener('click', () => {
-    mapsPanel.toggle();
+  // The performance overlay defaults on for desktop and off for phones, and
+  // FractalityEngine.togglePerformanceMonitor() had no caller at all — meaning
+  // on mobile it was permanently on screen with no way to dismiss it.
+  on('toggle-perf', (e) => {
+    if (!fractalityEngine) {
+      showNotification('Open a 3D view first', 'warning');
+      return;
+    }
+    fractalityEngine.togglePerformanceMonitor();
+    e.currentTarget.classList.toggle(
+      'active',
+      Boolean(fractalityEngine.dashboard?.config?.visible)
+    );
   });
-  
-  // Update server status periodically
-  setInterval(updateServerStatusMini, 5000);
+
+  on('open-maps', () => mapsPanel.toggle());
+
+  // Only poll when there is a bridge to poll.
+  if (hasCliBridge()) {
+    setInterval(updateServerStatusMini, 5000);
+  }
 }
 
 // NEW: Update mini server status indicator
@@ -289,9 +327,12 @@ function setupSearchListeners() {
     const nodeId = e.detail.nodeId;
     console.log('🎯 Node selected from search:', nodeId);
     
-    // Navigate to node if engine is available
+    // Navigate to node if engine is available.
+    // setFocus, not navigateToNode: the latter has never existed on
+    // FractalityEngine, so every search-result click and every "Navigate"
+    // press in the node info panel threw a TypeError here.
     if (fractalityEngine && AppState.currentView === 'bubble') {
-      fractalityEngine.navigateToNode(nodeId);
+      fractalityEngine.setFocus(nodeId);
       
       // Update debug panel if available
       if (nodeDebugPanel) {
@@ -435,6 +476,21 @@ function showNotification(message, type = 'info') {
       .notification.error { border-color: #ef4444; }
       .notification.warning { border-color: #f59e0b; }
       .notification.fade-out { opacity: 0; transform: translateX(100px); }
+
+      /* On a phone a right-anchored toast with a long message (the cold-start
+         explanation, for instance) runs off the side of the screen. Full width
+         and wrapping instead. */
+      @media (max-width: 720px) {
+        .notification {
+          left: 10px;
+          right: 10px;
+          top: 10px;
+          font-size: 13px;
+          align-items: flex-start;
+        }
+        .notification-text { flex: 1; }
+        .notification.fade-out { transform: translateY(-20px); }
+      }
     `;
     document.head.appendChild(style);
   }
@@ -543,7 +599,7 @@ AppState.on('viewChanged', async (view) => {
     
     // Check for pending navigation
     if (AppState.pendingNavigation) {
-      fractalityEngine.navigateToNode(AppState.pendingNavigation);
+      fractalityEngine.setFocus(AppState.pendingNavigation);
       AppState.pendingNavigation = null;
     }
     
@@ -563,8 +619,10 @@ AppState.on('viewChanged', async (view) => {
 
 // ENHANCED: Initialize on DOM ready with all new components
 document.addEventListener('DOMContentLoaded', () => {
-  // Add CLI integration UI
-  addCLISyncStatus();
+  // Add CLI integration UI. The sync light is bridge-only: without a bridge it
+  // reads "CLI Disconnected" forever, which is noise rather than information —
+  // and on a phone it is noise occupying scarce screen.
+  if (hasCliBridge()) addCLISyncStatus();
   addCLIControls();
   
   // Setup bridge listeners
@@ -578,7 +636,7 @@ document.addEventListener('DOMContentLoaded', () => {
   searchInterface.loadHistory();
   
   // Initial server status check
-  updateServerStatusMini();
+  if (hasCliBridge()) updateServerStatusMini();
 
   // A visitor may arrive on a share link. Record it before the first view is
   // opened so the engine loads the shared map instead of the demo pattern.

@@ -379,7 +379,36 @@ export class MapsPanel {
             if (error.status === 503) return 'Server is not ready (database or auth unconfigured)';
             return `Server error (${error.status}): ${error.message}`;
         }
+
+        // A cross-origin fetch that never reaches the server throws a bare
+        // TypeError whose message is the useless string "Failed to fetch" (or
+        // "Load failed" in Safari). The browser deliberately withholds the
+        // reason — that is a same-origin-policy protection, not something we
+        // can interrogate — so the honest answer is to name the likely causes.
+        //
+        // On a free Render instance the overwhelmingly common one is cold start:
+        // the service spins down when idle and the first request after that
+        // fails while it wakes.
+        if (this._isNetworkError(error)) {
+            return 'Could not reach the server. It may be waking up from '
+                 + 'idle — wait a few seconds and press \u{1f504} to retry.';
+        }
+
         return error?.message || 'Something went wrong';
+    }
+
+    /**
+     * True for a fetch that failed before getting a response at all.
+     *
+     * Matched by shape rather than message text, because the message differs
+     * per browser: Chrome "Failed to fetch", Safari "Load failed", Firefox
+     * "NetworkError when attempting to fetch resource".
+     */
+    _isNetworkError(error) {
+        if (!error) return false;
+        if (error.name === 'AbortError' || error.name === 'TimeoutError') return true;
+        if (!(error instanceof TypeError)) return false;
+        return /fetch|network|load failed/i.test(error.message || '');
     }
 
     _injectStyles() {
@@ -475,7 +504,20 @@ export class MapsPanel {
                 border-radius: 4px;
             }
             @media (max-width: 720px) {
-                .maps-panel { left: 12px; right: 12px; width: auto; }
+                .maps-panel {
+                    left: 12px;
+                    right: 12px;
+                    width: auto;
+                    /* Stop above the bottom dock rather than behind it — the
+                       Save/Share buttons are the whole point of this panel.
+                       --dock-height comes from shell.css. */
+                    max-height: calc(100vh - 64px - var(--dock-height, 0px) - 16px);
+                }
+                .maps-item-actions button,
+                .maps-close, .maps-refresh, .maps-save, .maps-auth-button {
+                    padding: 8px 12px;
+                    font-size: 12px;
+                }
             }
         `;
         document.head.appendChild(style);

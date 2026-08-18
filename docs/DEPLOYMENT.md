@@ -195,6 +195,21 @@ pytest api/tests   # 66 passing, 16 skipped without NEO4J_URI
 npm run build      # then check dist/ loads
 ```
 
+Then, for anything about whether the UI is actually *usable* — which the checks
+above cannot see, since they only read files:
+
+```bash
+npm i -D playwright && npx playwright install chromium   # one-time
+npm run preview &                 # serves the build on :4173
+npm run browser-check             # 38 checks at three viewports
+```
+
+It drives the real page at phone-portrait, phone-landscape and desktop sizes and
+asserts that every control is reachable, that panels close again, that tapping a
+node works, and that the node geometry recovers from low-poly. Every check in it
+exists because the corresponding bug shipped. See Part 6 of
+`docs/AUDIT-2026-08.md`.
+
 Then in the browser, with the API configured: sign in, click **🗺 Maps → Save
 current**, and confirm the map appears in the list. Click **Share**, open the
 copied URL in a private window, and confirm an anonymous visitor sees the map.

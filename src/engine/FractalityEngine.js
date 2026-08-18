@@ -332,6 +332,11 @@ export class FractalityEngine {
             if (instanceId < visibleNodes.length) {
                 const clickedNode = visibleNodes[instanceId];
                 this.setFocus(clickedNode.id);
+                // Show details on click as well as on hover. Hover was the
+                // only trigger, which meant the node info panel could never
+                // appear on a touch device — there is no mousemove to fire.
+                // immediate: skip the hover delay and hold the panel open.
+                this.nodeInfo.show(clickedNode, { immediate: true });
             }
         }
     }

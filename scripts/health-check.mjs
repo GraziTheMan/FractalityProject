@@ -251,7 +251,26 @@ for (const f of htmlFiles) {
 
 // --- 5. Undeclared npm packages --------------------------------------------
 
+// Packages deliberately left out of package.json, with the reason. Anything
+// not listed here is flagged, so a genuinely forgotten dependency still shows
+// up rather than being lost among known-and-accepted ones.
+const INTENTIONALLY_UNDECLARED = new Map([
+  ['playwright',
+   'dev-only browser check; a browser download in every deploy is not worth it'],
+]);
+
 for (const [pkgName, sites] of undeclared) {
+  const reason = INTENTIONALLY_UNDECLARED.get(pkgName);
+  if (reason) {
+    report(
+      'info',
+      path.join(ROOT, sites[0].split(':')[0]),
+      `imports "${pkgName}", intentionally not in package.json`,
+      reason
+    );
+    continue;
+  }
+
   report(
     'warn',
     path.join(ROOT, sites[0].split(':')[0]),
@@ -289,6 +308,10 @@ for (const f of pyFiles) {
 
 const errors = findings.filter(f => f.level === 'error');
 const warnings = findings.filter(f => f.level === 'warn');
+// 'info' findings are recorded and printed but not counted: they document a
+// deliberate choice, so counting them would make the summary line drift upward
+// for reasons nobody should act on.
+const notes = findings.filter(f => f.level === 'info');
 
 const byFile = new Map();
 for (const f of findings) {
@@ -308,7 +331,7 @@ if (findings.length === 0) {
   for (const file of [...byFile.keys()].sort()) {
     console.log(file);
     for (const f of byFile.get(file)) {
-      const icon = f.level === 'error' ? '  ✗' : '  ⚠';
+      const icon = f.level === 'error' ? '  ✗' : f.level === 'info' ? '  ·' : '  ⚠';
       console.log(`${icon} ${f.message}${f.detail ? `  (${f.detail})` : ''}`);
     }
   }
@@ -316,6 +339,9 @@ if (findings.length === 0) {
 }
 
 console.log('='.repeat(60));
-console.log(`${errors.length} error(s), ${warnings.length} warning(s)`);
+console.log(
+  `${errors.length} error(s), ${warnings.length} warning(s)` +
+  (notes.length ? `, ${notes.length} note(s)` : '')
+);
 
 process.exit(errors.length > 0 ? 1 : 0);

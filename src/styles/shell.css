@@ -108,7 +108,16 @@
     left: 50%;
     transform: translateX(-50%);
     z-index: 30;
-    max-width: min(760px, calc(100vw - 420px));
+    /* max(0px, ...) matters: on a 400px-wide phone the subtraction alone goes
+       NEGATIVE, and a negative max-width collapses the dock to nothing. That is
+       what made the buttons unreachable in portrait. */
+    max-width: max(240px, min(760px, calc(100vw - 420px)));
+}
+
+/* Labels are wrapped in .dock-label by addCLIControls() so narrow screens can
+   drop to emoji-only without changing the markup. */
+.dock-button .dock-label {
+    margin-left: 4px;
 }
 
 /* --- mirror toggle / home button -------------------------------------- */
@@ -189,19 +198,151 @@
     display: none !important;
 }
 
-/* --- responsive ------------------------------------------------------- */
+/* --- responsive ---------------------------------------------------------
+ *
+ * The mobile layout is built around one fact: everything here is absolutely
+ * positioned, so on a phone the pieces land on top of each other unless they
+ * are explicitly stacked. Previously the dock was simply hidden below 720px,
+ * which took the Maps, Search, Debug, Export and Import buttons with it — they
+ * only reappeared in landscape, where the viewport clears 720px.
+ *
+ * --dock-height is the shared reference every bottom-anchored element measures
+ * from, so there is one number to change rather than five.
+ */
 
-/* The desktop dock is dense; hide it on narrow screens, where the radial
-   menu is the primary navigation. */
-@media (max-width: 720px) {
-    .desktop-only {
-        display: none !important;
+:root {
+    /* Zero on desktop: the dock is docked to the top there. */
+    --dock-height: 0px;
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Compact layout: narrow OR short. Width alone was not enough — a phone in
+   landscape is 844x390, which clears the 720px width test while having less
+   vertical room than any portrait phone. That is the orientation the desktop
+   layout handled worst: the dock wrapped to two rows and the 364px-tall
+   performance overlay filled the screen. */
+@media (max-width: 720px), (max-height: 500px) {
+    :root {
+        --dock-height: calc(52px + var(--safe-bottom));
     }
 
-    /* RadialMenu clamps its radii to this box, so a smaller box means a
-       smaller fan rather than a clipped one. */
+    /* The dock becomes a real bottom bar rather than disappearing. Fixed (not
+       absolute) so it stays put when a panel scrolls, and scrollable across
+       its own axis so more buttons never overflow off-screen. */
+    .desktop-dock {
+        position: fixed;
+        top: auto;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        transform: none;
+        max-width: none;
+        padding: 6px 8px calc(6px + var(--safe-bottom));
+        border-radius: 0;
+        border-left: none;
+        border-right: none;
+        border-bottom: none;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+
+    .desktop-dock::-webkit-scrollbar {
+        display: none;
+    }
+
+    /* main.css switches .cli-controls to a vertical column under 768px, which
+       would make the bar as tall as the screen. One scrollable row instead. */
+    .desktop-dock .cli-controls {
+        flex-direction: row;
+        flex-wrap: nowrap;
+        align-items: center;
+        gap: 6px;
+        width: max-content;
+        min-width: 100%;
+    }
+
+    /* Emoji-only. Six labelled buttons need ~900px; six glyphs need ~280px.
+       40px square clears the minimum comfortable touch target once the
+       surrounding gap is counted. */
+    .dock-button .dock-label {
+        display: none;
+    }
+
+    .desktop-dock .dock-button {
+        flex: 0 0 auto;
+        min-width: 40px;
+        padding: 8px 10px;
+        font-size: 17px;
+        line-height: 1;
+    }
+
+    .desktop-dock .cli-status-mini {
+        flex: 0 0 auto;
+        font-size: 11px;
+        white-space: nowrap;
+    }
+
+    /* Radial menu sits above the dock and the mirror/home row.
+     *
+     * The height here is load-bearing, not cosmetic. RadialMenu clamps
+     * radiusY to (height / 2 - 24) and spreads 9 items across 2 * radiusY, so
+     * the vertical gap per item is (height - 48) / 8. A chip is ~35px tall,
+     * which means anything under ~330px of height makes the labels overlap —
+     * at 240px they did, and "Mindmap" was rendered underneath "Social".
+     *
+     * So: as tall as the desktop fan when there is room, and never taller than
+     * the space actually left above the dock and the mirror row. */
     .radial-menu {
         width: 100vw;
-        height: 300px;
+        height: min(380px, calc(100vh - var(--dock-height) - 92px));
+        bottom: calc(var(--dock-height) + 44px);
+    }
+
+    /* Both were at bottom: 24px, i.e. underneath the new dock. */
+    .mirror-toggle {
+        bottom: calc(var(--dock-height) + 6px);
+        right: 12px;
+    }
+
+    .home-button {
+        bottom: calc(var(--dock-height) + 6px);
+        left: 12px;
+    }
+
+    .state-indicator {
+        top: 10px;
+        left: 10px;
+        padding: 4px 8px;
+        font-size: 10px;
+    }
+
+    .biometric-panel {
+        left: 10px;
+        right: 10px;
+        margin-top: 38px;
+        min-width: 0;
+    }
+}
+
+/* Short viewports (a phone in landscape is ~390px tall) cannot give 9 stacked
+   chips 35px each. Shrink the chips instead of the fan — a smaller fan would
+   just reintroduce the overlap. */
+@media (max-height: 500px) {
+    .radial-item {
+        padding: 3px 8px;
+        font-size: 10px;
+    }
+
+    .state-indicator {
+        font-size: 9px;
+        padding: 3px 6px;
+    }
+
+    .mirror-toggle,
+    .home-button {
+        padding: 3px 10px;
+        font-size: 10px;
     }
 }

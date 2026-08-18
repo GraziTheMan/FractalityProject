@@ -116,11 +116,13 @@ export class NodeDebugPanel {
             /* Mobile-first debug panel styles */
             .debug-panel {
                 position: fixed;
-                bottom: 20px;
+                /* Clears the bottom dock; --dock-height is 0 on desktop, where
+                   the dock is at the top instead. Defined in shell.css. */
+                bottom: calc(var(--dock-height, 0px) + 12px);
                 left: 10px;
                 right: 10px;
                 max-width: calc(100vw - 20px);
-                max-height: 70vh;
+                max-height: 60vh;
                 background: rgba(0, 0, 0, 0.95);
                 border: 2px solid #00ff00;
                 border-radius: 12px;
@@ -365,6 +367,7 @@ export class NodeDebugPanel {
                     max-width: 400px;
                     max-height: 80vh;
                 }
+
                 
                 .energy-stats {
                     grid-template-columns: 1fr 1fr;

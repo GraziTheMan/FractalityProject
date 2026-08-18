@@ -27,6 +27,8 @@ export class NodeInfoPanel {
         this.currentNode = null;
         this.isVisible = false;
         this.isPinned = false;
+        /** Held open by a deliberate click/tap rather than by hover. */
+        this.selectionSticky = false;
         
         // Configuration
         this.config = {
@@ -105,7 +107,28 @@ export class NodeInfoPanel {
         pinButton.title = 'Pin panel';
         pinButton.addEventListener('click', () => this.togglePin());
         header.appendChild(pinButton);
-        
+
+        // Close button. The panel was dismissed only by mouseleave, an event
+        // that never fires on a touch screen — so on a phone it appeared on the
+        // first tap and then covered the bottom of the view permanently.
+        const closeButton = document.createElement('button');
+        closeButton.className = 'pin-button close-button';
+        closeButton.style.fontSize = '20px';
+        closeButton.style.lineHeight = '1';
+        // U+00D7, not U+2715: the heavier ✕ is missing from some Android and
+        // Linux font stacks and renders as an empty box, which for a close
+        // button means the panel looks impossible to dismiss.
+        closeButton.textContent = '\u00d7';
+        closeButton.title = 'Close';
+        closeButton.addEventListener('click', () => {
+            // Clear both hold-open flags, or hide() returns early.
+            this.isPinned = false;
+            this.selectionSticky = false;
+            this.container.classList.remove('pinned');
+            this.hide();
+        });
+        header.appendChild(closeButton);
+
         this.container.appendChild(header);
     }
     
@@ -468,6 +491,75 @@ export class NodeInfoPanel {
             .node-info-panel.showing {
                 animation: slideIn 0.3s ease-out;
             }
+
+            /* --- phones ---------------------------------------------------
+             *
+             * At 320px wide anchored bottom-left, this panel landed squarely on
+             * top of the radial menu and the bottom dock, so selecting a node
+             * made the navigation unreachable. As a full-width sheet above the
+             * dock it stacks instead of overlapping.
+             *
+             * --dock-height comes from shell.css; the fallback keeps this
+             * correct if the panel is used without that stylesheet.
+             */
+            @media (max-width: 720px) {
+                .node-info-panel {
+                    left: 8px;
+                    right: 8px;
+                    bottom: calc(var(--dock-height, 0px) + 44px);
+                    width: auto;
+                    max-width: none;
+                    /* Leave the 3D view visible — the point of selecting a node
+                       is to see it in context. */
+                    max-height: 42vh;
+                    padding: 14px;
+                    border-radius: 14px;
+                }
+
+                .info-header {
+                    margin-bottom: 12px;
+                    padding-bottom: 10px;
+                }
+
+                .info-title { font-size: 16px; }
+                .info-section { margin: 12px 0; }
+
+                /* The panel scrolls at 42vh, and the actions are the last thing
+                   in it — so on a phone "Navigate Here" and "Expand" sat below
+                   the fold behind Metadata and the family tree. Pin them to the
+                   bottom of the sheet instead. */
+                .info-actions {
+                    position: sticky;
+                    bottom: -14px;
+                    margin-top: 12px;
+                    padding: 10px 0 4px;
+                    background: rgba(0, 0, 0, 0.95);
+                    backdrop-filter: blur(20px);
+                }
+
+                .action-button {
+                    margin: 6px 0;
+                    padding: 12px;
+                }
+
+                /* Two per row: full-width stacked buttons plus a sticky footer
+                   would eat most of the sheet. */
+                .info-actions {
+                    display: grid;
+                    grid-template-columns: 1fr 1fr;
+                    gap: 8px;
+                    align-items: stretch;
+                }
+
+                .action-hint { grid-column: 1 / -1; }
+
+                /* :hover sticks after a tap on touch devices, leaving the panel
+                   shifted up by 2px and glowing indefinitely. */
+                .node-info-panel:hover {
+                    transform: none;
+                    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+                }
+            }
         `;
         
         document.head.appendChild(style);
@@ -476,15 +568,37 @@ export class NodeInfoPanel {
     /**
      * Show panel with node data
      */
-    show(node) {
+    show(node, { immediate = false } = {}) {
         if (!node) return;
-        
+
         // Clear hover timer
         if (this.hoverTimer) {
             clearTimeout(this.hoverTimer);
             this.hoverTimer = null;
         }
-        
+
+        if (immediate) {
+            // An explicit click or tap. Two reasons this cannot go through the
+            // hover delay:
+            //
+            //  1. A tap emits mousemove BEFORE click. That mousemove lands
+            //     wherever the finger is, often on empty space, which called
+            //     hide() and cancelled the pending show — so on a phone the
+            //     panel never appeared at all.
+            //  2. setFocus() relayouts the graph, so by the time a delayed show
+            //     fired the node under the pointer had moved.
+            //
+            // Sticky until dismissed with ✕ or superseded by another
+            // selection, since there is no pointer-out event on a touch screen.
+            if (this.hideTimer) {
+                clearTimeout(this.hideTimer);
+                this.hideTimer = null;
+            }
+            this.selectionSticky = true;
+            this._showNode(node);
+            return;
+        }
+
         // Set delay if hover mode
         if (this.config.showOnHover && !this.isPinned) {
             this.hoverTimer = setTimeout(() => {
@@ -517,7 +631,10 @@ export class NodeInfoPanel {
      * Hide panel
      */
     hide() {
-        if (this.isPinned) return;
+        // selectionSticky: a node the user deliberately selected stays on
+        // screen until dismissed. Without it, the very next mousemove over
+        // empty space would close a panel the user just opened by tapping.
+        if (this.isPinned || this.selectionSticky) return;
         
         // Clear timers
         if (this.hoverTimer) {

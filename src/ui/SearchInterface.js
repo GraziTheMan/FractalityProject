@@ -102,7 +102,10 @@ export class SearchInterface {
                 top: 80px;
                 left: 10px;
                 right: 10px;
-                max-height: 70vh;
+                /* 70vh measured from 80px down runs past the bottom of a phone
+                   screen and under the dock. Bound it by what is actually
+                   available. --dock-height is defined in shell.css. */
+                max-height: min(70vh, calc(100vh - 80px - var(--dock-height, 0px) - 16px));
                 background: rgba(0, 0, 0, 0.95);
                 border: 2px solid #3b82f6;
                 border-radius: 12px;
@@ -509,6 +512,19 @@ export class SearchInterface {
         this.isVisible = false;
         this.searchPanel.classList.remove('visible');
         this.clearSearch();
+    }
+
+    /**
+     * Toggle visibility.
+     *
+     * The dock button called show() unconditionally, so a second press
+     * re-opened an already-open panel instead of dismissing it. On desktop
+     * Escape or the ✕ covered that; on a phone re-pressing the same button is
+     * the expected gesture, and until it worked the open panel sat over the
+     * canvas absorbing taps meant for the map.
+     */
+    toggle() {
+        this.isVisible ? this.hide() : this.show();
     }
     
     async performSearch() {

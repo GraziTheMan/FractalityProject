@@ -37,7 +37,11 @@ export class PerformanceDashboard {
             chartWidth: 180,
             chartHeight: 40,
             chartSamples: 60,
-            visible: true
+            // Off by default on a phone. This panel is ~220x260 of opaque
+            // overlay with two charts; on a 390px-wide screen it covered a
+            // third of the viewport, and until the dock gained a Perf button
+            // there was no way to dismiss it without a keyboard.
+            visible: !PerformanceDashboard._isNarrowScreen()
         };
         
         // Update state
@@ -85,12 +89,34 @@ export class PerformanceDashboard {
     }
     
     /**
+     * True on viewports too small to give up 220px of width to a debug overlay.
+     * Matches the 720px breakpoint used by shell.css so the two agree.
+     *
+     * Static and defensive because it runs from the constructor, which may be
+     * reached in a non-browser context (tests, SSR) where there is no window.
+     */
+    static _isNarrowScreen() {
+        if (typeof window === 'undefined') return false;
+        // Matches the compact breakpoint in shell.css, including the height
+        // test: this panel is 364px tall, so a 390px-high landscape phone has
+        // even less room for it than a portrait one.
+        return window.innerWidth <= 720 || window.innerHeight <= 500;
+    }
+
+    /**
      * Create container element
      */
     _createContainer() {
         this.container = document.createElement('div');
         this.container.id = 'perf-dashboard';
         this.container.className = 'perf-dashboard';
+
+        // init() never honoured config.visible, so a dashboard constructed
+        // hidden still rendered on screen. Apply it at creation.
+        if (!this.config.visible) {
+            this.container.classList.add('hidden');
+        }
+
         
         // Add to UI overlay or body
         const overlay = document.getElementById('ui-overlay') || document.body;
@@ -212,9 +238,12 @@ export class PerformanceDashboard {
                 transition: opacity 0.3s;
             }
             
+            /* display, not just opacity: an invisible-but-present overlay still
+               sat on top of the canvas and ate touches. shell.css's global
+               .hidden rule happens to force this, but this panel must not
+               depend on another stylesheet being loaded. */
             .perf-dashboard.hidden {
-                opacity: 0;
-                pointer-events: none;
+                display: none;
             }
             
             .perf-dashboard h3 {

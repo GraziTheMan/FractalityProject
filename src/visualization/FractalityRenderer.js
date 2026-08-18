@@ -218,6 +218,10 @@ export class FractalityRenderer {
 
         if (this.instancedMesh) {
             this.instancedMesh.geometry = this.nodeGeometry;
+            // The cached bounds were derived from the geometry we just
+            // replaced, and swapping .geometry does not invalidate them.
+            this.instancedMesh.boundingSphere = null;
+            this.instancedMesh.boundingBox = null;
         }
 
         // Free the GPU buffers of the geometry we just replaced. Skipping this
@@ -411,6 +415,25 @@ export class FractalityRenderer {
         // Update instance count
         this.instancedMesh.count = instanceIndex;
         this.instancedMesh.instanceMatrix.needsUpdate = true;
+
+        // Invalidate the cached raycast bounds.
+        //
+        // THREE.InstancedMesh.raycast() rejects the ray outright if it misses
+        // this.boundingSphere, and computes that sphere exactly once — on the
+        // first raycast — then caches it forever. The instances here move every
+        // frame (layout, animation, focus changes), so the cached sphere goes
+        // stale and starts rejecting rays that do hit a node.
+        //
+        // The symptom is that clicking or tapping a bubble silently does
+        // nothing: no selection, no info panel, no error. It gets worse the
+        // further the layout drifts from wherever it happened to be on the
+        // first click.
+        //
+        // Setting it to null makes raycast() recompute on demand. That costs one
+        // pass over the visible instances, and only on an actual pointer event,
+        // not per frame.
+        this.instancedMesh.boundingSphere = null;
+        this.instancedMesh.boundingBox = null;
         
         if (this.instancedMesh.instanceColor) {
             this.instancedMesh.instanceColor.needsUpdate = true;
