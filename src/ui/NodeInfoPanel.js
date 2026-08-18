@@ -500,13 +500,15 @@ export class NodeInfoPanel {
              * dock it stacks instead of overlapping.
              *
              * --dock-height comes from shell.css; the fallback keeps this
-             * correct if the panel is used without that stylesheet.
+             * correct if the panel is used without that stylesheet. The extra
+             * 44px this used to add was clearance for a mirror/home button row
+             * that went away with the radial menu.
              */
             @media (max-width: 720px) {
                 .node-info-panel {
                     left: 8px;
                     right: 8px;
-                    bottom: calc(var(--dock-height, 0px) + 44px);
+                    bottom: calc(var(--dock-height, 0px) + 12px);
                     width: auto;
                     max-width: none;
                     /* Leave the 3D view visible — the point of selecting a node

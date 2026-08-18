@@ -1,7 +1,6 @@
 // src/main.js - application entry point (loaded by /index.html)
-import { RadialMenu } from './components/radialMenu.js';
+import { DockMenu } from './ui/DockMenu.js';
 import { AppState } from './utils/appState.js';
-import { setupMirrorToggle } from './components/mirrorToggle.js';
 import { nodeBridge } from './bridge/NodeBridge.js';
 import { FractalityEngine } from './engine/FractalityEngine.js';
 import { DataLoader } from './data/DataLoader.js';
@@ -23,7 +22,6 @@ import { InputSystem } from './ecs/systems/InputSystem.js';
 
 // Initialize state indicator
 document.getElementById('state-indicator').innerText = 'State: Balanced';
-document.getElementById('desktop-dock').innerText = 'Desktop Dock Placeholder';
 
 
 // === ECS ENGINE INTEGRATION ===
@@ -107,28 +105,182 @@ const mapsPanel = new MapsPanel({
   }
 });
 
-// Create radial menu with original items.
-// The radii must clear the width of the text labels: 9 items across a 180
-// degree fan gives 22.5 degrees of separation, so at the previous default of
-// 80x60 the buttons overlapped into an unreadable stack.
-const menu = new RadialMenu('radial-menu', {
-  radiusX: 240,
-  radiusY: 170,
-  items: [
-    { label: '🧠 Mindmap', onClick: () => AppState.setView('mindmap') },
-    { label: '👥 Social', onClick: () => AppState.setView('social') },
-    { label: '📊 NodeMgr', onClick: () => AppState.setView('nodemgr') },
-    { label: '🫧 Bubble', onClick: () => AppState.setView('bubble') },
-    { label: '🌀 Cone', onClick: () => AppState.setView('cone') },
-    { label: '💓 Conscious', onClick: () => AppState.setView('conscious') },
-    { label: '⚙️ System', onClick: () => AppState.setView('system') },
-    { label: '🤖 Asst', onClick: () => AppState.setView('assistant') },
-    { label: '📈 Diag', onClick: () => AppState.setView('diagnostics') },
-  ]
-});
+/**
+ * The dock's contents.
+ *
+ * Built as data on every call so that `disabledReason` and `isActive` see the
+ * current world — the engine boots lazily, so most of this is unavailable for
+ * the first moment of the page's life.
+ *
+ * Grouped by what the user is trying to do rather than by which module
+ * implements it. Every entry either works or reports why it cannot; nothing here
+ * is a placeholder. The nine radial-menu buttons this replaces called
+ * AppState.setView() with names that had no view behind them, so eight of them
+ * did nothing but print "Switched to: <name>".
+ */
+function buildDockItems() {
+  const needsEngine = () => (fractalityEngine ? false : 'Open the 3D view first');
 
-// Setup mirror toggle
-setupMirrorToggle(menu);
+  /** One sheet row per layout the LayoutEngine can actually render. */
+  const layoutItem = (id, icon, label, description) => ({
+    id: `layout-${id}`,
+    icon,
+    label,
+    description,
+    isActive: () => fractalityEngine?.getLayout() === id,
+    disabledReason: needsEngine,
+    onSelect: () => {
+      if (fractalityEngine.setLayout(id)) {
+        showNotification(`Layout: ${label}`);
+      }
+    }
+  });
+
+  return [
+    // --- how the map is arranged and drawn ---------------------------------
+    // This is the consolidation of the old Bubble / Cone / NodeMgr buttons:
+    // they were all about how the graph is displayed, and only one of them
+    // ('bubble') was wired to anything.
+    {
+      id: 'view',
+      icon: '\u{1f300}',
+      label: 'View',
+      // Layouts are a radio set: one is always current, so "has an active
+      // child" would light this button up permanently and mean nothing.
+      exclusive: true,
+      items: [
+        layoutItem('family', '\u{1f46a}', 'Family',
+          'Parent above, siblings in an arc, children spiralling out'),
+        layoutItem('goldenSpiral', '\u{1f300}', 'Golden Spiral',
+          'One expanding spiral by golden ratio'),
+        layoutItem('fibonacciSphere', '\u{1f310}', 'Fibonacci Sphere',
+          'Evenly distributed over a sphere'),
+        layoutItem('fractalTree', '\u{1f333}', 'Fractal Tree',
+          'Branching, each level smaller'),
+        layoutItem('cosmicWeb', '\u{1f30c}', 'Cosmic Web',
+          'Loose clusters linked by strands'),
+        { separator: true },
+        {
+          id: 'reset-view',
+          icon: '\u{1f3af}',
+          label: 'Back to centre',
+          description: 'Return focus to the root node',
+          disabledReason: needsEngine,
+          onSelect: () => {
+            fractalityEngine.resetView();
+            showNotification('Focus reset to root');
+          }
+        }
+      ]
+    },
+
+    // --- finding things ----------------------------------------------------
+    {
+      id: 'find',
+      icon: '\u{1f50d}',
+      label: 'Find',
+      isActive: () => searchInterface.isVisible,
+      onSelect: () => searchInterface.toggle()
+    },
+
+    // --- saving, sharing, opening -----------------------------------------
+    {
+      id: 'maps',
+      icon: '\u{1f5fa}',
+      label: 'Maps',
+      isActive: () => mapsPanel.isOpen,
+      onSelect: () => mapsPanel.toggle()
+    },
+
+    // --- everything else ---------------------------------------------------
+    {
+      id: 'more',
+      icon: '\u2630',
+      label: 'More',
+      items: [
+        {
+          id: 'export',
+          icon: '\u{1f4e4}',
+          label: 'Export',
+          description: 'Download this map as JSON',
+          onSelect: exportToCLI
+        },
+        {
+          id: 'import',
+          icon: '\u{1f4e5}',
+          label: 'Import',
+          description: 'Load a map from a JSON file',
+          onSelect: showImportDialog
+        },
+        { separator: true },
+        {
+          id: 'node-debug',
+          icon: '\u{1f9e0}',
+          label: 'Node inspector',
+          description: 'Context scores and energy per node',
+          // Reports the real reason rather than a blanket "not available":
+          // this panel needs the CACE engine, which only exists once the 3D
+          // view has booted.
+          disabledReason: () =>
+            fractalityEngine
+              ? (nodeDebugPanel ? false : 'The inspector failed to initialise')
+              : 'Open the 3D view first',
+          isActive: () => Boolean(nodeDebugPanel?.isVisible),
+          onSelect: () => nodeDebugPanel.toggle()
+        },
+        {
+          id: 'perf',
+          icon: '\u{1f4c8}',
+          label: 'Performance',
+          description: 'Frame rate, draw calls, memory',
+          disabledReason: needsEngine,
+          isActive: () => Boolean(fractalityEngine?.dashboard?.config?.visible),
+          onSelect: () => fractalityEngine.togglePerformanceMonitor()
+        },
+        ...(hasCliBridge()
+          ? [
+              { separator: true },
+              {
+                id: 'cli-sync',
+                icon: '\u{1f504}',
+                label: 'CLI auto-sync',
+                description: describeBridge(),
+                isActive: () => autoSyncEnabled,
+                onSelect: toggleAutoSync
+              }
+            ]
+          : [])
+      ]
+    }
+  ];
+}
+
+let dock = null;
+
+/**
+ * Rebuild the dock from scratch.
+ *
+ * Use this when the SET of entries changes — the engine booting, a CLI bridge
+ * appearing — because it re-runs buildDockItems(). It also closes any open
+ * sheet, so it is the wrong tool for a routine state refresh.
+ */
+function refreshDock() {
+  if (!dock) return;
+  dock.setItems(buildDockItems());
+}
+
+/**
+ * Re-read active and unavailable states without touching the DOM structure.
+ *
+ * Panels can close themselves — the Maps panel has its own ✕, the search panel
+ * answers Escape — and the dock has no way to hear about that. Polling this is a
+ * deliberate choice over threading a visibility callback through every panel:
+ * it is a dozen className updates, it cannot go stale in a way a new panel would
+ * reintroduce, and unlike refreshDock() it leaves an open sheet alone.
+ */
+function syncDock() {
+  dock?.refresh();
+}
 
 // Add CLI sync status to UI
 function addCLISyncStatus() {
@@ -146,139 +298,75 @@ function addCLISyncStatus() {
   stateContainer.appendChild(syncStatus);
 }
 
-// ENHANCED: Add search button and debug toggle to CLI controls
-function addCLIControls() {
-  const desktopDock = document.getElementById('desktop-dock');
+/**
+ * Build the dock.
+ *
+ * `#app-dock` is positioned by shell.css: a bottom bar on phones, a top bar on
+ * wide screens. DockMenu itself does not care which.
+ */
+function buildDock() {
+  const container = document.getElementById('app-dock');
+  if (!container) {
+    console.error('main.js: #app-dock is missing from the page');
+    return;
+  }
 
-  // Auto-sync and the server status light both need the local Python CLI
-  // bridge. On a deployed site there is no localhost to reach, so they were a
-  // permanently-red indicator, a button that could only fail, and a 5-second
-  // polling timer that never had anything to report. Omit them entirely.
-  //
-  // Export and Import stay: they are file download/upload, which works in any
-  // browser.
-  const bridge = hasCliBridge();
-
-  // Every label is wrapped in .dock-label so shell.css can drop to emoji-only
-  // on a phone, where six labelled buttons need roughly three screen widths.
-  const cliControls = document.createElement('div');
-  cliControls.className = 'cli-controls';
-  cliControls.innerHTML = `
-    <button id="cli-export" class="dock-button" title="Export to CLI">📤<span class="dock-label">Export</span></button>
-    <button id="cli-import" class="dock-button" title="Import from CLI">📥<span class="dock-label">Import</span></button>
-    ${bridge ? `
-    <button id="cli-sync" class="dock-button" title="Toggle CLI auto-sync">🔄<span class="dock-label">Auto-Sync Off</span></button>
-    ` : ''}
-    <button id="open-search" class="dock-button" title="Search nodes">🔍<span class="dock-label">Search</span></button>
-    <button id="toggle-debug" class="dock-button" title="Node debug panel">🧠<span class="dock-label">Debug</span></button>
-    <button id="toggle-perf" class="dock-button" title="Performance overlay">📈<span class="dock-label">Perf</span></button>
-    <button id="open-maps" class="dock-button" title="Cloud maps">🗺<span class="dock-label">Maps</span></button>
-    ${bridge ? `
-    <div class="cli-status-mini">
-      <span class="server-status-indicator" id="server-status-mini">🔗 Checking...</span>
-    </div>
-    ` : ''}
-  `;
-
-  desktopDock.innerHTML = ''; // Clear placeholder text
-  desktopDock.appendChild(cliControls);
-
-  // Setup CLI control handlers
-  setupCLIHandlers();
-}
-
-// ENHANCED: Setup CLI control handlers with search integration
-function setupCLIHandlers() {
-  // The bridge-only controls are absent unless a CLI bridge is configured, so
-  // every lookup is optional. A missing element used to throw here and abort
-  // the rest of the wiring.
-  const on = (id, handler) => {
-    const el = document.getElementById(id);
-    if (el) el.addEventListener('click', handler);
-    return el;
-  };
-
-  on('cli-export', exportToCLI);
-  on('cli-import', showImportDialog);
-
-  // Auto-sync toggle. Only rendered when the CLI bridge is reachable.
-  let autoSyncEnabled = false;
-  on('cli-sync', (e) => {
-    // The label lives in a child span, so write to that rather than to the
-    // button, which would delete the emoji along with it.
-    const button = e.currentTarget;
-    const label = button.querySelector('.dock-label') || button;
-
-    autoSyncEnabled = !autoSyncEnabled;
-    if (autoSyncEnabled) {
-      const exportPath = prompt('Enter CLI export file path:', 'fractal-export.json');
-      if (exportPath) {
-        nodeBridge.enableAutoSync(exportPath);
-        label.textContent = 'Auto-Sync On';
-        button.classList.add('active');
-        updateSyncStatus('connected');
-      } else {
-        autoSyncEnabled = false;
-      }
-    } else {
-      nodeBridge.disableAutoSync();
-      label.textContent = 'Auto-Sync Off';
-      button.classList.remove('active');
-      updateSyncStatus('disconnected');
-    }
+  dock = new DockMenu({
+    container,
+    items: buildDockItems(),
+    notify: (message, type) => showNotification(message, type)
   });
 
-  on('open-search', () => searchInterface.toggle());
+  // Keep the dock's highlights honest when panels close themselves.
+  setInterval(syncDock, 750);
 
-  on('toggle-debug', () => {
-    if (nodeDebugPanel) {
-      nodeDebugPanel.toggle();
-    } else {
-      showNotification('Debug panel not available (CACE engine not loaded)', 'warning');
-    }
-  });
-
-  // The performance overlay defaults on for desktop and off for phones, and
-  // FractalityEngine.togglePerformanceMonitor() had no caller at all — meaning
-  // on mobile it was permanently on screen with no way to dismiss it.
-  on('toggle-perf', (e) => {
-    if (!fractalityEngine) {
-      showNotification('Open a 3D view first', 'warning');
-      return;
-    }
-    fractalityEngine.togglePerformanceMonitor();
-    e.currentTarget.classList.toggle(
-      'active',
-      Boolean(fractalityEngine.dashboard?.config?.visible)
-    );
-  });
-
-  on('open-maps', () => mapsPanel.toggle());
-
-  // Only poll when there is a bridge to poll.
   if (hasCliBridge()) {
-    setInterval(updateServerStatusMini, 5000);
+    // Only poll when there is a bridge to poll. Without one this was a
+    // 5-second timer reporting on a server that cannot exist.
+    setInterval(refreshDock, 5000);
   }
 }
 
-// NEW: Update mini server status indicator
-async function updateServerStatusMini() {
-  const statusEl = document.getElementById('server-status-mini');
-  if (!statusEl) return;
-  
-  if (nodeBridge.isServerConnected()) {
-    try {
-      const status = await nodeBridge.getServerStatus();
-      statusEl.textContent = `🟢 Server (${status.total_nodes || 0} nodes)`;
-      statusEl.className = 'server-status-indicator connected';
-    } catch (error) {
-      statusEl.textContent = '🟡 Server Error';
-      statusEl.className = 'server-status-indicator error';
-    }
-  } else {
-    statusEl.textContent = '🔴 Server Offline';
-    statusEl.className = 'server-status-indicator disconnected';
+/** Whether CLI auto-sync is on. Read by the dock to show its active state. */
+let autoSyncEnabled = false;
+
+/**
+ * Toggle mirroring to a local file. Only reachable when a CLI bridge is
+ * configured, since it needs the local Python helper to write anywhere.
+ */
+function toggleAutoSync() {
+  if (autoSyncEnabled) {
+    nodeBridge.disableAutoSync();
+    autoSyncEnabled = false;
+    updateSyncStatus('disconnected');
+    showNotification('CLI auto-sync off');
+    return;
   }
+
+  const exportPath = prompt('Enter CLI export file path:', 'fractal-export.json');
+  if (!exportPath) return;
+
+  nodeBridge.enableAutoSync(exportPath);
+  autoSyncEnabled = true;
+  updateSyncStatus('connected');
+  showNotification('CLI auto-sync on');
+}
+
+/**
+ * Bridge connection state, as a line of text for the auto-sync sheet row.
+ *
+ * This replaces updateServerStatusMini(), which wrote into a
+ * `#server-status-mini` element that lived in the old dock markup. That element
+ * is gone, so the function returned at its first line and the 5-second timer
+ * driving it accomplished nothing. Putting the state where the auto-sync control
+ * already is means there is one place to look rather than a separate light.
+ */
+function describeBridge() {
+  if (!nodeBridge.isServerConnected()) return 'CLI bridge offline';
+  const nodes = nodeBridge.lastHealthCheck?.total_nodes;
+  return typeof nodes === 'number'
+    ? `CLI bridge connected · ${nodes} nodes`
+    : 'CLI bridge connected';
 }
 
 // ENHANCED: Setup bridge listeners with search integration
@@ -310,15 +398,29 @@ function setupBridgeListeners() {
   nodeBridge.on('serverConnected', (data) => {
     console.log('🟢 Bridge: Server connected', data);
     updateSyncStatus('connected');
-    updateServerStatusMini();
+    refreshDock();
   });
-  
+
   nodeBridge.on('serverDisconnected', (error) => {
     console.log('🔴 Bridge: Server disconnected', error);
     updateSyncStatus('disconnected');
-    updateServerStatusMini();
+    refreshDock();
   });
 }
+
+/**
+ * Keep the node inspector in step with whatever the engine has focused.
+ *
+ * Registered unconditionally, and it checks for the panel at call time: the
+ * inspector only exists once the 3D view has booted, so binding this at boot
+ * time inside an `if (nodeDebugPanel)` was how the previous version came to
+ * contain a call that could never work.
+ */
+window.addEventListener('fractality:nodeFocused', (event) => {
+  const { nodeId, node } = event.detail ?? {};
+  if (!nodeDebugPanel || !nodeId) return;
+  nodeDebugPanel.updateNode(nodeId, node, fractalityEngine?.getContextScore(nodeId) ?? 0);
+});
 
 // NEW: Setup search event listeners
 function setupSearchListeners() {
@@ -339,8 +441,7 @@ function setupSearchListeners() {
         const nodes = nodeBridge.getVisibleNodes({ id: nodeId });
         if (nodes.length > 0) {
           const nodeData = nodes[0];
-          const contextScore = fractalityEngine.caceEngine ? 
-            fractalityEngine.caceEngine.calculateContextScore(nodeData) : 0;
+          const contextScore = fractalityEngine.getContextScore(nodeId);
           nodeDebugPanel.updateNode(nodeId, nodeData, contextScore);
           nodeDebugPanel.show();
         }
@@ -515,7 +616,9 @@ function showNotification(message, type = 'info') {
         .fractality-toast {
           left: 10px;
           right: 10px;
-          top: 10px;
+          /* Below the state indicator (top: 10px, ~26px tall) rather than on
+             top of it. */
+          top: 44px;
           max-width: none;
         }
         .fractality-toast.fade-out { transform: translateY(-20px); }
@@ -598,8 +701,11 @@ AppState.on('viewChanged', async (view) => {
     await fractalityEngine.init();
     
     // Initialize debug panel when CACE engine is available
-    if (fractalityEngine.caceEngine) {
-      nodeDebugPanel = new NodeDebugPanel(fractalityEngine.caceEngine);
+    // `cace`, not `caceEngine`. The engine has always constructed a CACEEngine
+    // as `this.cace`, so this check read undefined and the inspector was never
+    // created — which is why its dock entry reported "CACE engine not loaded".
+    if (fractalityEngine.cace) {
+      nodeDebugPanel = new NodeDebugPanel(fractalityEngine);
       nodeDebugPanel.init();
       console.log('🧠 Debug panel initialized');
     }
@@ -639,15 +745,13 @@ AppState.on('viewChanged', async (view) => {
     // Start engine
     fractalityEngine.start();
     
-    // Setup node selection handler for debug panel
-    if (nodeDebugPanel) {
-      fractalityEngine.on('nodeSelected', (nodeData) => {
-        const contextScore = fractalityEngine.caceEngine ? 
-          fractalityEngine.caceEngine.calculateContextScore(nodeData) : 0;
-        nodeDebugPanel.updateNode(nodeData.id, nodeData, contextScore);
-      });
-    }
   }
+
+  // The engine boots lazily, so most of the dock is unavailable until this
+  // point. Without this the View group and the inspector stay greyed out for
+  // the rest of the session — the buttons would exist and refuse to work, which
+  // is the failure this whole redesign is meant to end.
+  refreshDock();
 });
 
 // ENHANCED: Initialize on DOM ready with all new components
@@ -656,7 +760,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // reads "CLI Disconnected" forever, which is noise rather than information —
   // and on a phone it is noise occupying scarce screen.
   if (hasCliBridge()) addCLISyncStatus();
-  addCLIControls();
+  buildDock();
   
   // Setup bridge listeners
   setupBridgeListeners();
@@ -668,8 +772,8 @@ document.addEventListener('DOMContentLoaded', () => {
   searchInterface.init();
   searchInterface.loadHistory();
   
-  // Initial server status check
-  if (hasCliBridge()) updateServerStatusMini();
+  // The dock shows bridge state on its auto-sync row.
+  if (hasCliBridge()) refreshDock();
 
   // A visitor may arrive on a share link. Record it before the first view is
   // opened so the engine loads the shared map instead of the demo pattern.

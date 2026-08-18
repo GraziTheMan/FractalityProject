@@ -18,6 +18,9 @@
  *     390px screen, collapsing the dock to zero width
  *   - the radial menu spaced its items by equal ANGLE, which bunches them at
  *     the poles of the ellipse: "🧠 Mindmap" rendered underneath "👥 Social"
+ *     (that menu is gone now; the dock replaced it)
+ *   - eight of that menu's nine buttons pointed at views that had never been
+ *     built, so they only printed "Switched to: <name>"
  *   - the node info panel was shown only on `mousemove`, an event that does
  *     not exist on a touch screen, so tapping a node did nothing visible
  *   - THREE.InstancedMesh caches its raycast bounding sphere on first use and
@@ -73,13 +76,11 @@ async function openApp(viewport) {
     const errors = [];
     page.on('pageerror', (e) => errors.push(String(e)));
     await page.goto(URL, { waitUntil: 'networkidle' });
-    // The engine boots lazily on the first 3D view.
-    await page.evaluate(() => {
-        for (const b of document.querySelectorAll('.radial-item')) {
-            if (b.innerText.includes('Bubble')) b.click();
-        }
-    });
-    await page.waitForTimeout(2500);
+    // main.js opens the 'bubble' view on DOMContentLoaded, which is what boots
+    // the engine. Wait for it rather than clicking anything.
+    await page.waitForFunction(() => Boolean(window.fractalityEngine?.()), { timeout: 15000 })
+        .catch(() => {});
+    await page.waitForTimeout(2000);
     return { ctx, page, errors };
 }
 
@@ -106,29 +107,34 @@ for (const vp of VIEWPORTS) {
             return top === el || el.contains(top) ? 'ok' : `covered by ${top?.tagName}.${top?.className}`;
         };
 
-        const dockButtons = [...document.querySelectorAll('.dock-button')]
-            .map((b) => ({ id: b.id, reach: reach(b) }));
+        const buttons = [...document.querySelectorAll('#app-dock .dock-button')];
+        const dockButtons = buttons.map((b) => ({
+            id: b.dataset.dockId,
+            reach: reach(b),
+            h: Math.round(b.getBoundingClientRect().height),
+        }));
 
-        const items = [...document.querySelectorAll('.radial-item')];
-        const rects = items.map((el) => ({ label: el.innerText.trim(), r: el.getBoundingClientRect() }));
+        // Nothing in the dock may overlap anything else in it.
+        const rects = buttons.map((el) => ({ id: el.dataset.dockId, r: el.getBoundingClientRect() }));
         const overlaps = [];
         for (let i = 0; i < rects.length; i++) {
             for (let j = i + 1; j < rects.length; j++) {
                 const a = rects[i].r, b = rects[j].r;
                 if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) {
-                    overlaps.push(`${rects[i].label} <-> ${rects[j].label}`);
+                    overlaps.push(`${rects[i].id} <-> ${rects[j].id}`);
                 }
             }
         }
 
+        const dock = document.querySelector('#app-dock')?.getBoundingClientRect();
+
         return {
             dockButtons,
-            dockWidth: Math.round(document.querySelector('#desktop-dock')?.getBoundingClientRect().width ?? 0),
-            radialOverlaps: overlaps,
-            radialOffscreen: rects
-                .filter(({ r }) => r.left < 0 || r.top < 0 || r.right > innerWidth || r.bottom > innerHeight)
-                .map(({ label }) => label),
-            radialUnreachable: items.map(reach).filter((s) => s !== 'ok'),
+            dockWidth: Math.round(dock?.width ?? 0),
+            dockOffScreen: dock
+                ? dock.left < -1 || dock.right > innerWidth + 1 || dock.bottom > innerHeight + 1
+                : true,
+            overlaps,
             horizontalOverflow: document.documentElement.scrollWidth > innerWidth,
         };
     });
@@ -140,16 +146,21 @@ for (const vp of VIEWPORTS) {
         const bad = report.dockButtons.filter((b) => b.reach !== 'ok');
         if (bad.length) fail(`unreachable dock buttons: ${bad.map((b) => `${b.id} (${b.reach})`).join(', ')}`);
         else pass(`${report.dockButtons.length} dock buttons, all reachable (dock ${report.dockWidth}px wide)`);
+
+        // 44px is the smallest comfortable touch target. Only enforced where a
+        // thumb is doing the aiming.
+        if (vp.mobile) {
+            const small = report.dockButtons.filter((b) => b.h < 40);
+            if (small.length) fail(`dock buttons too short to tap: ${small.map((b) => `${b.id} ${b.h}px`).join(', ')}`);
+            else pass('dock buttons are large enough to tap');
+        }
     }
 
-    if (report.radialOverlaps.length) fail(`radial items overlap: ${report.radialOverlaps.join(' | ')}`);
-    else pass('radial menu items do not overlap');
+    if (report.dockOffScreen) fail('the dock extends outside the viewport');
+    else pass('the dock is fully on screen');
 
-    if (report.radialOffscreen.length) fail(`radial items off screen: ${report.radialOffscreen.join(', ')}`);
-    else pass('radial menu items are all on screen');
-
-    if (report.radialUnreachable.length) fail(`radial items not clickable: ${report.radialUnreachable.join(', ')}`);
-    else pass('radial menu items are all clickable');
+    if (report.overlaps.length) fail(`dock buttons overlap: ${report.overlaps.join(' | ')}`);
+    else pass('dock buttons do not overlap');
 
     if (report.horizontalOverflow) fail('the page scrolls horizontally');
     else pass('no horizontal overflow');
@@ -211,10 +222,10 @@ console.log('\n--- panels (phone portrait) ----------------------------------');
     }, sel);
 
     for (const [name, id, sel] of [
-        ['Maps', 'open-maps', '.maps-panel'],
-        ['Search', 'open-search', '.search-panel'],
+        ['Maps', 'maps', '.maps-panel'],
+        ['Search', 'find', '.search-panel'],
     ]) {
-        await page.click(`#${id}`);
+        await page.click(`#app-dock [data-dock-id="${id}"]`);
         await page.waitForTimeout(500);
         const r = await audit(sel);
         if (r.problem) fail(`${name} panel ${r.problem}`);
@@ -225,7 +236,7 @@ console.log('\n--- panels (phone portrait) ----------------------------------');
         // A panel you cannot dismiss covers the canvas forever. On a phone
         // pressing the same button again is the expected gesture, and Escape is
         // not available.
-        await page.click(`#${id}`);
+        await page.click(`#app-dock [data-dock-id="${id}"]`);
         await page.waitForTimeout(400);
         if (await isVisible(sel)) fail(`${name} panel did not close when its dock button was pressed again`);
         else pass(`${name} panel closes on a second press`);
@@ -234,12 +245,17 @@ console.log('\n--- panels (phone portrait) ----------------------------------');
     // The performance overlay must default off on a phone (it is 220x364 of
     // opaque debug output) and its dock button must work both ways.
     const perfVisible = () => isVisible('#perf-dashboard');
+    // Two taps now: open the More group, then its Performance row.
+    const tapPerf = async () => {
+        await page.click('#app-dock [data-dock-id="more"]');
+        await page.waitForTimeout(250);
+        await page.click('.dock-sheet-row[data-dock-id="perf"]');
+        await page.waitForTimeout(350);
+    };
     const before = await perfVisible();
-    await page.click('#toggle-perf');
-    await page.waitForTimeout(300);
+    await tapPerf();
     const shown = await perfVisible();
-    await page.click('#toggle-perf');
-    await page.waitForTimeout(300);
+    await tapPerf();
     const hidden = await perfVisible();
     if (before !== false) fail('the performance overlay is on by default on a phone');
     else if (!shown || hidden) fail(`the performance overlay does not toggle (shown=${shown}, hidden again=${hidden})`);
@@ -352,39 +368,48 @@ console.log('\n--- adaptive quality ----------------------------------------');
 {
     const { ctx, page } = await openApp(VIEWPORTS[0]);
 
-    // Set the quality and read the result in ONE evaluate. The adaptive
-    // QualityManager calls setQuality() from its own frame loop, so anything
-    // awaited in between measures the manager's value rather than ours.
-    const setAndRead = (q) => page.evaluate((q) => {
+    // Run the WHOLE ladder inside one evaluate.
+    //
+    // The adaptive QualityManager calls setQuality() from its own frame loop, so
+    // anything awaited between steps lets it overwrite the value under test — a
+    // 0.30 then 0.50 pair would intermittently report spheres because the
+    // manager had already pushed quality back above the 0.55 restore threshold.
+    // One synchronous pass cannot be interleaved.
+    const ladder = await page.evaluate(() => {
         const r = window.fractalityEngine().renderer;
-        if (q !== null) r.setQuality(q);
-        return {
-            geometry: r.instancedMesh.geometry.type,
-            lowPoly: r.lowPolyActive,
-            // The mesh must actually be rendering the geometry we just built.
-            // It once kept the original while the renderer tracked a new one.
-            inSync: r.instancedMesh.geometry === r.nodeGeometry,
-        };
-    }, q);
+        const steps = [
+            ['starts on full-detail spheres', null, false],
+            ['quality 0.30 drops to low poly', 0.30, true],
+            ['quality 0.50 holds low poly (hysteresis)', 0.50, true],
+            ['quality 0.70 restores spheres', 0.70, false],
+            ['quality 0.50 holds spheres (hysteresis)', 0.50, false],
+            ['quality 0.20 drops again', 0.20, true],
+            ['quality 0.90 restores again', 0.90, false],
+        ];
 
-    const expect = async (label, q, wantLowPoly) => {
-        const r = await setAndRead(q);
-        if (r.lowPoly !== wantLowPoly) {
-            fail(`${label}: expected lowPoly=${wantLowPoly}, got ${r.lowPoly} (${r.geometry})`);
-        } else if (!r.inSync) {
-            fail(`${label}: the mesh is rendering a different geometry than the renderer tracks`);
+        return steps.map(([label, q, wantLowPoly]) => {
+            if (q !== null) r.setQuality(q);
+            return {
+                label,
+                wantLowPoly,
+                lowPoly: r.lowPolyActive,
+                geometry: r.instancedMesh.geometry.type,
+                // The mesh must be rendering the geometry the renderer tracks.
+                // It once kept the original while the renderer moved on.
+                inSync: r.instancedMesh.geometry === r.nodeGeometry,
+            };
+        });
+    });
+
+    for (const step of ladder) {
+        if (step.lowPoly !== step.wantLowPoly) {
+            fail(`${step.label}: expected lowPoly=${step.wantLowPoly}, got ${step.lowPoly} (${step.geometry})`);
+        } else if (!step.inSync) {
+            fail(`${step.label}: the mesh renders a different geometry than the renderer tracks`);
         } else {
-            pass(`${label} (${r.geometry})`);
+            pass(`${step.label} (${step.geometry})`);
         }
-    };
-
-    await expect('starts on full-detail spheres', null, false);
-    await expect('quality 0.30 drops to low poly', 0.30, true);
-    await expect('quality 0.50 holds low poly (hysteresis)', 0.50, true);
-    await expect('quality 0.70 restores spheres', 0.70, false);
-    await expect('quality 0.50 holds spheres (hysteresis)', 0.50, false);
-    await expect('quality 0.20 drops again', 0.20, true);
-    await expect('quality 0.90 restores again', 0.90, false);
+    }
 
     // Swapping geometry must not break picking.
     await page.evaluate(() => window.fractalityEngine().renderer.setQuality(0.2));
@@ -468,7 +493,7 @@ console.log('\n--- cloud path (API stubbed) ---------------------------------');
         await page.waitForTimeout(300);
     };
 
-    await page.click('#open-maps');
+    await page.click('#app-dock [data-dock-id="maps"]');
     await settle();
 
     if (await page.evaluate(() => document.querySelector('.maps-share').disabled !== true)) {
@@ -567,7 +592,7 @@ for (const scenario of [
     });
     await page.evaluate(`(${scenario.install.toString()})()`);
 
-    await page.click('#open-maps');
+    await page.click('#app-dock [data-dock-id="maps"]');
     await page.waitForFunction(() => {
         const t = document.querySelector('.maps-status')?.textContent ?? '';
         return t && !/retrying|Loading/i.test(t);
@@ -590,6 +615,150 @@ for (const scenario of [
         if (!status.includes(origin)) fail(`the CORS message does not name this origin (${origin})`);
         else pass(`the CORS message names the exact origin to allow (${origin})`);
     }
+
+    await ctx.close();
+}
+
+// ---------------------------------------------------------------------------
+// 6. Every dock entry does something
+// ---------------------------------------------------------------------------
+//
+// This is the check the old menu would have failed. Eight of its nine buttons
+// called AppState.setView() with names no view existed for, and the router
+// answered by printing "Switched to: <name>" over the 3D scene. They looked
+// live, they were reachable, they were evenly spaced — and they did nothing.
+//
+// So reachability is not the property worth asserting here. Effect is: every
+// entry either changes observable state, or declares itself unavailable and
+// explains why.
+
+console.log('\n--- every dock entry has an effect ---------------------------');
+
+{
+    const { ctx, page } = await openApp(VIEWPORTS[0]);
+
+    // Enumerate the dock as the user meets it: top-level buttons, plus the rows
+    // inside each group.
+    const inventory = await page.evaluate(async () => {
+        const out = [];
+        const dock = document.querySelector('#app-dock');
+
+        for (const button of [...dock.querySelectorAll('.dock-button')]) {
+            const id = button.dataset.dockId;
+
+            // Only groups get clicked. Clicking an ACTION here would open its
+            // panel — Search covers most of the screen — and that panel then
+            // intercepts the clicks meant for the rest of the dock. Whether the
+            // actions work is section 2's job; this section is an inventory.
+            const isGroup = button.getAttribute('aria-haspopup') === 'true';
+
+            if (!isGroup) {
+                out.push({
+                    id,
+                    kind: 'action',
+                    unavailable: button.classList.contains('unavailable'),
+                    reason: button.title || '',
+                });
+                continue;
+            }
+
+            button.click();
+            await new Promise((r) => setTimeout(r, 200));
+
+            const sheet = document.querySelector('.dock-sheet');
+            if (!sheet) {
+                out.push({ id, kind: 'group', unavailable: true, reason: 'the group opened no sheet' });
+                continue;
+            }
+
+            for (const row of sheet.querySelectorAll('.dock-sheet-row')) {
+                out.push({
+                    id: row.dataset.dockId,
+                    kind: 'row',
+                    group: id,
+                    unavailable: row.classList.contains('unavailable'),
+                    reason: row.title || '',
+                });
+            }
+            button.click();   // close again
+            await new Promise((r) => setTimeout(r, 150));
+        }
+        return out;
+    });
+
+    if (inventory.length === 0) fail('the dock exposed no entries at all');
+    else pass(`the dock exposes ${inventory.length} entries`);
+
+    // Anything unavailable has to say why. "Nothing happens" is the bug; "not
+    // yet, because X" is an answer.
+    const silent = inventory.filter((e) => e.unavailable && !e.reason);
+    if (silent.length) fail(`unavailable with no explanation: ${silent.map((e) => e.id).join(', ')}`);
+    else pass('every unavailable entry explains itself');
+
+    // With the 3D view booted, nothing should be unavailable at all.
+    const blocked = inventory.filter((e) => e.unavailable);
+    if (blocked.length) {
+        fail(`still unavailable after the engine booted: ${blocked.map((e) => `${e.id} (${e.reason})`).join('; ')}`);
+    } else {
+        pass('no entry is unavailable once the engine has booted');
+    }
+
+    // Each layout row must actually change the engine's layout — the specific
+    // failure being guarded against is a menu entry that only narrates itself.
+    const layoutIds = inventory.filter((e) => e.id?.startsWith('layout-')).map((e) => e.id);
+    if (layoutIds.length < 2) fail(`expected several layout options, found ${layoutIds.length}`);
+    else {
+        const results = [];
+        for (const rowId of layoutIds) {
+            const wanted = rowId.replace('layout-', '');
+            await page.click('#app-dock [data-dock-id="view"]');
+            await page.waitForTimeout(200);
+            await page.click(`.dock-sheet-row[data-dock-id="${rowId}"]`);
+            await page.waitForTimeout(300);
+            const actual = await page.evaluate(() => window.fractalityEngine().getLayout());
+            results.push({ wanted, actual });
+        }
+        const wrong = results.filter((r) => r.wanted !== r.actual);
+        if (wrong.length) {
+            fail(`layout rows that did not take effect: ${wrong.map((r) => `${r.wanted} -> ${r.actual}`).join(', ')}`);
+        } else {
+            pass(`all ${results.length} layout options change the engine's layout`);
+        }
+    }
+
+    // The active row has to reflect the current layout, or the menu is lying
+    // about state even while the action works.
+    await page.click('#app-dock [data-dock-id="view"]');
+    await page.waitForTimeout(250);
+    const activeRows = await page.evaluate(() => ({
+        active: [...document.querySelectorAll('.dock-sheet-row.active')].map((r) => r.dataset.dockId),
+        engine: window.fractalityEngine().getLayout(),
+    }));
+    if (activeRows.active.length !== 1 || activeRows.active[0] !== `layout-${activeRows.engine}`) {
+        fail(`the active row (${activeRows.active.join(',') || 'none'}) does not match the engine (${activeRows.engine})`);
+    } else {
+        pass('the active row matches the engine\'s current layout');
+    }
+
+    // A sheet must close on an outside tap, or it sits over the map absorbing
+    // the taps meant for it.
+    await page.touchscreen.tap(195, 200);
+    await page.waitForTimeout(300);
+    if (await page.evaluate(() => Boolean(document.querySelector('.dock-sheet')))) {
+        fail('the sheet stays open after tapping outside it');
+    } else {
+        pass('the sheet closes on an outside tap');
+    }
+
+    // Only one sheet at a time; two overlapping sheets is how a menu becomes
+    // unusable on a small screen.
+    await page.click('#app-dock [data-dock-id="view"]');
+    await page.waitForTimeout(200);
+    await page.click('#app-dock [data-dock-id="more"]');
+    await page.waitForTimeout(250);
+    const sheetCount = await page.evaluate(() => document.querySelectorAll('.dock-sheet').length);
+    if (sheetCount !== 1) fail(`${sheetCount} sheets open at once`);
+    else pass('opening a second group replaces the first sheet');
 
     await ctx.close();
 }

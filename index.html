@@ -4,6 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Fractality Platform</title>
+  <!-- Inline so there is no extra request, and no 404 on every page load from
+       the browser probing /favicon.ico. -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%23000'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%2300ffff'/%3E%3Ccircle cx='25' cy='11' r='3' fill='%2300ffff' opacity='.7'/%3E%3Ccircle cx='8' cy='22' r='2.5' fill='%2300ffff' opacity='.5'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="./src/styles/main.css" />
   <!-- shell.css styles the markup below; main.css targets a different,
        older DOM and mobile-menu.css targets MenuController's. -->
@@ -11,31 +14,25 @@
 </head>
 <body>
   <div id="app">
-    <!-- Main Radial Menu Node -->
-    <div id="radial-menu" class="radial-menu"></div>
-
     <!-- Consciousness State Indicator -->
     <div id="state-indicator" class="state-indicator"></div>
 
-    <!-- Home Button (for submenus) -->
-    <button id="home-button" class="home-button hidden">Home</button>
-
-    <!-- Mirror Toggle Button: flips the radial menu for left-handed use -->
-    <button id="mirror-toggle" class="mirror-toggle">Mirror</button>
-
     <!-- Content View Swapper -->
     <div id="content-view" class="content-view">
-      <!-- Bubble View, Cone View, Node Manager, etc. dynamically injected here -->
-      
-      <!-- Canvas for FractalityEngine (add this if not created dynamically) -->
+      <!-- The 3D canvas is the view. "Bubble" and "Cone" were never separate
+           surfaces — they are layout algorithms, and are now offered as such
+           under the dock's View group. -->
       <canvas id="fractality-canvas" style="display: none;"></canvas>
     </div>
 
     <!-- Biometric Panel (hidden by default) -->
     <div id="biometric-panel" class="biometric-panel hidden"></div>
 
-    <!-- Desktop Dock (mobile-hidden) -->
-    <div id="desktop-dock" class="desktop-dock desktop-only"></div>
+    <!-- Primary navigation. DockMenu fills this; shell.css anchors it to the
+         bottom on phones and the top on wide screens. It replaced a
+         Fibonacci-spiral radial menu whose buttons mostly pointed at views that
+         had never been built. -->
+    <div id="app-dock" class="app-dock"></div>
   </div>
 
   <script type="module" src="./src/main.js"></script>

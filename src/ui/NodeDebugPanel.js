@@ -2,8 +2,12 @@
 // Mobile-first debug panel with responsive design
 
 export class NodeDebugPanel {
-    constructor(caceEngine) {
-        this.cace = caceEngine;
+    constructor(contextSource) {
+        // A context-score provider, not the CACE engine itself. The only thing
+        // this panel ever asked the engine for was a per-node score, via a
+        // method CACEEngine does not have; FractalityEngine.getContextScore()
+        // is the real source, so the engine is passed in directly.
+        this.contextSource = contextSource ?? null;
         this.panel = null;
         this.isVisible = false;
         this.selectedNodeId = null;
@@ -599,7 +603,7 @@ export class NodeDebugPanel {
             const nodes = window.nodeBridge.getVisibleNodes({ id: this.selectedNodeId });
             if (nodes.length > 0) {
                 const nodeData = nodes[0];
-                const contextScore = this.cace ? this.cace.calculateContextScore(nodeData) : 0;
+                const contextScore = this.contextSource?.getContextScore?.(this.selectedNodeId) ?? 0;
                 this.updateNode(this.selectedNodeId, nodeData, contextScore);
                 console.log('✅ Debug panel refreshed from server');
             }

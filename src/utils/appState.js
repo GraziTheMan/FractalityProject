@@ -94,10 +94,16 @@ export const AppState = {
 
     if (isBubble) {
       placeholder.style.display = 'none';
-      placeholder.innerHTML = '';
+      placeholder.textContent = '';
     } else {
+      // A fallback that should never be seen. 'bubble' — the 3D canvas — is the
+      // only view anything was ever built for, and it is the only one the dock
+      // asks for. The radial menu used to request eight others, and this branch
+      // is what answered: "Switched to: <name>" printed over the scene, which is
+      // what made those buttons look broken. If this ever appears, a caller is
+      // asking for a view that does not exist.
       placeholder.style.display = 'block';
-      placeholder.innerHTML = `Switched to: <strong>${view}</strong>`;
+      placeholder.textContent = `No view built for "${view}"`;
     }
   }
 };

@@ -217,6 +217,58 @@ export class FractalityEngine {
     }
     
     /**
+     * The CACE context score for one node, 0 if unknown.
+     *
+     * The score is recomputed for every visible node on each frame and stored
+     * on the node (see step 4 of update()), so this reads the same number the
+     * visuals are already using rather than recomputing it.
+     *
+     * There is no single-node scoring method on CACEEngine to call instead:
+     * calculateContext() normalizes across the whole visible set, so asking it
+     * about one node in isolation would return a meaningless 1.0. Two callers
+     * used to invoke a `calculateContextScore()` that does not exist on it at
+     * all — via a `caceEngine` property that does not exist either, so the
+     * error was never even reached.
+     *
+     * @param {string} nodeId
+     * @returns {number}
+     */
+    getContextScore(nodeId) {
+        return this.nodeGraph?.getNode(nodeId)?.contextScore ?? 0;
+    }
+
+    /**
+     * Switch the layout algorithm and re-run positioning.
+     *
+     * Exists so the UI does not have to reach into engine internals: setting
+     * `engine.layout.activeLayout` alone changes nothing visible, because
+     * positions are only recalculated when `state.needsLayout` is set. Both
+     * halves belong together, and forgetting the second is exactly the kind of
+     * "the button does nothing" bug this replaces.
+     *
+     * @param {string} name one of getAvailableLayouts()
+     * @returns {boolean} false if the layout is not implemented
+     */
+    setLayout(name) {
+        if (!this.layout.setActiveLayout(name)) {
+            console.warn(`Layout "${name}" is not implemented`);
+            return false;
+        }
+        this.state.needsLayout = true;
+        return true;
+    }
+
+    /** The active layout's name. */
+    getLayout() {
+        return this.layout.activeLayout;
+    }
+
+    /** Layout names this engine can actually render. */
+    getAvailableLayouts() {
+        return this.layout.getAvailableLayouts();
+    }
+
+    /**
      * Reset view to root
      */
     resetView() {
@@ -337,6 +389,21 @@ export class FractalityEngine {
                 // appear on a touch device — there is no mousemove to fire.
                 // immediate: skip the hover delay and hold the panel open.
                 this.nodeInfo.show(clickedNode, { immediate: true });
+
+                // Announce it for anything else that tracks the selection.
+                //
+                // A window event, matching the existing `fractality:expandNode`
+                // convention, because this class has no event emitter — it never
+                // had one, yet main.js called `engine.on('nodeSelected', …)`.
+                // That threw, and was only invisible because the listener was
+                // registered inside a branch that never ran.
+                //
+                // The name is deliberately not `nodeSelected`: that event means
+                // "please focus this node" and main.js answers it by calling
+                // setFocus(), so reusing it here would loop straight back in.
+                window.dispatchEvent(new CustomEvent('fractality:nodeFocused', {
+                    detail: { nodeId: clickedNode.id, node: clickedNode }
+                }));
             }
         }
     }

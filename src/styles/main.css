@@ -313,80 +313,20 @@ input[type="text"]:focus {
   font-size: 12px;
 }
 
-/* Desktop Dock CLI Controls */
-#desktop-dock {
-  background: rgba(0, 0, 0, 0.8);
-  border: 1px solid #333;
-  border-radius: 10px;
-  padding: 10px;
-}
+/* Dock styles: removed.
+ *
+ * These targeted `#desktop-dock`, `.cli-controls`, `.dock-button` and
+ * `.cli-search-mini` — markup that no longer exists. The dock is now
+ * `#app-dock`, filled and styled entirely by src/ui/DockMenu.js.
+ *
+ * They are deleted rather than renamed. `.dock-button` was styled here AND in
+ * the dock's own injected stylesheet, including a green `.active` state fighting
+ * the dock's cyan one. That is the arrangement that produced the 814px-tall
+ * toast: two files each supplying part of one component's appearance, with the
+ * outcome decided by load order.
+ */
 
-.cli-controls {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
 
-.dock-button {
-  background: rgba(30, 30, 30, 0.9);
-  border: 1px solid #444;
-  color: #ccc;
-  padding: 6px 12px;
-  border-radius: 5px;
-  cursor: pointer;
-  font-size: 13px;
-  transition: all 0.3s ease;
-}
-
-.dock-button:hover {
-  background: rgba(50, 50, 50, 0.9);
-  border-color: #666;
-  color: #fff;
-}
-
-.dock-button.active {
-  background: rgba(0, 100, 0, 0.3);
-  border-color: #00ff00;
-  color: #00ff00;
-}
-
-/* Mini search in dock */
-.cli-search-mini {
-  display: flex;
-  gap: 5px;
-  margin-left: auto;
-}
-
-.cli-search-mini input {
-  background: rgba(20, 20, 20, 0.9);
-  border: 1px solid #333;
-  color: #fff;
-  padding: 6px 10px;
-  border-radius: 5px;
-  font-size: 13px;
-  width: 150px;
-}
-
-.cli-search-mini input:focus {
-  outline: none;
-  border-color: #666;
-}
-
-.cli-search-mini button {
-  background: rgba(30, 30, 30, 0.9);
-  border: 1px solid #444;
-  color: #ccc;
-  padding: 6px 10px;
-  border-radius: 5px;
-  cursor: pointer;
-  font-size: 13px;
-}
-
-.cli-search-mini button:hover {
-  background: rgba(50, 50, 50, 0.9);
-  border-color: #666;
-}
 
 /* Search Results Panel - Floating */
 .search-results-panel {
@@ -527,20 +467,6 @@ input[type="text"]:focus {
 
 /* Responsive adjustments */
 @media (max-width: 768px) {
-  .cli-controls {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  
-  .cli-search-mini {
-    margin-left: 0;
-    margin-top: 10px;
-  }
-  
-  .cli-search-mini input {
-    flex: 1;
-  }
-  
   .search-results-panel {
     max-width: 90%;
     max-height: 80vh;

@@ -65,6 +65,38 @@ export class LayoutEngine {
     }
     
     /**
+     * The layouts that are actually implemented.
+     *
+     * Derived from `this.layouts` rather than hand-listed, so a config entry and
+     * a menu entry cannot drift apart. Note that calculateLayout()'s switch is
+     * the real authority: every key here has a matching case, and an unknown
+     * name silently falls through to 'family'. That silent fallback is why
+     * setActiveLayout() validates instead of assigning blind: a now-deleted
+     * LayoutSwitcher.js offered an 'organicFlow' option with no implementation
+     * behind it, and choosing it would have looked like the layout was simply
+     * ignoring you.
+     *
+     * @returns {string[]}
+     */
+    getAvailableLayouts() {
+        return Object.keys(this.layouts);
+    }
+
+    /**
+     * Switch layout algorithm.
+     *
+     * @param {string} name one of getAvailableLayouts()
+     * @returns {boolean} false if the name is not implemented
+     */
+    setActiveLayout(name) {
+        if (!Object.prototype.hasOwnProperty.call(this.layouts, name)) return false;
+        this.activeLayout = name;
+        // The cache key includes activeLayout, so stale entries cannot be
+        // returned for the wrong layout and are left to expire on their own.
+        return true;
+    }
+
+    /**
      * Calculate layout positions for visible nodes
      */
     calculateLayout(visibleNodes, focusNodeId, config = {}) {
@@ -206,9 +238,17 @@ export class LayoutEngine {
         
         if (!focusNode) return;
         
-        // Build tree structure
-        const tree = this._buildTreeStructure(visibleNodes, focusNode);
-        
+        // Root the tree at the highest visible ANCESTOR, not at the focus node.
+        //
+        // _buildTreeStructure only walks downward through childIds, so starting
+        // from the focus node left the parent and every sibling unpositioned —
+        // on the standard family view that is 3 of 7 visible nodes, which stayed
+        // wherever the previous layout had put them.
+        const tree = this._buildTreeStructure(
+            visibleNodes,
+            this._findVisibleRoot(visibleNodes, focusNode)
+        );
+
         // Position nodes recursively
         this._positionTreeNode(
             tree,
@@ -218,6 +258,49 @@ export class LayoutEngine {
             positions,
             treeConfig
         );
+
+        // Anything the tree could not reach — a node whose parent is not in the
+        // visible set — still needs somewhere to be. Left unpositioned it keeps
+        // its previous coordinates, which reads as a node that ignored the
+        // layout change.
+        this._positionOrphans(visibleNodes, positions, treeConfig);
+    }
+
+    /**
+     * Walk up from `node` while its parent is also visible.
+     *
+     * The visible set is a window onto the graph, so its topmost member is not
+     * necessarily the graph's root.
+     */
+    _findVisibleRoot(visibleNodes, node) {
+        const byId = new Map(visibleNodes.map(n => [n.id, n]));
+        let current = node;
+        // Bounded by the number of visible nodes: a cyclic parentId would
+        // otherwise loop forever, and this data comes from user-editable maps.
+        for (let guard = 0; guard < visibleNodes.length; guard++) {
+            const parent = current.parentId ? byId.get(current.parentId) : null;
+            if (!parent) break;
+            current = parent;
+        }
+        return current;
+    }
+
+    /**
+     * Place any visible node the main pass missed, in a ring under the tree.
+     */
+    _positionOrphans(visibleNodes, positions, config) {
+        const orphans = visibleNodes.filter(n => !positions.has(n.id));
+        if (orphans.length === 0) return;
+
+        const radius = (config.levelHeight ?? 5) * 1.5;
+        orphans.forEach((node, index) => {
+            const angle = (index / orphans.length) * Math.PI * 2;
+            positions.set(node.id, new THREE.Vector3(
+                radius * Math.cos(angle),
+                -(config.levelHeight ?? 5),
+                radius * Math.sin(angle)
+            ));
+        });
     }
     
     /**

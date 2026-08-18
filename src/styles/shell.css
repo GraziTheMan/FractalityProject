@@ -4,10 +4,15 @@
  *
  * main.css was written against a different markup (#canvas, #ui-overlay,
  * #controls) and mobile-menu.css against MenuController's (#menu-root,
- * #menu-container), so the shell in index.html — #radial-menu,
- * #state-indicator, #mirror-toggle, #content-view — had no styling at all.
- * Without a sized #radial-menu in particular, RadialMenu.render() reads a
- * zero-width bounding box and stacks every button in one spot.
+ * #menu-container), so the shell in index.html had no styling at all until this
+ * file existed.
+ *
+ * This file positions the shell only: #app, #content-view, #state-indicator and
+ * the #app-dock container. The dock's contents are styled by DockMenu, in one
+ * place, under `dock-`-prefixed selectors. That split is deliberate — a
+ * `.notification` styled from two files at once once rendered 814px tall and
+ * 175px off the left edge of a phone, because each file supplied half its
+ * position and neither knew about the other.
  *
  * Colours follow main.css: black ground, cyan accent, translucent panels.
  */
@@ -52,112 +57,51 @@
     backdrop-filter: blur(10px);
 }
 
-/* --- radial menu ------------------------------------------------------ */
+/* --- dock ------------------------------------------------------------- */
 
-/* The fan is positioned from the centre of this box, so it needs real
-   dimensions. Height accommodates the full 180-degree sweep. */
-.radial-menu {
-    position: absolute;
-    bottom: 24px;
-    left: 50%;
-    transform: translateX(-50%);
-    /* Must be at least 2x the radii passed in main.js (240 x 170), since the
-       fan is drawn outward from the centre of this box. */
-    width: 560px;
-    height: 380px;
-    z-index: 20;
-    pointer-events: none;
+/* The container only. Its contents are DockMenu's business.
+ *
+ * position + z-index are both load-bearing: without them the dock stayed in
+ * static flow underneath #content-view (absolute, inset 0), and the canvas
+ * covered it and swallowed every click.
+ *
+ * --dock-height is the single number every bottom-anchored element measures
+ * from, and --dock-sheet-offset tells DockMenu which way its sheets should open.
+ * Both are redefined in the compact block below; nothing else should hardcode a
+ * bottom edge.
+ */
+
+:root {
+    --dock-height: 0px;
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    /* Sheets open downward from a top-anchored dock. */
+    --dock-sheet-offset: auto;
 }
 
-.radial-item {
-    /* left/top are set inline by RadialMenu.render() */
-    transform: translate(-50%, -50%);
-    pointer-events: auto;
-    white-space: nowrap;
-    padding: 7px 12px;
-    font-size: 12px;
-    font-family: inherit;
-    color: #fff;
-    background: rgba(0, 0, 0, 0.85);
-    border: 1px solid #333;
-    border-radius: 999px;
-    cursor: pointer;
-    backdrop-filter: blur(10px);
-    transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
-}
-
-.radial-item:hover {
-    border-color: #0ff;
-    box-shadow: 0 0 16px rgba(0, 255, 255, 0.35);
-    transform: translate(-50%, -50%) scale(1.06);
-}
-
-/* --- desktop dock ----------------------------------------------------- */
-
-/* main.css styles the dock's appearance but never positions it, so it stayed in
-   static flow underneath #content-view (which is absolute, inset 0). The canvas
-   then covered it and swallowed every click — the Search, Debug and Maps buttons
-   were all unreachable. It needs both a position and a z-index above the
-   viewport.
-
-   Placed top-centre to stay clear of the radial fan at the bottom, the state
-   indicator top-left and the performance panel top-right. */
-.desktop-dock {
+.app-dock {
     position: absolute;
     top: 12px;
     left: 50%;
     transform: translateX(-50%);
     z-index: 30;
-    /* max(0px, ...) matters: on a 400px-wide phone the subtraction alone goes
-       NEGATIVE, and a negative max-width collapses the dock to nothing. That is
-       what made the buttons unreachable in portrait. */
-    max-width: max(240px, min(760px, calc(100vw - 420px)));
+    width: max-content;
+    /* max() first: on a 390px screen `calc(100vw - 420px)` alone is NEGATIVE,
+       and a negative max-width collapses the element to nothing. */
+    max-width: max(280px, min(860px, calc(100vw - 40px)));
+    padding: 6px;
+    background: rgba(0, 0, 0, 0.82);
+    border: 1px solid #2a2a2a;
+    border-radius: 14px;
+    backdrop-filter: blur(12px);
 }
 
-/* Labels are wrapped in .dock-label by addCLIControls() so narrow screens can
-   drop to emoji-only without changing the markup. */
-.dock-button .dock-label {
-    margin-left: 4px;
-}
-
-/* --- mirror toggle / home button -------------------------------------- */
-
-.mirror-toggle,
-.home-button {
-    position: absolute;
-    z-index: 20;
-    padding: 6px 14px;
-    font-size: 12px;
-    font-family: inherit;
-    color: #0ff;
-    background: rgba(0, 0, 0, 0.85);
-    border: 1px solid #333;
-    border-radius: 6px;
-    cursor: pointer;
-    backdrop-filter: blur(10px);
-    transition: border-color 0.2s ease, box-shadow 0.2s ease;
-}
-
-.mirror-toggle {
-    bottom: 24px;
-    right: 24px;
-}
-
-.home-button {
-    bottom: 24px;
-    left: 24px;
-}
-
-.mirror-toggle:hover,
-.home-button:hover {
-    border-color: #0ff;
-    box-shadow: 0 0 16px rgba(0, 255, 255, 0.3);
-}
-
-.mirror-toggle.active {
-    color: #000;
-    background: #0ff;
-    border-color: #0ff;
+/* Top-anchored: sheets hang below the bar. */
+.app-dock .dock-sheet {
+    bottom: auto;
+    top: 100%;
+    margin-top: 8px;
+    margin-bottom: 0;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
 }
 
 /* --- placeholder for non-3D views ------------------------------------- */
@@ -200,115 +144,46 @@
 
 /* --- responsive ---------------------------------------------------------
  *
- * The mobile layout is built around one fact: everything here is absolutely
- * positioned, so on a phone the pieces land on top of each other unless they
- * are explicitly stacked. Previously the dock was simply hidden below 720px,
- * which took the Maps, Search, Debug, Export and Import buttons with it — they
- * only reappeared in landscape, where the viewport clears 720px.
+ * Everything in the shell is absolutely positioned, so on a phone the pieces
+ * land on top of each other unless they are explicitly stacked.
  *
- * --dock-height is the shared reference every bottom-anchored element measures
- * from, so there is one number to change rather than five.
+ * The breakpoint tests height as well as width: a phone in landscape is 844px
+ * wide, which clears any width-only test while having less vertical room than
+ * any portrait phone — and that was the orientation the desktop layout handled
+ * worst.
  */
 
-:root {
-    /* Zero on desktop: the dock is docked to the top there. */
-    --dock-height: 0px;
-    --safe-bottom: env(safe-area-inset-bottom, 0px);
-}
-
-/* Compact layout: narrow OR short. Width alone was not enough — a phone in
-   landscape is 844x390, which clears the 720px width test while having less
-   vertical room than any portrait phone. That is the orientation the desktop
-   layout handled worst: the dock wrapped to two rows and the 364px-tall
-   performance overlay filled the screen. */
 @media (max-width: 720px), (max-height: 500px) {
     :root {
-        --dock-height: calc(52px + var(--safe-bottom));
+        --dock-height: calc(62px + var(--safe-bottom));
+        /* Sheets open upward from a bottom-anchored dock. */
+        --dock-sheet-offset: 100%;
     }
 
-    /* The dock becomes a real bottom bar rather than disappearing. Fixed (not
-       absolute) so it stays put when a panel scrolls, and scrollable across
-       its own axis so more buttons never overflow off-screen. */
-    .desktop-dock {
+    /* A real bottom bar: within thumb reach, full width, and fixed rather than
+       absolute so it stays put while a panel scrolls. */
+    .app-dock {
         position: fixed;
         top: auto;
         bottom: 0;
         left: 0;
         right: 0;
         transform: none;
+        width: auto;
         max-width: none;
         padding: 6px 8px calc(6px + var(--safe-bottom));
         border-radius: 0;
         border-left: none;
         border-right: none;
         border-bottom: none;
-        overflow-x: auto;
-        overflow-y: hidden;
-        -webkit-overflow-scrolling: touch;
-        scrollbar-width: none;
     }
 
-    .desktop-dock::-webkit-scrollbar {
-        display: none;
-    }
-
-    /* main.css switches .cli-controls to a vertical column under 768px, which
-       would make the bar as tall as the screen. One scrollable row instead. */
-    .desktop-dock .cli-controls {
-        flex-direction: row;
-        flex-wrap: nowrap;
-        align-items: center;
-        gap: 6px;
-        width: max-content;
-        min-width: 100%;
-    }
-
-    /* Emoji-only. Six labelled buttons need ~900px; six glyphs need ~280px.
-       40px square clears the minimum comfortable touch target once the
-       surrounding gap is counted. */
-    .dock-button .dock-label {
-        display: none;
-    }
-
-    .desktop-dock .dock-button {
-        flex: 0 0 auto;
-        min-width: 40px;
-        padding: 8px 10px;
-        font-size: 17px;
-        line-height: 1;
-    }
-
-    .desktop-dock .cli-status-mini {
-        flex: 0 0 auto;
-        font-size: 11px;
-        white-space: nowrap;
-    }
-
-    /* Radial menu sits above the dock and the mirror/home row.
-     *
-     * The height here is load-bearing, not cosmetic. RadialMenu clamps
-     * radiusY to (height / 2 - 24) and spreads 9 items across 2 * radiusY, so
-     * the vertical gap per item is (height - 48) / 8. A chip is ~35px tall,
-     * which means anything under ~330px of height makes the labels overlap —
-     * at 240px they did, and "Mindmap" was rendered underneath "Social".
-     *
-     * So: as tall as the desktop fan when there is room, and never taller than
-     * the space actually left above the dock and the mirror row. */
-    .radial-menu {
-        width: 100vw;
-        height: min(380px, calc(100vh - var(--dock-height) - 92px));
-        bottom: calc(var(--dock-height) + 44px);
-    }
-
-    /* Both were at bottom: 24px, i.e. underneath the new dock. */
-    .mirror-toggle {
-        bottom: calc(var(--dock-height) + 6px);
-        right: 12px;
-    }
-
-    .home-button {
-        bottom: calc(var(--dock-height) + 6px);
-        left: 12px;
+    .app-dock .dock-sheet {
+        bottom: 100%;
+        top: auto;
+        margin-top: 0;
+        margin-bottom: 8px;
+        box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.6);
     }
 
     .state-indicator {
@@ -324,25 +199,11 @@
         margin-top: 38px;
         min-width: 0;
     }
-}
 
-/* Short viewports (a phone in landscape is ~390px tall) cannot give 9 stacked
-   chips 35px each. Shrink the chips instead of the fan — a smaller fan would
-   just reintroduce the overlap. */
-@media (max-height: 500px) {
-    .radial-item {
-        padding: 3px 8px;
-        font-size: 10px;
-    }
-
-    .state-indicator {
-        font-size: 9px;
-        padding: 3px 6px;
-    }
-
-    .mirror-toggle,
-    .home-button {
-        padding: 3px 10px;
-        font-size: 10px;
+    #view-placeholder {
+        left: 10px;
+        right: 10px;
+        transform: translateY(-50%);
+        font-size: 15px;
     }
 }

@@ -201,15 +201,17 @@ above cannot see, since they only read files:
 ```bash
 npm i -D playwright && npx playwright install chromium   # one-time
 npm run preview &                 # serves the build on :4173
-npm run browser-check             # 38 checks at three viewports
+npm run browser-check             # 55 checks at three viewports
 ```
 
 It drives the real page at phone-portrait, phone-landscape and desktop sizes and
 asserts that every control is reachable, that panels close again, that tapping a
-node works, that the node geometry recovers from low-poly, and that a save
-followed by a failed list reload still reports the save as succeeded and still
-offers a share link. Every check in it exists because the corresponding bug
-shipped. See Parts 6 and 7 of `docs/AUDIT-2026-08.md`.
+node works, that the node geometry recovers from low-poly, that a save followed
+by a failed list reload still reports the save as succeeded and still offers a
+share link, and that **every entry in the dock has an observable effect** — the
+menu it replaced was reachable, evenly spaced and completely inert, so
+reachability alone proves nothing. Every check in it exists because the
+corresponding bug shipped. See Parts 6, 7 and 9 of `docs/AUDIT-2026-08.md`.
 
 ## When the Maps panel says it cannot reach the server
 
