@@ -87,6 +87,20 @@ export class ConeView {
         this.spin = 0;
 
         /**
+         * The node at this cone's apex, or null for the whole map.
+         *
+         * Axiom III makes this the right representation rather than a convenience:
+         * "Everything is a Fractal Hologram ... because the temporal metric is
+         * self-similar across its eigenvalues". If the structure repeats across scales
+         * then descending into a node and finding the same structure one scale down is
+         * what the model says should happen. Zooming is the scale-coupler.
+         */
+        this.apexId = null;
+
+        /** Apexes descended through, so going back up retraces the way in. */
+        this.trail = [];
+
+        /**
          * Follow a focus change made by another surface.
          *
          * Only another surface. A tap in the cone also changes the focus, and
@@ -125,6 +139,7 @@ export class ConeView {
         this.container.className = 'cone-view hidden';
         this.container.innerHTML = `
             <canvas class="cone-canvas"></canvas>
+            <div class="cone-breadcrumb" hidden></div>
             <div class="cone-readout">
                 <span class="cone-tier-label"></span>
                 <span class="cone-hint">drag sideways to spin · up and down to change tier</span>
@@ -136,9 +151,15 @@ export class ConeView {
         this.canvas = this.container.querySelector('.cone-canvas');
         this.ctx = this.canvas.getContext('2d');
         this.tierLabel = this.container.querySelector('.cone-tier-label');
+        this.breadcrumbEl = this.container.querySelector('.cone-breadcrumb');
 
         this.container.querySelector('.cone-close')
-            .addEventListener('click', () => this.hide());
+            .addEventListener('click', () => {
+                // Step up out of a nested cone rather than closing the view outright.
+                // Closing from three levels down and reopening at the whole map loses
+                // the reader's place for no reason.
+                if (!this.exitCone()) this.hide();
+            });
 
         this._bindGestures();
         this._injectStyles();
@@ -176,18 +197,166 @@ export class ConeView {
         const focused = graph?.getNode(this.getFocusedNode());
         if (!focused) return false;
 
-        this.tierFocus = this._clampTier(focused.depth);
+        const view = this._view(graph);
+        // A node outside this cone cannot be aimed at from inside it. Leaving the cone
+        // where it is beats scrolling to a tier that does not exist here.
+        if (view.ids && !view.ids.has(focused.id)) return false;
+
+        this.tierFocus = this._clampTier(view.depthOf(focused));
 
         // The wedge angles are recomputed here rather than cached: the graph may
         // have been edited or replaced since the last frame, and aiming with stale
         // angles points at wherever the node used to be.
-        const angle = this._computeAngles(graph).get(focused.id);
+        const angle = this._computeAngles(graph, view).get(focused.id);
         if (typeof angle === 'number') {
             // The front of the cone is where sin(angle + spin) is 0 and
             // cos(angle + spin) is 1 — see _project. So spin = -angle.
             this.spin = -angle;
         }
         return true;
+    }
+
+    // --- descending ---------------------------------------------------------
+
+    /**
+     * Make `nodeId` the apex of its own cone.
+     *
+     * The cone then shows that node and everything it contains, with its own
+     * contributors drawn above the apex as an inflow collar. The collar is NOT a tier of
+     * this cone: it is what flowed in from outside, and giving it a tier would imply the
+     * contributors are contained by a node they only fed.
+     *
+     * Which cone you are inside is a separate question from what a node emerged from,
+     * and the breadcrumb answers it. Drawing the containing cone as a node above the
+     * apex would conflate the two — and worse, it would hide the contributors, which are
+     * the most interesting fact about an emergent node.
+     *
+     * @returns {boolean} false if there is nothing to descend into
+     */
+    enterCone(nodeId) {
+        const graph = this.getGraph();
+        const node = graph?.getNode(nodeId);
+        if (!node) return false;
+
+        // A leaf has no cone of its own: descending would show one point and nothing
+        // else, which looks broken rather than empty.
+        if ((node.childIds ?? []).length === 0) return false;
+
+        if (this.apexId) this.trail.push(this.apexId);
+        this.apexId = nodeId;
+        this.tierFocus = 0;
+        this.spin = 0;
+        this._renderBreadcrumb();
+
+        // Bring the selection in with you. Without this the readout kept naming
+        // whatever was selected before — typically a node that is not in this cone at
+        // all — so the cone described something it was not showing.
+        this._selfInitiatedFocus = true;
+        this.onFocusNode(nodeId);
+        this._selfInitiatedFocus = false;
+        return true;
+    }
+
+    /** Go back up one cone. Returns false at the top. */
+    exitCone() {
+        if (!this.apexId) return false;
+
+        this.apexId = this.trail.pop() ?? null;
+        this.tierFocus = 0;
+        this.spin = 0;
+        // Aim at whatever is focused, so coming back up lands somewhere meaningful
+        // rather than at the apex regardless of where the reader had been.
+        this._renderBreadcrumb();
+        this.aimAtFocus();
+        return true;
+    }
+
+    /** The chain of apexes from the whole map down to the current one. */
+    _renderBreadcrumb() {
+        if (!this.breadcrumbEl) return;
+        this.breadcrumbEl.replaceChildren();
+
+        if (!this.apexId) {
+            this.breadcrumbEl.hidden = true;
+            return;
+        }
+        this.breadcrumbEl.hidden = false;
+
+        const graph = this.getGraph();
+        const nameOf = (id) => graph?.getNode(id)?.metadata.label || id;
+
+        const crumbs = [null, ...this.trail, this.apexId];
+        crumbs.forEach((id, index) => {
+            if (index > 0) {
+                const sep = document.createElement('span');
+                sep.className = 'cone-crumb-sep';
+                sep.textContent = '›';
+                this.breadcrumbEl.appendChild(sep);
+            }
+
+            const isLast = index === crumbs.length - 1;
+            const crumb = document.createElement('button');
+            crumb.type = 'button';
+            crumb.className = isLast ? 'cone-crumb current' : 'cone-crumb';
+            crumb.textContent = id === null ? 'Whole map' : nameOf(id);
+            if (isLast) {
+                crumb.disabled = true;
+            } else {
+                crumb.addEventListener('click', () => {
+                    // Jump straight to that level rather than stepping up one at a time.
+                    this.trail = crumbs.slice(1, index).filter(Boolean);
+                    this.apexId = id;
+                    this.tierFocus = 0;
+                    this.spin = 0;
+                    this._renderBreadcrumb();
+                    this.aimAtFocus();
+                });
+            }
+            this.breadcrumbEl.appendChild(crumb);
+        });
+    }
+
+    /**
+     * The nodes this cone shows, and their depth relative to its apex.
+     *
+     * Recomputed every frame rather than cached. The cone redraws from getGraph() each
+     * frame precisely so it can never show a stale graph, and caching membership here
+     * would reintroduce exactly that: a node added while the cone is open would not
+     * appear. It is a walk over one subtree, which costs far less than drawing it.
+     *
+     * @returns {{ids: Set<string>, depthOf: (node) => number, roots: Array, collar: Array}}
+     */
+    _view(graph) {
+        if (!this.apexId || !graph?.getNode(this.apexId)) {
+            return {
+                ids: null,          // null means "everything", so no filtering at all
+                depthOf: (node) => node.depth,
+                roots: graph?.getRootNodes() ?? [],
+                collar: [],
+            };
+        }
+
+        const apex = graph.getNode(this.apexId);
+        const ids = new Set([apex.id]);
+        const stack = [...(apex.childIds ?? [])];
+        while (stack.length > 0) {
+            const id = stack.pop();
+            if (ids.has(id)) continue;
+            const node = graph.getNode(id);
+            if (!node) continue;
+            ids.add(id);
+            for (const childId of node.childIds ?? []) stack.push(childId);
+        }
+
+        return {
+            ids,
+            // Relative to the apex, so the apex is this cone's tier 0. The nodes' real
+            // depths are untouched: they belong to the whole map, and rewriting them to
+            // suit a view would corrupt the model to draw a picture.
+            depthOf: (node) => node.depth - apex.depth,
+            roots: [apex],
+            collar: graph.getEmergentParents(apex.id),
+        };
     }
 
     hide() {
@@ -222,13 +391,14 @@ export class ConeView {
      *
      * @returns {Map<string, number>} node id -> angle in radians
      */
-    _computeAngles(graph) {
+    _computeAngles(graph, view = null) {
         const angles = new Map();
         const leafCounts = new Map();
+        const inView = (id) => !view?.ids || view.ids.has(id);
 
         // Leaf counts first, deepest-first, so a parent can read its children's.
         const order = [];
-        const roots = graph.getRootNodes();
+        const roots = view ? view.roots : graph.getRootNodes();
         const stack = [...roots.map((n) => n.id)];
         const seen = new Set();
         while (stack.length > 0) {
@@ -236,7 +406,9 @@ export class ConeView {
             if (seen.has(id)) continue;
             seen.add(id);
             order.push(id);
-            for (const childId of graph.getNode(id)?.childIds ?? []) stack.push(childId);
+            for (const childId of graph.getNode(id)?.childIds ?? []) {
+                if (inView(childId)) stack.push(childId);
+            }
         }
         for (const id of [...order].reverse()) {
             const node = graph.getNode(id);
@@ -277,20 +449,23 @@ export class ConeView {
      * only says how near the viewer a node is: that is what makes it a side view
      * of a cone rather than a top-down radial chart.
      */
-    _project(graph, angles) {
+    _project(graph, angles, view = null) {
         const width = this.canvas.clientWidth;
         const height = this.canvas.clientHeight;
         const centreX = width / 2;
         const centreY = height / 2;
+        const depthOf = view ? view.depthOf : ((n) => n.depth);
 
         // Keep the whole cone inside a phone's width at the widest tier.
-        const maxTier = Math.max(1, graph.stats.maxDepth);
+        const maxTier = Math.max(1, this._maxTier(graph, view));
         const scale = Math.min(1, (width * 0.42) / (maxTier * RADIUS_PER_TIER));
 
         const out = [];
         for (const node of graph.nodes.values()) {
+            if (view?.ids && !view.ids.has(node.id)) continue;
+            const depth = depthOf(node);
             const angle = (angles.get(node.id) ?? 0) + this.spin;
-            const radius = node.depth * RADIUS_PER_TIER * scale * _inwardPull(graph, node);
+            const radius = depth * RADIUS_PER_TIER * scale * _inwardPull(graph, node);
 
             // cos gives the near/far axis. Squashing it to 0.28 is the ellipse
             // the cone's circular tier makes when seen nearly edge-on.
@@ -305,8 +480,9 @@ export class ConeView {
                 // tried to measure integration from x passed only because the angle
                 // happened not to be zero.
                 radius,
+                depth,
                 x: centreX + radius * Math.sin(angle),
-                y: centreY + (node.depth - this.tierFocus) * TIER_HEIGHT * scale
+                y: centreY + (depth - this.tierFocus) * TIER_HEIGHT * scale
                      + radius * 0.28 * nearness,
                 nearness,
                 scale,
@@ -366,14 +542,15 @@ export class ConeView {
             return;
         }
 
-        const angles = this._computeAngles(graph);
-        const points = this._project(graph, angles);
+        const view = this._view(graph);
+        const angles = this._computeAngles(graph, view);
+        const points = this._project(graph, angles, view);
         const byId = new Map(points.map((p) => [p.node.id, p]));
         const focusedId = this.getFocusedNode();
         const tier = Math.round(this.tierFocus);
 
         // Tier guides: the ellipse each tier's circle makes at this angle.
-        const maxTier = graph.stats.maxDepth;
+        const maxTier = this._maxTier(graph, view);
         const scale = points[0]?.scale ?? 1;
         for (let d = 0; d <= maxTier; d++) {
             const y = height / 2 + (d - this.tierFocus) * TIER_HEIGHT * scale;
@@ -440,6 +617,49 @@ export class ConeView {
             }
         }
 
+        // The inflow collar: what flowed into this cone's apex from outside it.
+        //
+        // Above the apex, small, with lines converging down into it. Deliberately NOT a
+        // tier of this cone — these nodes are not contained by the apex, they fed it, and
+        // giving them a tier would say the opposite. Drawn only when descended, since at
+        // the whole-map level they are ordinary nodes with their own places.
+        this._collarHits = [];
+        if (view.collar.length > 0 && byId.has(this.apexId)) {
+            const apex = byId.get(this.apexId);
+            const spread = Math.min(width * 0.6, 64 * Math.max(1, view.collar.length - 1) + 64);
+            const collarY = apex.y - TIER_HEIGHT * 0.72 * scale;
+
+            view.collar.forEach((source, index) => {
+                const t = view.collar.length === 1
+                    ? 0.5
+                    : index / (view.collar.length - 1);
+                const x = width / 2 + (t - 0.5) * spread;
+
+                ctx.beginPath();
+                ctx.moveTo(x, collarY);
+                ctx.lineTo(apex.x, apex.y);
+                ctx.strokeStyle = 'rgba(0,255,255,0.35)';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.arc(x, collarY, 4.5, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(0,255,255,0.75)';
+                ctx.fill();
+
+                ctx.fillStyle = 'rgba(180,240,255,0.85)';
+                ctx.font = '10px system-ui, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    String(source.metadata.label || source.id).slice(0, 22),
+                    x, collarY - 9
+                );
+
+                // Tappable, so a contributor can be reached from here.
+                this._collarHits.push({ id: source.id, x, y: collarY, r: 12 });
+            });
+        }
+
         // Nodes.
         this._hits = [];
         const labelCandidates = [];
@@ -486,9 +706,17 @@ export class ConeView {
         // showed nothing — which is indistinguishable from the cone ignoring the
         // rename. It was not ignoring it; there was nowhere for the new name to
         // appear.
-        const count = graph.getNodesAtDepth(tier).length;
-        const focused = focusedId ? graph.getNode(focusedId) : null;
-        const parts = [`Tier ${tier} · ${count} node${count === 1 ? '' : 's'} of ${graph.nodes.size}`];
+        const count = points.filter((p) => p.depth === tier).length;
+        // Only if it is actually in this cone. Naming a node that is not on screen is
+        // worse than naming nothing: it reads as a claim about what you are looking at.
+        const focusedHere = focusedId && (!view.ids || view.ids.has(focusedId));
+        const focused = focusedHere ? graph.getNode(focusedId) : null;
+        const shown = view.ids ? view.ids.size : graph.nodes.size;
+        const parts = [`Tier ${tier} · ${count} node${count === 1 ? '' : 's'} of ${shown}`];
+        if (view.ids) {
+            const apex = graph.getNode(this.apexId);
+            parts.push(`inside "${apex?.metadata.label || this.apexId}"`);
+        }
         if (focused) {
             parts.push(`selected: ${focused.metadata.label || focused.id}`);
 
@@ -602,6 +830,32 @@ export class ConeView {
         };
 
         canvas.addEventListener('pointerup', end);
+
+        // A double tap descends into whatever was tapped.
+        //
+        // A single tap already means "select", and selecting is how you look around, so
+        // descending needs the second tap — the same reason the Node Manager's outline
+        // needs one tap to select and two to open the page.
+        canvas.addEventListener('dblclick', (event) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+            for (let i = this._hits.length - 1; i >= 0; i--) {
+                const hit = this._hits[i];
+                const dx = x - hit.x;
+                const dy = y - hit.y;
+                if (dx * dx + dy * dy <= hit.r * hit.r) {
+                    const graph = this.getGraph();
+                    const name = graph?.getNode(hit.id)?.metadata.label || hit.id;
+                    if (this.enterCone(hit.id)) {
+                        this.notify(`Inside "${name}"`);
+                    } else {
+                        this.notify(`"${name}" contains nothing to descend into`, 'warning');
+                    }
+                    return;
+                }
+            }
+        });
         canvas.addEventListener('pointercancel', () => { this._drag = null; });
 
         // A wheel is the desktop equivalent of the vertical drag.
@@ -611,12 +865,43 @@ export class ConeView {
         }, { passive: false });
     }
 
+    /** The deepest tier this cone shows, in its own local numbering. */
+    _maxTier(graph, view = null) {
+        if (!view?.ids) return graph.stats.maxDepth;
+        let max = 0;
+        for (const id of view.ids) {
+            const node = graph.getNode(id);
+            if (node) max = Math.max(max, view.depthOf(node));
+        }
+        return max;
+    }
+
     _clampTier(value) {
-        const maxTier = this.getGraph()?.stats.maxDepth ?? 0;
+        // The deepest tier of THIS cone, not of the whole map. Using the map's depth
+        // inside a descended cone would let you scroll past the bottom into empty space
+        // and then wonder where everything went.
+        const graph = this.getGraph();
+        if (!graph) return 0;
+        const maxTier = this._maxTier(graph, this._view(graph));
         return Math.max(0, Math.min(maxTier, value));
     }
 
     _handleTap(x, y) {
+        // The collar first: it is drawn above the apex and over everything, so it should
+        // be hit before the nodes underneath it.
+        for (const hit of this._collarHits ?? []) {
+            const dx = x - hit.x;
+            const dy = y - hit.y;
+            if (dx * dx + dy * dy <= hit.r * hit.r) {
+                this._selfInitiatedFocus = true;
+                this.onFocusNode(hit.id);
+                this._selfInitiatedFocus = false;
+                const label = this.getGraph()?.getNode(hit.id)?.metadata.label;
+                if (label) this.notify(`Selected "${label}"`);
+                return;
+            }
+        }
+
         // Nearest hit wins, and _hits is ordered far-to-near, so scanning in
         // reverse prefers whichever node is drawn on top.
         for (let i = this._hits.length - 1; i >= 0; i--) {
@@ -665,6 +950,40 @@ export class ConeView {
                 cursor: grab;
             }
             .cone-canvas:active { cursor: grabbing; }
+
+            .cone-breadcrumb {
+                position: absolute;
+                top: calc(var(--dock-top-height, 0px) + 10px);
+                left: 12px;
+                right: 56px;
+                display: flex;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 4px;
+                z-index: 2;
+            }
+            .cone-breadcrumb[hidden] { display: none; }
+            .cone-crumb {
+                background: rgba(0,0,0,0.6);
+                border: 1px solid #333;
+                border-radius: 999px;
+                color: #9dd;
+                font-family: inherit;
+                font-size: 11px;
+                min-height: 26px;
+                padding: 2px 10px;
+                cursor: pointer;
+            }
+            .cone-crumb:hover { border-color: #0ff; color: #0ff; }
+            /* The cone you are in. Disabled because pressing it would do nothing, and a
+               control that does nothing is worse than one that is plainly inert. */
+            .cone-crumb.current {
+                background: rgba(0,255,255,0.14);
+                border-color: #0ff;
+                color: #fff;
+                cursor: default;
+            }
+            .cone-crumb-sep { color: #555; font-size: 11px; }
 
             .cone-readout {
                 position: absolute;

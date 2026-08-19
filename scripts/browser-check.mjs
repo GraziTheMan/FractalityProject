@@ -2795,6 +2795,164 @@ if (run_emergence) {
         pass(`detaching a contributor raises the tier again (${detached.before} -> ${detached.after})`);
     }
 
+    // --- descending into an emergent node
+    //
+    // Axiom III makes a recursive cone the right representation rather than a
+    // convenience: if the structure is self-similar across scales then descending into a
+    // node and finding the same structure one scale down is what the model says happens.
+    //
+    // The load-bearing property is that descending is a VIEW and not an edit: real
+    // depths belong to the whole map, and rewriting them to suit a picture would corrupt
+    // the model to draw it.
+    const recursion = await page.evaluate(async () => {
+        const g = window.fractalityEngine().nodeGraph;
+        const cone = window.coneView;
+
+        for (const node of [...g.nodes.values()]) {
+            for (const src of [...node.emergesFrom]) g.removeEmergence(node.id, src);
+        }
+
+        const root = g.getRootNodes()[0];
+        const kids = g.getChildren(root.id);
+        const emergent = kids[1].id;
+        for (const c of [kids[2].id, kids[3].id, kids[4].id]) g.addEmergence(emergent, c);
+
+        cone.show();
+        await new Promise((r) => setTimeout(r, 250));
+
+        const measure = () => {
+            const view = cone._view(g);
+            const pts = cone._project(g, cone._computeAngles(g, view), view);
+            return { view, pts };
+        };
+
+        const wholeMap = measure();
+        const realDepthBefore = g.getNode(emergent).depth;
+
+        // Focus something OUTSIDE the subtree we are about to descend into, and record
+        // its name. Without this the check depended on whatever a previous block had
+        // left selected — which happened to be the apex itself, so removing the
+        // auto-focus changed nothing and the check passed on a broken build.
+        const outsider = g.getNode(root.id);
+        window.fractalityEngine().setFocus(outsider.id);
+        await new Promise((r) => setTimeout(r, 200));
+        const outsiderName = outsider.metadata.label || outsider.id;
+
+        const entered = cone.enterCone(emergent);
+        await new Promise((r) => setTimeout(r, 300));
+        const inside = measure();
+        const apexPt = inside.pts.find((x) => x.node.id === emergent);
+        const descendants = g.getDescendantIds(emergent);
+
+        const result = {
+            entered,
+            wholeCount: wholeMap.pts.length,
+            insideCount: inside.pts.length,
+            apexLocalDepth: apexPt?.depth,
+            apexOnAxis: apexPt?.radius === 0,
+            onlyTheSubtree: inside.pts.every((x) =>
+                x.node.id === emergent || descendants.includes(x.node.id)),
+            collar: inside.view.collar.length,
+            collarTappable: cone._collarHits?.length ?? 0,
+            realDepthBefore,
+            realDepthAfter: g.getNode(emergent).depth,
+            crumbs: [...document.querySelectorAll('.cone-crumb')].map((c) => ({
+                text: c.textContent, current: c.classList.contains('current'),
+            })),
+            readout: document.querySelector('.cone-tier-label').textContent,
+            outsiderName,
+            // Scrolling must stop at this cone's floor, not the whole map's.
+            clampedTo: (() => { cone.tierFocus = cone._clampTier(999); return cone.tierFocus; })(),
+            localMax: cone._maxTier(g, inside.view),
+        };
+
+        cone.tierFocus = 0;
+        const exited = cone.exitCone();
+        await new Promise((r) => setTimeout(r, 250));
+        result.exited = exited;
+        result.backCount = measure().pts.length;
+        result.crumbsAfter = document.querySelector('.cone-breadcrumb').hidden;
+
+        const leaf = [...g.nodes.values()].find((n) => n.childIds.length === 0);
+        result.leafRefused = cone.enterCone(leaf.id) === false;
+
+        return result;
+    });
+
+    if (!recursion.entered) {
+        fail('could not descend into a node that contains others');
+    } else if (recursion.apexLocalDepth !== 0 || !recursion.apexOnAxis) {
+        fail(`the descended node is not this cone's apex `
+            + `(local tier ${recursion.apexLocalDepth}, on axis ${recursion.apexOnAxis})`);
+    } else {
+        pass('descending puts the node at its own cone\'s apex, on the axis');
+    }
+
+    if (!recursion.onlyTheSubtree) {
+        fail('a descended cone shows nodes from outside the apex');
+    } else if (!(recursion.insideCount < recursion.wholeCount)) {
+        fail(`descending showed ${recursion.insideCount} nodes, not fewer than ${recursion.wholeCount}`);
+    } else {
+        pass(`a descended cone shows only what the apex contains (${recursion.insideCount} of ${recursion.wholeCount})`);
+    }
+
+    // The property that keeps this a view rather than an edit.
+    if (recursion.realDepthAfter !== recursion.realDepthBefore) {
+        fail(`descending changed the node's real tier `
+            + `(${recursion.realDepthBefore} -> ${recursion.realDepthAfter}) — `
+            + 'the view rewrote the model');
+    } else {
+        pass(`descending leaves real tiers alone (still ${recursion.realDepthAfter})`);
+    }
+
+    if (recursion.collar === 0) {
+        fail('the apex emerged from three nodes and no inflow collar was drawn');
+    } else if (recursion.collarTappable !== recursion.collar) {
+        fail(`${recursion.collar} collar node(s) drawn but ${recursion.collarTappable} tappable`);
+    } else {
+        pass(`the apex's contributors are drawn above it and reachable (${recursion.collar})`);
+    }
+
+    const crumbTexts = recursion.crumbs.map((c) => c.text);
+    if (crumbTexts.length !== 2 || crumbTexts[0] !== 'Whole map') {
+        fail(`the breadcrumb reads ${JSON.stringify(crumbTexts)}`);
+    } else if (!recursion.crumbs[1].current) {
+        fail('the breadcrumb does not mark which cone you are in');
+    } else {
+        pass(`the breadcrumb names the way back ("${crumbTexts.join(' › ')}")`);
+    }
+
+    // The readout must describe what is on screen, not what used to be selected.
+    if (!/inside "/.test(recursion.readout)) {
+        fail(`the readout does not say which cone you are in: "${recursion.readout}"`);
+    } else if (recursion.readout.includes(`selected: ${recursion.outsiderName}`)) {
+        fail(`the readout names "${recursion.outsiderName}", which is outside this cone: `
+            + `"${recursion.readout}"`);
+    } else {
+        pass('the readout names the cone you are in, and only nodes it contains');
+    }
+
+    if (recursion.clampedTo !== recursion.localMax) {
+        fail(`scrolling down reached tier ${recursion.clampedTo}, past this cone's floor `
+            + `of ${recursion.localMax}`);
+    } else {
+        pass(`scrolling stops at this cone's floor (tier ${recursion.localMax})`);
+    }
+
+    if (!recursion.exited || recursion.backCount !== recursion.wholeCount) {
+        fail(`coming back up showed ${recursion.backCount} of ${recursion.wholeCount} nodes`);
+    } else if (!recursion.crumbsAfter) {
+        fail('the breadcrumb is still shown at the whole-map level');
+    } else {
+        pass('coming back up restores the whole map and hides the breadcrumb');
+    }
+
+    if (!recursion.leafRefused) {
+        fail('descending into a leaf was allowed, which shows one point and nothing else');
+    } else {
+        pass('a node containing nothing refuses to be descended into');
+    }
+
     await ctx.close();
 }
 
