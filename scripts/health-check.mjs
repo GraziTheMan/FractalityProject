@@ -243,7 +243,15 @@ for (const f of htmlFiles) {
     const clean = ref.split('?')[0].split('#')[0];
     if (!clean) continue;
 
-    if (!isFile(path.resolve(path.dirname(f), clean))) {
+    // A leading slash is origin-absolute, not filesystem-absolute: the browser resolves it
+    // against the server root, and Vite serves everything in public/ from there. Resolving
+    // it relative to the HTML file — which is what this used to do — reported the manifest
+    // and the icons as missing while they were exactly where they had to be.
+    const candidates = clean.startsWith('/')
+        ? [path.join(ROOT, 'public', clean.slice(1)), path.join(ROOT, clean.slice(1))]
+        : [path.resolve(path.dirname(f), clean)];
+
+    if (!candidates.some(isFile)) {
       report('error', f, `missing referenced file "${ref}"`);
     }
   }

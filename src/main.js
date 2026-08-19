@@ -26,6 +26,7 @@ import { ECS } from './ecs/ECS.js';
 import { PositionComponent, RenderableComponent, KnowledgeComponent, InputComponent } from './ecs/components.js';
 import { RenderSystem } from './ecs/systems/RenderSystem.js';
 import { InputSystem } from './ecs/systems/InputSystem.js';
+import { registerServiceWorker, isInstalled } from './pwa.js';
 
 // Initialize state indicator
 document.getElementById('state-indicator').innerText = 'State: Balanced';
@@ -351,6 +352,50 @@ function buildDockItems() {
             : 'Sign in to save maps and post'),
           isActive: () => accountPanel.isOpen,
           onSelect: () => accountPanel.toggle()
+        },
+        {
+          id: 'install',
+          icon: '\u{2b07}',
+          label: 'Install app',
+          description: () => (isInstalled()
+            ? 'Already installed'
+            : 'Add Fractality to your device'),
+          // Deliberately never unavailable.
+          //
+          // The browser only fires beforeinstallprompt when it feels like it, and never on
+          // iOS, so an entry gated on having the prompt would be greyed out for most
+          // people — and telling them how to install by hand is useful information rather
+          // than a dead end. Same reason the dock avoids the disabled attribute at all: a
+          // control that swallows its own click explains nothing.
+          onSelect: async () => {
+            if (isInstalled()) {
+              showNotification('Fractality Platform is already installed on this device.');
+              return;
+            }
+            if (!installPrompt) {
+              showNotification(
+                'Your browser has not offered an install button yet. '
+                + 'Try its menu — or on iPhone, Share then "Add to Home Screen".',
+                'info'
+              );
+              return;
+            }
+            // The prompt is single-use: once shown, the captured event is spent whatever
+            // the user chooses, so it is dropped either way rather than being offered
+            // again as a control that silently does nothing.
+            const prompt = installPrompt;
+            installPrompt = null;
+            try {
+              await prompt.prompt();
+              const { outcome } = await prompt.userChoice;
+              if (outcome !== 'accepted') {
+                showNotification('You can install it later from your browser menu.');
+              }
+            } catch (error) {
+              showNotification(`Could not start the install: ${error.message}`, 'warning');
+            }
+            refreshDock();
+          }
         },
         { separator: true },
         {
@@ -685,6 +730,31 @@ async function openStartingMap() {
     console.warn('Could not open a starting map:', error.message);
     return false;
   }
+}
+
+/**
+ * The browser's install prompt, held for when the user asks for it.
+ *
+ * `beforeinstallprompt` fires once, early, and the event is the ONLY way to show the
+ * prompt — it cannot be re-created later. So it is captured the moment it arrives and kept.
+ * Losing it means the Install entry can only tell the user to use the browser menu.
+ */
+let installPrompt = null;
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeinstallprompt', (event) => {
+    // Without this the browser shows its own mini-infobar, and then the app has two
+    // competing ways to install it.
+    event.preventDefault();
+    installPrompt = event;
+    refreshDock();
+  });
+
+  window.addEventListener('appinstalled', () => {
+    installPrompt = null;
+    showNotification('Fractality Platform is installed.');
+    refreshDock();
+  });
 }
 
 /** The graph currently on screen, or null before the 3D view has booted. */
@@ -1090,6 +1160,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // and on a phone it is noise occupying scarce screen.
   if (hasCliBridge()) addCLISyncStatus();
   buildDock();
+
+  // Registered after the dock exists, so the "new version ready" notification has
+  // somewhere to appear. Deliberately not awaited: nothing on screen depends on it, and
+  // boot must not wait on a worker install.
+  registerServiceWorker((message, type) => showNotification(message, type));
   
   // Setup bridge listeners
   setupBridgeListeners();

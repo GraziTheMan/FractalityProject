@@ -2864,6 +2864,83 @@ if (run_emergence) {
         pass(`detaching a contributor raises the tier again (${detached.before} -> ${detached.after})`);
     }
 
+    // --- the on-axis toggle
+    //
+    // Declaring a reunification point has to be reachable without hand-editing a file, and
+    // has to show which way it is set: a toggle whose state is invisible makes pressing it
+    // a guess.
+    const toggle = await page.evaluate(async () => {
+        const g = window.fractalityEngine().nodeGraph;
+        const panel = window.nodeManagerPanel;
+        const target = g.getChildren(g.getRootNodes()[0].id)[0];
+        for (const n of g.nodes.values()) delete n.metadata.onAxis;
+
+        panel.show();
+        panel.selectNode(target.id);
+        await new Promise((r) => setTimeout(r, 250));
+
+        const button = () => document.querySelector('.nodemgr-action[data-action="axis"]');
+        const rowTier = () => document.querySelector(
+            `.nodemgr-row[data-node-id="${CSS.escape(target.id)}"] .nodemgr-tier`);
+
+        const before = {
+            exists: Boolean(button()),
+            pressed: button()?.getAttribute('aria-pressed'),
+            active: button()?.classList.contains('active'),
+            rowText: rowTier()?.textContent,
+        };
+
+        panel._run('axis');
+        await new Promise((r) => setTimeout(r, 250));
+        const after = {
+            declared: g.getNode(target.id).metadata.onAxis === true,
+            pressed: button()?.getAttribute('aria-pressed'),
+            active: button()?.classList.contains('active'),
+            rowText: rowTier()?.textContent,
+            pageMeta: document.querySelector('.nodemgr-page-tier')?.textContent ?? '',
+        };
+
+        panel._run('axis');
+        await new Promise((r) => setTimeout(r, 250));
+        const off = {
+            declared: g.getNode(target.id).metadata.onAxis === true,
+            pressed: button()?.getAttribute('aria-pressed'),
+            keyRemoved: !('onAxis' in g.getNode(target.id).metadata),
+        };
+
+        return { id: target.id, before, after, off };
+    });
+
+    if (!toggle.before.exists) {
+        fail('there is no way to declare a node on the axis from the outline');
+    } else if (!toggle.after.declared) {
+        fail('pressing the toggle did not declare the node on the axis');
+    } else if (toggle.before.pressed !== 'false' || toggle.after.pressed !== 'true') {
+        fail(`the toggle does not report its state (${toggle.before.pressed} -> ${toggle.after.pressed})`);
+    } else if (!toggle.after.active) {
+        fail('the toggle is set but not visibly marked, so pressing it is a guess');
+    } else {
+        pass('the outline can declare a node on the axis, and shows that it is set');
+    }
+
+    // Visible on the node too, or the outline and the cone disagree about what they know.
+    if (toggle.after.rowText === toggle.before.rowText) {
+        fail(`the row does not show it (still "${toggle.after.rowText}")`);
+    } else if (!/on the axis/.test(toggle.after.pageMeta)) {
+        fail(`the page pane does not mention it: "${toggle.after.pageMeta}"`);
+    } else {
+        pass(`the row and the page both show it ("${toggle.before.rowText}" -> "${toggle.after.rowText}")`);
+    }
+
+    // And pressing again is the way back, removing the key rather than storing false.
+    if (toggle.off.declared || toggle.off.pressed !== 'false') {
+        fail('pressing the toggle again did not undeclare it');
+    } else if (!toggle.off.keyRemoved) {
+        fail('undeclaring stored onAxis:false instead of removing the key');
+    } else {
+        pass('pressing it again removes the declaration entirely');
+    }
+
     // A node can be DECLARED on the axis, which is a claim about the ontology rather
     // than something derivable from its edges. Every derivable rule founders on sibling
     // branches: a node hanging off the side as a consequence would block the
@@ -3070,6 +3147,193 @@ if (run_emergence) {
         fail('descending into a leaf was allowed, which shows one point and nothing else');
     } else {
         pass('a node containing nothing refuses to be descended into');
+    }
+
+    await ctx.close();
+}
+
+// ---------------------------------------------------------------------------
+// 14. Installable as an app, and a service worker that is safe about it.
+//
+// A service worker is the one piece of a web app that can break it permanently: it sits in
+// front of every request, survives reloads, and a bad one serves a stale build to someone
+// with no obvious way out. So most of these checks are about what it must NOT do.
+// ---------------------------------------------------------------------------
+
+const run_installable = section('installable');
+
+if (run_installable) {
+    const { ctx, page } = await openApp(VIEWPORTS[2]);
+
+    const manifest = await page.evaluate(async () => {
+        const link = document.querySelector('link[rel=manifest]');
+        if (!link) return { missing: true };
+        const res = await fetch(link.href);
+        if (!res.ok) return { status: res.status };
+        const body = await res.json();
+        return {
+            status: res.status,
+            contentType: res.headers.get('content-type'),
+            body,
+            themeColor: document.querySelector('meta[name=theme-color]')?.content ?? null,
+            appleIcon: Boolean(document.querySelector('link[rel=apple-touch-icon]')),
+        };
+    });
+
+    if (manifest.missing) {
+        fail('there is no web app manifest, so the app cannot be installed');
+    } else if (manifest.status !== 200) {
+        fail(`the manifest returned ${manifest.status}`);
+    } else if (manifest.body.name !== 'Fractality Platform') {
+        fail(`the manifest names the app "${manifest.body.name}"`);
+    } else if (manifest.body.display !== 'standalone') {
+        fail(`display is "${manifest.body.display}", so it would open in a browser tab`);
+    } else {
+        pass(`the manifest is served and names the app ("${manifest.body.name}")`);
+    }
+
+    // Installability needs a 192 and a 512, and a maskable variant or the platform crops
+    // a square icon into a circle and takes the corners with it.
+    const sizes = (manifest.body?.icons ?? []).map((i) => `${i.sizes}:${i.purpose ?? 'any'}`);
+    const hasAny = ['192x192:any', '512x512:any'].every((s) => sizes.includes(s));
+    const hasMaskable = sizes.some((s) => s.endsWith(':maskable'));
+
+    if (!hasAny) {
+        fail(`the manifest lacks a 192 and 512 "any" icon (has ${sizes.join(', ')})`);
+    } else if (!hasMaskable) {
+        fail('the manifest has no maskable icon, so the platform will crop the square one');
+    } else if (!manifest.themeColor || !manifest.appleIcon) {
+        fail(`theme-color ${manifest.themeColor}, apple-touch-icon ${manifest.appleIcon}`);
+    } else {
+        pass(`icons cover 192, 512 and maskable, with a theme colour and an iOS icon`);
+    }
+
+    // Every icon must actually be the size it claims, or the platform silently rejects it.
+    //
+    // Paired by INDEX, not looked back up by src. Two entries can legitimately point at the
+    // same file, and an earlier version used find(d => d.src === i.src) — which returned
+    // whichever entry came first and let a 512 entry pointing at the 192 file pass, since
+    // the file really is the size the *other* entry declared.
+    const declaredIcons = (manifest.body?.icons ?? []).map((i) => ({
+        src: i.src,
+        expected: Number(String(i.sizes).split('x')[0]),
+        purpose: i.purpose ?? 'any',
+    }));
+
+    const icons = await page.evaluate((entries) => Promise.all(entries.map((entry) =>
+        new Promise((res) => {
+            const img = new Image();
+            img.onload = () => res({ ...entry, w: img.naturalWidth, h: img.naturalHeight });
+            img.onerror = () => res({ ...entry, w: 0, h: 0 });
+            img.src = entry.src;
+        }))), declaredIcons);
+
+    const wrong = icons.filter((i) => i.w !== i.expected || i.h !== i.expected);
+    if (wrong.length > 0) {
+        fail(`icons whose real size differs from the declared one: `
+            + wrong.map((i) => `${i.src} declared ${i.expected} but is ${i.w}x${i.h}`).join(', '));
+    } else {
+        pass(`every declared icon is really that size (${icons.map((i) => i.w).join(', ')})`);
+    }
+
+    // --- what the service worker must not do
+    const sw = await page.evaluate(async () => {
+        const res = await fetch('/sw.js');
+        return { status: res.status, source: res.ok ? await res.text() : '' };
+    });
+
+    if (sw.status !== 200) {
+        fail(`/sw.js returned ${sw.status}, so nothing can be installed`);
+    } else {
+        pass('the service worker is served from the origin root, giving it root scope');
+    }
+
+    // Read from the source rather than by exercising it: the failure mode is a cache that
+    // outlives a session and leaks one user's data to the next, and a behavioural test that
+    // happens to miss it would be worse than no test.
+    const rules = [
+        ['leaves cross-origin requests alone',
+            /url\.origin !== self\.location\.origin\)\s*return/],
+        ['handles only GET', /request\.method !== 'GET'\)\s*return/],
+        ['never caches a credentialed request', /headers\.has\('Authorization'\)\)\s*return/],
+        ['excludes API paths by name even on this origin', /NEVER_CACHE/],
+        ['uses network-first for navigation', /request\.mode === 'navigate'[\s\S]{0,120}networkFirst/],
+        ['only caches complete same-origin responses', /response\.type === 'basic'/],
+        ['waits to be told before replacing a running page', /'skip-waiting'/],
+        // Cache-first is only defensible for a filename that changes with its contents.
+        // Anything else added to this branch — /icons/ was, briefly — is pinned until
+        // VERSION changes, which is longer than any HTTP header can undo.
+        ['serves only content-hashed files from cache first',
+            /startsWith\('\/assets\/'\)\)\s*\{\s*event\.respondWith\(cacheFirst/],
+    ];
+    const broken = rules.filter(([, re]) => !re.test(sw.source)).map(([name]) => name);
+
+    if (broken.length > 0) {
+        fail(`the service worker no longer: ${broken.join('; ')}`);
+    } else {
+        pass(`the service worker refuses to cache anything per-user (${rules.length} rules)`);
+    }
+
+    // A stale cache name would mean an old build's assets outliving a deploy.
+    if (!/const VERSION = /.test(sw.source) || !/caches\.delete/.test(sw.source)) {
+        fail('the service worker does not clean up caches from older versions');
+    } else {
+        pass('older caches are deleted on activation');
+    }
+
+    // --- the dock offers it, and says something true when it cannot
+    const entry = await page.evaluate(async () => {
+        // The dock's own class names: .dock-button along the bar, .dock-sheet-row inside
+        // the More sheet. Guessing at .dock-item reported the entry as missing while it was
+        // there, which is a check failing on its own selector rather than on the app.
+        const more = [...document.querySelectorAll('.dock-button')]
+            .find((b) => /More/i.test(b.textContent));
+        more?.click();
+        await new Promise((r) => setTimeout(r, 400));
+
+        const item = [...document.querySelectorAll('.dock-sheet-row, .dock-button')]
+            .find((b) => /Install app/i.test(b.textContent));
+        return item
+            ? { found: true, text: item.textContent.trim(), title: item.getAttribute('title') ?? '' }
+            : {
+                found: false,
+                sheetRows: [...document.querySelectorAll('.dock-sheet-row')]
+                    .map((r) => r.textContent.trim().slice(0, 30)),
+            };
+    });
+
+    if (!entry.found) {
+        fail(`there is no Install entry in the dock (More holds: ${JSON.stringify(entry.sheetRows)})`);
+    } else {
+        pass('the dock offers Install');
+    }
+
+    // It must stay pressable when the browser has not offered a prompt — which is most of
+    // the time, and always on iOS. A greyed-out entry there would tell nobody anything,
+    // and the dock's own rule is that no entry is a placeholder.
+    const explains = await page.evaluate(async () => {
+        const item = [...document.querySelectorAll('.dock-sheet-row, .dock-button')]
+            .find((b) => /Install app/i.test(b.textContent));
+        if (!item) return { missing: true };
+
+        const unavailable = item.classList.contains('unavailable');
+        item.click();
+        await new Promise((r) => setTimeout(r, 400));
+        // The app's own class, .fractality-toast. Guessing at .notification found nothing
+        // and reported the message as empty while it was on screen.
+        const toasts = [...document.querySelectorAll('.fractality-toast')];
+        return {
+            unavailable,
+            said: toasts.map((t) => t.textContent).join(' | '),
+        };
+    });
+
+    if (explains.unavailable) {
+        fail('the Install entry is greyed out when no prompt has been offered');
+    } else if (!/browser|Home Screen|installed/i.test(explains.said)) {
+        fail(`pressing Install with no prompt available said: "${explains.said}"`);
+    } else {
+        pass('with no prompt available it explains how to install by hand');
     }
 
     await ctx.close();

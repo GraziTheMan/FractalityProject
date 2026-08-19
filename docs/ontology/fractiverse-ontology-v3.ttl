@@ -18,7 +18,8 @@
 #     than inferred from document order.
 #   * Tier numbers omitted. They are recomputed as 1 + max(all parents), so stating
 #     them can only disagree with the edges — as one did in v2.
-#   * fract:onAxis on the two ends of the axis.
+#   * fract:onAxis on Duality as well as the two ends: it is still singular, one
+#     distinction rather than the pair it produces.
 #   * fract:resetsTo from Stillness back to the Fractiverse, closing the cycle Axiom II
 #     describes. That edge bears no tier and is exempt from the acyclic rule, which is how
 #     a hierarchy can state a loop without collapsing.
@@ -52,14 +53,21 @@ the one thing that is not yet differentiated from anything.""";
 :duality a skos:Concept;
     skos:prefLabel "Duality";
     fract:nodeType "spiral-node";
+    fract:onAxis true;
     dcterms:description "The first distinction: that there is more than one thing.";
     schema:text """# Duality
 
 The first cut. Not "two things" but the possibility of two — the appearance of
-difference within what was undifferentiated.
+difference within what was undifferentiated. The split from the singularity is the
+catalyst; the Big Bang.
 
 Everything below is a consequence of this one move, which is why it is the only child
-of the Fractiverse.""";
+of the Fractiverse.
+
+**On the axis.** It is still singular — one distinction, not yet the pair it produces —
+so it belongs on the centre line with the Fractiverse above it and C4 far below. Those
+three are the points that are not partial: undifferentiated, the single act of
+differentiating, and everything come back together.""";
     skos:broader :fractiverse;
     fract:containedIn :fractiverse.
 

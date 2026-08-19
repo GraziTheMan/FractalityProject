@@ -37,6 +37,12 @@ services:
 
     # Single-page app: serve index.html for paths that aren't real files, so
     # deep links and refreshes don't 404.
+    #
+    # Real files win over this rule, which matters most for /sw.js: a rewrite
+    # that swallowed it would serve index.html as the service worker, and
+    # registration would fail on the content type with the app otherwise fine.
+    # The running deploy already demonstrates the precedence — /assets/*.js is
+    # served as itself, not as index.html.
     routes:
       - type: rewrite
         source: /*
@@ -51,6 +57,41 @@ services:
       - path: /index.html
         name: Cache-Control
         value: no-cache
+
+      # --- Installable-app files (public/, so NOT content-hashed) -----------
+      #
+      # sw.js must not be cached. A service worker is the only file that can pin
+      # a user to an old build permanently: the browser re-fetches it to look for
+      # updates, and if that fetch is answered from cache, the update is never
+      # seen and there is nothing the user can do about it from inside the app.
+      # Browsers cap service-worker script caching at 24h regardless, but relying
+      # on that means a full day of shipping to nobody.
+      - path: /sw.js
+        name: Cache-Control
+        value: no-cache
+      # Also served from the root because a worker's scope is limited to the
+      # directory it is served from — at /assets/sw.js it could not control the
+      # app it is meant to control.
+
+      # An unknown extension is served as a generic type, and Chrome ignores a
+      # manifest whose content type is not JSON-ish, which fails silently as
+      # "this app is not installable" with no error anywhere. Stated explicitly
+      # rather than trusted to Render's MIME table.
+      - path: /manifest.webmanifest
+        name: Content-Type
+        value: application/manifest+json
+      - path: /manifest.webmanifest
+        name: Cache-Control
+        value: public, max-age=3600
+
+      # Icon filenames are fixed, so `immutable` would pin the old artwork for a
+      # year. A day is long enough to be free on relaunch and short enough that a
+      # redraw actually lands. must-revalidate keeps a stale copy from being used
+      # after it expires.
+      - path: /icons/*
+        name: Cache-Control
+        value: public, max-age=86400, must-revalidate
+
       - path: /*
         name: X-Content-Type-Options
         value: nosniff

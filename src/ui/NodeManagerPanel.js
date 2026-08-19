@@ -374,6 +374,34 @@ Link to another node with [[its name]].
                 }
             },
             {
+                id: 'axis',
+                label: 'On axis',
+                icon: '⌖',
+                title: 'Declare this node a reunification point, on the cone\u2019s axis',
+                disabledReason: needsSelection,
+                run: () => {
+                    // A toggle rather than two actions: it is one bit, and a reader
+                    // pressing it wants to know what it is now, not to pick a verb.
+                    const now = node.metadata.onAxis === true;
+                    if (now) {
+                        delete node.metadata.onAxis;
+                    } else {
+                        node.metadata.onAxis = true;
+                    }
+
+                    // Deliberately NOT onGraphChanged(). Being on the axis changes where
+                    // the cone draws a node and nothing else — no tier moves, no layout
+                    // is invalidated — and the cone redraws from the graph every frame so
+                    // it picks this up on its own.
+                    this.render();
+
+                    const name = node.metadata.label || node.id;
+                    return now
+                        ? `"${name}" is no longer on the axis`
+                        : `"${name}" is on the axis — where everything comes back together`;
+                }
+            },
+            {
                 id: 'converge',
                 label: 'Emerges from',
                 icon: '⤵',
@@ -687,8 +715,15 @@ Link to another node with [[its name]].
 
         const tier = document.createElement('span');
         tier.className = 'nodemgr-tier';
-        tier.textContent = `T${node.depth}`;
-        tier.title = `Tier ${node.depth}`;
+        // On the axis is a claim about the node, so it belongs beside the tier rather than
+        // being visible only in the cone — otherwise the outline and the cone disagree
+        // about what they know.
+        const onAxis = node.metadata.onAxis === true;
+        tier.textContent = onAxis ? `T${node.depth}⌖` : `T${node.depth}`;
+        tier.title = onAxis
+            ? `Tier ${node.depth} · on the axis`
+            : `Tier ${node.depth}`;
+        if (onAxis) tier.classList.add('on-axis');
 
         const label = document.createElement('span');
         label.className = 'nodemgr-label';
@@ -872,6 +907,7 @@ Link to another node with [[its name]].
         const parts = [`Tier ${node.depth}`];
         if (position >= 0 && siblings.length > 1) parts.push(`${position + 1} of ${siblings.length}`);
         if (node.childIds.length) parts.push(`${node.childIds.length} below`);
+        if (node.metadata.onAxis === true) parts.push('on the axis');
         this.pageTierEl.textContent = parts.join(' · ');
 
         this._refreshInflow(graph, node);
@@ -1038,11 +1074,20 @@ Link to another node with [[its name]].
     /** Reflect the current selection into the toolbar's enabled states. */
     _syncToolbar() {
         const actions = this._actions();
+        const graphNow = this.getGraph();
         for (const action of actions) {
             const button = this.toolbarEl.querySelector(`[data-action="${action.id}"]`);
             if (!button) continue;
             const reason = action.disabledReason?.() || false;
             button.classList.toggle('unavailable', Boolean(reason));
+            // A toggle has to show which way it is set, or pressing it is a guess.
+            if (action.id === 'axis') {
+                const on = Boolean(
+                    this.selectedId && graphNow?.getNode(this.selectedId)?.metadata.onAxis
+                );
+                button.classList.toggle('active', on);
+                button.setAttribute('aria-pressed', String(on));
+            }
             button.setAttribute('aria-disabled', reason ? 'true' : 'false');
             button.title = reason || action.title || action.label;
         }
@@ -1436,6 +1481,7 @@ Link to another node with [[its name]].
                 font-size: 10px;
                 font-family: 'Consolas', 'Monaco', monospace;
             }
+            .nodemgr-tier.on-axis { color: #0ff; }
             .nodemgr-label {
                 flex: 1;
                 min-width: 0;
@@ -1474,6 +1520,13 @@ Link to another node with [[its name]].
                 cursor: pointer;
             }
             .nodemgr-action:hover { border-color: #0ff; }
+            /* A toggle that is on. Filled rather than merely outlined, so its state is
+               readable without hovering for the tooltip. */
+            .nodemgr-action.active {
+                background: rgba(0,255,255,0.16);
+                border-color: #0ff;
+                color: #0ff;
+            }
             .nodemgr-action.danger:hover { border-color: #ef4444; }
             /* Clickable while unavailable, so a press can explain itself. */
             .nodemgr-action.unavailable { opacity: 0.45; }
