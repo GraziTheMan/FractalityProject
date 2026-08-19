@@ -58,3 +58,23 @@ def isolate_environment():
     finally:
         os.environ.clear()
         os.environ.update(saved)
+
+
+def pytest_report_header(config):
+    """Say up front whether the integration tests can run, and against what.
+
+    A report header rather than a print or only a skip reason. pytest shows skip
+    reasons only with -rs or -ra, and it captures output during collection — so both
+    of the obvious places to put this are invisible to someone running the plain
+    `pytest -v` the docs tell them to run. A diagnosis nobody sees is no diagnosis,
+    which is how "it skipped again" happened twice.
+    """
+    from .envfiles import skip_reason, target_description
+
+    reason = skip_reason()
+    if reason:
+        return [f"integration tests: SKIPPED — {reason}"]
+    return [
+        f"integration tests: WILL RUN against {target_description()}",
+        "integration tests: they create and remove 'itest-' data only.",
+    ]

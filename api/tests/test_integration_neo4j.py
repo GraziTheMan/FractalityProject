@@ -47,12 +47,8 @@ _SKIP = skip_reason()
 
 pytestmark = pytest.mark.skipif(bool(_SKIP), reason=_SKIP or "runnable")
 
-if not _SKIP:
-    # These tests create and delete data. Which database that happens on should
-    # never be something the person running them has to infer, so it is stated
-    # before the first test rather than left to whatever the file happened to hold.
-    print(f"\n[integration] writing to {target_description()}")
-    print("[integration] creates and removes 'itest-' data only; other data is untouched.")
+# Reported through conftest's pytest_report_header, not printed here: pytest captures
+# output during collection, so an import-time print is swallowed and never seen.
 
 SUBJECT = "itest-subject"
 
