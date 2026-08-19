@@ -2473,6 +2473,205 @@ if (run_node_pages) {
     await phoneCtx.close();
 }
 
+// ---------------------------------------------------------------------------
+// 13. Convergent emergence: a node with more than one parent.
+//
+// An outline is a tree and the graph is not, so a node that several things flowed into
+// has to appear once as itself and otherwise as a reference. The alternative — the
+// whole subtree repeated under every contributor — gives N copies of one node and then
+// the question of which copy is real. These checks are mostly about that not happening.
+// ---------------------------------------------------------------------------
+
+const run_emergence = section('convergent emergence');
+
+if (run_emergence) {
+    const { ctx, page } = await openApp(VIEWPORTS[2]);   // desktop
+
+    const built = await page.evaluate(async () => {
+        const g = window.fractalityEngine().nodeGraph;
+        const panel = window.nodeManagerPanel;
+        const root = g.getRootNodes()[0];
+        const kids = g.getChildren(root.id);
+        const contributor = kids[0];
+        const emergent = kids[1];
+
+        const before = g.getNode(emergent.id).depth;
+        const added = g.addEmergence(emergent.id, contributor.id);
+        panel.show();
+        panel.selectNode(emergent.id);
+        await new Promise((r) => setTimeout(r, 300));
+
+        return {
+            added,
+            emergentId: emergent.id,
+            contributorId: contributor.id,
+            rootId: root.id,
+            tierBefore: before,
+            tierAfter: g.getNode(emergent.id).depth,
+            nodeCount: g.nodes.size,
+            rowCount: document.querySelectorAll('.nodemgr-row').length,
+            refs: [...document.querySelectorAll('.nodemgr-ref')].map((r) => r.dataset.refId),
+        };
+    });
+
+    if (!built.added) {
+        fail('a legal convergent parent was refused');
+    } else if (built.tierAfter <= built.tierBefore) {
+        fail(`the emergent node stayed at tier ${built.tierAfter} after gaining a contributor`);
+    } else {
+        pass(`gaining a contributor moves a node below it (tier ${built.tierBefore} -> ${built.tierAfter})`);
+    }
+
+    // The property that makes the outline still an outline.
+    if (built.rowCount !== built.nodeCount) {
+        fail(`${built.rowCount} outline rows for ${built.nodeCount} nodes — the node was duplicated`);
+    } else {
+        pass(`each node still has exactly one row (${built.rowCount} of ${built.nodeCount})`);
+    }
+
+    if (!built.refs.includes(built.emergentId)) {
+        fail('the contributor does not show that something emerged from it');
+    } else {
+        pass('a reference row appears under the contributor');
+    }
+
+    // A reference must not be mistakable for a home, or the toolbar would act on it.
+    const refShape = await page.evaluate(() => {
+        const ref = document.querySelector('.nodemgr-ref');
+        return {
+            isAlsoARow: ref.classList.contains('nodemgr-row'),
+            saysWhereItLives: /lives in/.test(ref.textContent),
+            hasNodeIdDataset: Boolean(ref.dataset.nodeId),
+        };
+    });
+
+    if (refShape.isAlsoARow || refShape.hasNodeIdDataset) {
+        fail('a reference row is indistinguishable from a real row');
+    } else if (!refShape.saysWhereItLives) {
+        fail('a reference row does not say where the node actually lives');
+    } else {
+        pass('a reference row is marked as a pointer and names the real home');
+    }
+
+    // Clicking it goes to the real node, and takes the rest of the app along.
+    const followed = await page.evaluate(async () => {
+        window.nodeManagerPanel.selectNode(
+            window.fractalityEngine().nodeGraph.getRootNodes()[0].id);
+        await new Promise((r) => setTimeout(r, 200));
+        const ref = document.querySelector('.nodemgr-ref');
+        const target = ref.dataset.refId;
+        ref.click();
+        await new Promise((r) => setTimeout(r, 250));
+        return {
+            target,
+            selected: window.nodeManagerPanel.selectedId,
+            focus: window.fractalityEngine().state.focusNode,
+        };
+    });
+
+    if (followed.selected !== followed.target || followed.focus !== followed.target) {
+        fail(`following a reference did not reach the node (${JSON.stringify(followed)})`);
+    } else {
+        pass('following a reference selects the real node and moves the 3D focus');
+    }
+
+    // What flows in, seen from the emergent node's own side.
+    const inflow = await page.evaluate(async () => {
+        const bar = document.querySelector('.nodemgr-inflow');
+        return {
+            hidden: bar.hidden,
+            chips: [...bar.querySelectorAll('.nodemgr-inflow-chip')].map((c) => ({
+                text: c.textContent,
+                container: c.classList.contains('container'),
+            })),
+        };
+    });
+
+    const streams = inflow.chips.filter((c) => !c.container);
+    const containers = inflow.chips.filter((c) => c.container);
+
+    if (inflow.hidden) {
+        fail('the selected node emerges from something and nothing says so');
+    } else if (streams.length !== 1 || containers.length !== 1) {
+        fail(`inflow shows ${streams.length} stream(s) and ${containers.length} container(s)`);
+    } else if (!/^inside /.test(containers[0].text)) {
+        fail(`the containing parent is not distinguished: "${containers[0].text}"`);
+    } else {
+        pass('the emergent node lists its streams, with the container marked apart');
+    }
+
+    // A node that converged from nothing must show no inflow bar at all, or the
+    // distinction stops being visible where it matters.
+    const plain = await page.evaluate(async () => {
+        const g = window.fractalityEngine().nodeGraph;
+        const bare = [...g.nodes.values()].find((n) => n.emergesFrom.length === 0 && n.parentId);
+        window.nodeManagerPanel.selectNode(bare.id);
+        await new Promise((r) => setTimeout(r, 250));
+        return document.querySelector('.nodemgr-inflow').hidden;
+    });
+
+    if (!plain) fail('a node with no contributors still shows an inflow bar');
+    else pass('a node with no contributors shows no inflow bar');
+
+    // The picker offers only legal choices, so an illegal one is never on screen.
+    const picker = await page.evaluate(async () => {
+        const g = window.fractalityEngine().nodeGraph;
+        const panel = window.nodeManagerPanel;
+        const root = g.getRootNodes()[0];
+        const target = g.getChildren(root.id)[2];
+        panel.selectNode(target.id);
+        await new Promise((r) => setTimeout(r, 200));
+
+        const eligible = panel._eligibleContributors(g, g.getNode(target.id));
+        const descendants = g.getDescendantIds(target.id);
+        return {
+            count: eligible.length,
+            includesSelf: eligible.some((n) => n.id === target.id),
+            includesContainer: eligible.some((n) => n.id === root.id),
+            includesADescendant: eligible.some((n) => descendants.includes(n.id)),
+            sortedByTier: eligible.every((n, i) => i === 0 || eligible[i - 1].depth <= n.depth),
+        };
+    });
+
+    if (picker.includesSelf) fail('the contributor picker offers the node itself');
+    else if (picker.includesContainer) fail('the picker offers the containing parent, which would double-count');
+    else if (picker.includesADescendant) fail('the picker offers a descendant, which would make a loop');
+    else if (!picker.sortedByTier) fail('the picker is not ordered by tier');
+    else pass(`the picker offers only legal contributors (${picker.count}), shallowest first`);
+
+    // And detaching puts the tier back.
+    const detached = await page.evaluate(async () => {
+        const g = window.fractalityEngine().nodeGraph;
+        const panel = window.nodeManagerPanel;
+        const emergent = [...g.nodes.values()].find((n) => n.emergesFrom.length > 0);
+        panel.selectNode(emergent.id);
+        await new Promise((r) => setTimeout(r, 200));
+
+        const before = g.getNode(emergent.id).depth;
+        panel._run('diverge');
+        await new Promise((r) => setTimeout(r, 250));
+        return {
+            id: emergent.id,
+            before,
+            after: g.getNode(emergent.id).depth,
+            emergesFrom: g.getNode(emergent.id).emergesFrom.length,
+            refsLeft: document.querySelectorAll('.nodemgr-ref').length,
+        };
+    });
+
+    if (detached.emergesFrom !== 0) {
+        fail('detaching left the contributor attached');
+    } else if (detached.after >= detached.before) {
+        fail(`the tier did not rise after detaching (${detached.before} -> ${detached.after})`);
+    } else if (detached.refsLeft !== 0) {
+        fail(`${detached.refsLeft} reference row(s) survived the detach`);
+    } else {
+        pass(`detaching a contributor raises the tier again (${detached.before} -> ${detached.after})`);
+    }
+
+    await ctx.close();
+}
+
 await browser.close();
 
 console.log('\n' + '='.repeat(62));

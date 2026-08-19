@@ -155,6 +155,7 @@ export class NodeManagerPanel {
                         <span class="nodemgr-page-tier"></span>
                         <button class="nodemgr-mode" type="button"></button>
                     </div>
+                    <div class="nodemgr-inflow" hidden></div>
                     <div class="nodemgr-page-body">
                         <div class="nodemgr-rendered"></div>
                         <textarea class="nodemgr-editor" spellcheck="true"
@@ -185,6 +186,7 @@ Link to another node with [[its name]].
         this.editorEl = this.container.querySelector('.nodemgr-editor');
         this.modeButton = this.container.querySelector('.nodemgr-mode');
         this.pageFootEl = this.container.querySelector('.nodemgr-page-foot');
+        this.inflowEl = this.container.querySelector('.nodemgr-inflow');
 
         this.container.querySelector('.nodemgr-close')
             .addEventListener('click', () => this.hide());
@@ -372,6 +374,83 @@ Link to another node with [[its name]].
                 }
             },
             {
+                id: 'converge',
+                label: 'Emerges from',
+                icon: '⤵',
+                title: 'Add another node this one emerged from',
+                disabledReason: () => needsSelection()
+                    || (node && this._eligibleContributors(graph, node).length === 0
+                        ? 'Nothing can contribute to this node without making a loop'
+                        : false),
+                run: () => {
+                    // The picker is the interesting part. Prompting for an id would be
+                    // unusable — nobody knows the ids — and a free-text label match
+                    // would silently pick the wrong node when two share a name. So it
+                    // offers a numbered list of what is actually eligible, which also
+                    // means the illegal choices are never on screen to be made.
+                    const eligible = this._eligibleContributors(graph, node);
+                    if (eligible.length === 0) {
+                        return 'Nothing can contribute to this node without '
+                            + 'making a loop. Try a node on a tier above it.';
+                    }
+
+                    const menu = eligible
+                        .map((n, i) => `${i + 1}. ${n.metadata.label || n.id} (tier ${n.depth})`)
+                        .join('\n');
+                    const answer = prompt(
+                        `What else did "${node.metadata.label || node.id}" emerge from?\n\n`
+                        + `${menu}\n\nEnter a number:`
+                    );
+                    if (!answer) return null;
+
+                    const choice = eligible[Number(answer) - 1];
+                    if (!choice) return `"${answer}" is not one of the choices`;
+
+                    if (!graph.addEmergence(node.id, choice.id)) {
+                        return `Could not add that: it would make a loop`;
+                    }
+                    this.onGraphChanged();
+                    return `"${node.metadata.label || node.id}" now emerges from `
+                        + `"${choice.metadata.label || choice.id}" — tier ${graph.getNode(node.id).depth}`;
+                }
+            },
+            {
+                id: 'diverge',
+                label: 'Detach',
+                icon: '⤴',
+                title: 'Remove a node this one emerged from',
+                disabledReason: () => needsSelection()
+                    || (node && node.emergesFrom.length === 0
+                        ? 'This node emerged from nothing else'
+                        : false),
+                run: () => {
+                    const sources = graph.getEmergentParents(node.id);
+                    if (sources.length === 0) return 'This node emerged from nothing else';
+
+                    // One source needs no menu; asking anyway is a step of nothing.
+                    let choice = sources[0];
+                    if (sources.length > 1) {
+                        const menu = sources
+                            .map((n, i) => `${i + 1}. ${n.metadata.label || n.id}`)
+                            .join('\n');
+                        const answer = prompt(
+                            `Stop "${node.metadata.label || node.id}" emerging from which?\n\n`
+                            + `${menu}\n\nEnter a number:`
+                        );
+                        if (!answer) return null;
+                        choice = sources[Number(answer) - 1];
+                        if (!choice) return `"${answer}" is not one of the choices`;
+                    }
+
+                    if (!graph.removeEmergence(node.id, choice.id)) {
+                        return 'Could not remove that';
+                    }
+                    this.onGraphChanged();
+                    return `No longer emerging from "${choice.metadata.label || choice.id}" `
+                        + `— now tier ${graph.getNode(node.id).depth}`;
+                }
+            },
+            {
                 id: 'delete',
                 label: 'Delete',
                 icon: '🗑️',
@@ -512,9 +591,65 @@ Link to another node with [[its name]].
     _renderSubtree(graph, node, indent) {
         this.treeEl.appendChild(this._renderRow(graph, node, indent));
         if (this.collapsed.has(node.id)) return;
+
         for (const child of graph.getChildren(node.id)) {
             this._renderSubtree(graph, child, indent + 1);
         }
+
+        // Reference rows for nodes that emerged from this one but live elsewhere.
+        //
+        // An outline is a tree and the graph is not, so a node with several parents has
+        // to appear once as itself and otherwise as a reference. The alternative —
+        // repeating the whole subtree under every contributor — gives N copies of one
+        // node, and then the question of which copy is real.
+        //
+        // Drawn after the real children so the containment tree reads uninterrupted,
+        // and only when not collapsed: convergence is detail, and hiding a branch
+        // should hide it.
+        for (const emergent of graph.getEmergentChildren(node.id)) {
+            this.treeEl.appendChild(this._renderReferenceRow(graph, emergent, indent + 1));
+        }
+    }
+
+    /**
+     * A pointer to a node that emerged from this one but is filed somewhere else.
+     *
+     * Deliberately not a `.nodemgr-row`: it must not look like a second home for the
+     * node, and the toolbar must not act on it as though it were. Clicking it navigates
+     * to the real row.
+     */
+    _renderReferenceRow(graph, node, indent) {
+        const row = document.createElement('div');
+        row.className = 'nodemgr-ref';
+        row.dataset.refId = node.id;
+        row.style.paddingLeft = `${8 + indent * INDENT_PX}px`;
+        row.setAttribute('role', 'link');
+
+        const arrow = document.createElement('span');
+        arrow.className = 'nodemgr-ref-arrow';
+        arrow.textContent = '↳';
+        arrow.setAttribute('aria-hidden', 'true');
+
+        const label = document.createElement('span');
+        label.className = 'nodemgr-ref-label';
+        label.textContent = node.metadata.label || node.id;
+
+        const where = document.createElement('span');
+        where.className = 'nodemgr-ref-where';
+        const container = node.parentId ? graph.getNode(node.parentId) : null;
+        where.textContent = container
+            ? `emerges here · lives in ${container.metadata.label || container.id}`
+            : 'emerges here';
+
+        // Marked when it points at the selection, so the outline shows every place the
+        // selected node appears rather than only its home.
+        if (node.id === this.selectedId) row.classList.add('selected');
+
+        row.append(arrow, label, where);
+        const name = node.metadata.label || node.id;
+        row.title = `"${name}" emerged partly from this node. Click to go to it.`;
+        row.addEventListener('click', () => this.selectNode(node.id));
+        return row;
     }
 
     _renderRow(graph, node, indent) {
@@ -565,6 +700,7 @@ Link to another node with [[its name]].
         // one that is still just a word, and finding out means clicking every row.
         const page = document.createElement('span');
         page.className = 'nodemgr-haspage';
+
         const content = node.metadata.content ?? '';
         if (content.trim()) {
             page.textContent = '◈';
@@ -709,6 +845,7 @@ Link to another node with [[its name]].
                 this._placeholder('Pick a node in the outline to read or write its page.')
             );
             this.pageFootEl.textContent = '';
+            if (this.inflowEl) this.inflowEl.hidden = true;
             return;
         }
 
@@ -737,6 +874,8 @@ Link to another node with [[its name]].
         if (node.childIds.length) parts.push(`${node.childIds.length} below`);
         this.pageTierEl.textContent = parts.join(' · ');
 
+        this._refreshInflow(graph, node);
+
         const content = node.metadata.content ?? '';
         if (content.trim()) {
             renderMarkdownInto(this.renderedEl, content, {
@@ -752,6 +891,58 @@ Link to another node with [[its name]].
         this.pageFootEl.textContent = content.trim()
             ? `${content.length} characters · linked with [[node name]]`
             : 'Markdown. Link to another node with [[its name]].';
+    }
+
+    /**
+     * What flows into the selected node, above its page.
+     *
+     * The counterpart of the outline's reference rows: there you see convergence from
+     * the contributor's side, here from the emergent node's. Both are needed, because
+     * an emergent node's contributors are the most interesting fact about it and the
+     * outline can only ever file it under one of them.
+     */
+    _refreshInflow(graph, node) {
+        if (!this.inflowEl) return;
+        this.inflowEl.replaceChildren();
+
+        const sources = graph.getEmergentParents(node.id);
+        if (sources.length === 0) {
+            this.inflowEl.hidden = true;
+            return;
+        }
+        this.inflowEl.hidden = false;
+
+        const caption = document.createElement('span');
+        caption.className = 'nodemgr-inflow-caption';
+        caption.textContent = sources.length === 1 ? 'Emerges from' : `Emerges from ${sources.length}`;
+        this.inflowEl.appendChild(caption);
+
+        for (const source of sources) {
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'nodemgr-inflow-chip';
+            chip.textContent = source.metadata.label || source.id;
+            chip.title = `Tier ${source.depth} · click to go to it`;
+            chip.addEventListener('click', () => this.selectNode(source.id));
+            this.inflowEl.appendChild(chip);
+        }
+
+        // The containing parent, stated last and differently. It is a parent too, but
+        // it is the one that decides where the node is filed rather than one of the
+        // streams that made it, and showing them identically would erase the
+        // distinction the whole model rests on.
+        if (node.parentId) {
+            const container = graph.getNode(node.parentId);
+            if (container) {
+                const chip = document.createElement('button');
+                chip.type = 'button';
+                chip.className = 'nodemgr-inflow-chip container';
+                chip.textContent = `inside ${container.metadata.label || container.id}`;
+                chip.title = 'The containing scale — where this node is filed';
+                chip.addEventListener('click', () => this.selectNode(container.id));
+                this.inflowEl.appendChild(chip);
+            }
+        }
     }
 
     /**
@@ -818,6 +1009,30 @@ Link to another node with [[its name]].
         if (!row || !node) return;
         const indent = Math.round((parseFloat(row.style.paddingLeft) - 8) / INDENT_PX);
         row.replaceWith(this._renderRow(graph, node, Number.isFinite(indent) ? indent : 0));
+    }
+
+    /**
+     * Nodes that could legally become contributors to `node`.
+     *
+     * Computed rather than filtered after the fact, so an illegal choice is never on
+     * screen to be made. The rules are the model's, restated here only to build the
+     * list: not itself, not already a parent by either relation, and not something
+     * below it — which would close a loop.
+     *
+     * Sorted by tier then label. Tier first because a contributor is nearly always
+     * something above the node, so the likely answers come first.
+     */
+    _eligibleContributors(graph, node) {
+        if (!graph || !node) return [];
+
+        return [...graph.nodes.values()]
+            .filter((candidate) => candidate.id !== node.id)
+            .filter((candidate) => candidate.id !== node.parentId)
+            .filter((candidate) => !node.emergesFrom.includes(candidate.id))
+            .filter((candidate) => !graph.wouldCreateCycle(node.id, candidate.id))
+            .sort((a, b) => (a.depth - b.depth)
+                || String(a.metadata.label ?? a.id)
+                    .localeCompare(String(b.metadata.label ?? b.id)));
     }
 
     /** Reflect the current selection into the toolbar's enabled states. */
@@ -908,6 +1123,80 @@ Link to another node with [[its name]].
             .nodemgr-tab:first-child { border-radius: 6px 0 0 6px; }
             .nodemgr-tab:last-child { border-radius: 0 6px 6px 0; }
             .nodemgr-tab.active { background: rgba(0,255,255,0.16); border-color: #0ff; color: #fff; }
+
+            /* --- convergence in the outline ------------------------------ */
+            /* Not a .nodemgr-row: it must not read as a second home for the node,
+               and the toolbar must not act on it as though it were one. */
+            .nodemgr-ref {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                min-height: 26px;
+                padding-right: 8px;
+                font-size: 11px;
+                color: #7a7a7a;
+                cursor: pointer;
+                border-left: 2px solid transparent;
+            }
+            .nodemgr-ref:hover { background: rgba(0,255,255,0.05); color: #bbb; }
+            .nodemgr-ref.selected { border-left-color: #0ff6; color: #9dd; }
+            .nodemgr-ref-arrow { flex: 0 0 auto; color: #0ff8; }
+            .nodemgr-ref-label {
+                flex: 0 1 auto;
+                min-width: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                font-style: italic;
+            }
+            .nodemgr-ref-where {
+                flex: 1 1 auto;
+                min-width: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                color: #555;
+                font-size: 10px;
+            }
+
+            /* --- what flows into the selected node ----------------------- */
+            .nodemgr-inflow {
+                display: flex;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 5px;
+                padding: 7px 14px;
+                border-bottom: 1px solid #222;
+                background: rgba(0,255,255,0.03);
+            }
+            .nodemgr-inflow[hidden] { display: none; }
+            .nodemgr-inflow-caption {
+                color: #666;
+                font-size: 10px;
+                letter-spacing: 0.5px;
+                text-transform: uppercase;
+            }
+            .nodemgr-inflow-chip {
+                background: rgba(0,255,255,0.10);
+                border: 1px solid #0ff4;
+                border-radius: 999px;
+                color: #0ff;
+                font-family: inherit;
+                font-size: 11px;
+                min-height: 24px;
+                padding: 2px 9px;
+                cursor: pointer;
+            }
+            .nodemgr-inflow-chip:hover { background: rgba(0,255,255,0.2); }
+            /* The containing parent is a parent too, but it decides where the node is
+               filed rather than being one of the streams that made it. Showing them
+               identically would erase the distinction the model rests on. */
+            .nodemgr-inflow-chip.container {
+                background: none;
+                border-color: #444;
+                border-style: dashed;
+                color: #888;
+            }
 
             /* --- the page ------------------------------------------------- */
             .nodemgr-page-head {
