@@ -16,7 +16,15 @@ Data model
     (:User)-[:OWNS]->(:MindMap)
     (:MindMap)-[:CONTAINS]->(:MapNode)
     (:MapNode)-[:HAS_CHILD]->(:MapNode)
+    (:MapNode)-[:EMERGES_FROM]->(:MapNode)
     (:MindMap)-[:SHARED_VIA]->(:ShareLink)
+
+HAS_CHILD and EMERGES_FROM are deliberately separate types. HAS_CHILD is
+containment — which node is inside which, and where a node lives in the outline.
+EMERGES_FROM is convergence — which streams flowed together to make a node, of which
+there may be many. "Consciousness" is inside The Fractiverse and emerges from four
+axioms; one relation cannot carry both facts. Keeping them apart also means a
+traversal can ask for one without the other, which the tier computation needs.
 
 Why HAS_CHILD *and* a parent property: the relationship is what makes traversal
 cheap in Neo4j (the reason for choosing it), while childIds/parentId are what the
@@ -176,6 +184,11 @@ def _row_to_node(row: Dict[str, Any]) -> MapNode:
         parentId=row.get("parentId"),
         # Derived from HAS_CHILD relationships, which are authoritative
         childIds=[c for c in (row.get("childIds") or []) if c is not None],
+        # Likewise from EMERGES_FROM. Sorted, because collect() gives no order and an
+        # unstable order would make an unchanged map look changed on every read.
+        emergesFrom=sorted(
+            c for c in (row.get("emergesFrom") or []) if c is not None
+        ),
         depth=row.get("depth") or 0,
         metadata=metadata,
         energy=NodeEnergy(**load(row.get("energy_json"), {})),
@@ -300,8 +313,10 @@ GET_MAP_NODES = """
 MATCH (m:MindMap {id: $map_id})-[:CONTAINS]->(n:MapNode)
 OPTIONAL MATCH (n)-[:HAS_CHILD]->(c:MapNode)
 OPTIONAL MATCH (p:MapNode)-[:HAS_CHILD]->(n)
+OPTIONAL MATCH (n)-[:EMERGES_FROM]->(e:MapNode)
 RETURN n.id AS id, n.depth AS depth, p.id AS parentId,
        collect(DISTINCT c.id) AS childIds,
+       collect(DISTINCT e.id) AS emergesFrom,
        n.label AS label, n.type AS type, n.tags AS tags,
        n.description AS description, n.content AS content,
        n.metadata_json AS metadata_json,
@@ -416,6 +431,17 @@ MATCH (child:MapNode {map_id: $map_id, id: edge.child})
 MERGE (parent)-[:HAS_CHILD]->(child)
 """
 
+# Convergent emergence, kept as its own relationship type rather than as another
+# HAS_CHILD. They are different relations and merging them would lose the
+# distinction the whole feature exists for: HAS_CHILD says "is inside", EMERGES_FROM
+# says "flowed into". A traversal that wants one and not the other must be able to ask.
+LINK_EMERGENCE = """
+UNWIND $edges AS edge
+MATCH (source:MapNode {map_id: $map_id, id: edge.source})
+MATCH (target:MapNode {map_id: $map_id, id: edge.target})
+MERGE (target)-[:EMERGES_FROM]->(source)
+"""
+
 FINALIZE_MAP = """
 MATCH (m:MindMap {id: $map_id})
 SET m.node_count = $node_count,
@@ -462,6 +488,19 @@ async def replace_nodes(
 
         if edges:
             await db.run_write(settings, LINK_NODES, map_id=map_id, edges=edges)
+
+        emergence = [
+            {"target": node.id, "source": source_id}
+            for node in nodes
+            for source_id in node.emergesFrom
+            # A contributor that is also the containing parent would double-count the
+            # node's convergence degree, which the cone reads as a radius.
+            if source_id != node.parentId and source_id != node.id
+        ]
+        if emergence:
+            await db.run_write(
+                settings, LINK_EMERGENCE, map_id=map_id, edges=emergence
+            )
 
     await db.run_write(
         settings,

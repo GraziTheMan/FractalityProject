@@ -268,7 +268,7 @@ def test_read_returns_frontend_node_shape(client):
     assert body["nodes"], "expected at least one node"
     node = body["nodes"][0]
     assert set(node) == {
-        "id", "parentId", "childIds", "depth",
+        "id", "parentId", "childIds", "emergesFrom", "depth",
         "metadata", "energy", "resonance", "visual", "timestamps",
     }
 

@@ -286,6 +286,107 @@ test('multiple roots are preserved and both marked as top concepts', async () =>
     assert.equal(restored.getRootNodes().length, 2);
 });
 
+test('convergent emergence round-trips through Turtle', async () => {
+    const graph = makeGraph();
+    // alpha is contained by root and also emerges from beta.
+    assert.equal(graph.addEmergence('alpha', 'beta'), true);
+
+    const ttl = await graphToTurtle(graph, { mapId: 'test' });
+    const { graph: restored } = await turtleToGraph(ttl);
+
+    assert.equal(restored.getNode('alpha').parentId, 'root', 'the container survives');
+    assert.deepEqual(restored.getNode('alpha').emergesFrom, ['beta']);
+    assert.equal(restored.getNode('alpha').depth, 2, 'the tier is recomputed from both');
+});
+
+test('every parent is emitted as skos:broader, with the container also named', async () => {
+    // In SKOS terms all of them ARE broader concepts — the vocabulary is many-to-many
+    // and always has been. fract:containedIn is what SKOS has no way to say: which one
+    // decides where the node is filed.
+    const graph = makeGraph();
+    graph.addEmergence('alpha', 'beta');
+    const ttl = await graphToTurtle(graph, { mapId: 'test' });
+
+    // Asserted on the parsed graph, not by counting occurrences of the string.
+    // N3's writer collapses several objects onto one predicate — "skos:broader :beta,
+    // :root;" is two edges on one line — so counting matches of /skos:broader/ counts
+    // predicates and undercounts edges. An earlier version of this failed for that
+    // reason while the output was perfectly correct.
+    const { graph: reparsed } = await turtleToGraph(ttl);
+    assert.deepEqual(reparsed.getAllParentIds('alpha').sort(), ['beta', 'root']);
+    assert.equal(reparsed.getNode('alpha').parentId, 'root');
+
+    // And the container is named exactly once per node that has one, so a reader can
+    // tell which broader concept decides where the node is filed.
+    assert.match(ttl, /fract:containedIn/);
+    assert.equal((ttl.match(/fract:containedIn/g) ?? []).length, 5,
+        'one per non-root node');
+});
+
+test('a foreign SKOS file with several broader concepts loses none of them', async () => {
+    // The bug this replaces: parentIri was a single field that each skos:broader
+    // overwrote, so only the last survived. Real data loss on any real vocabulary, and
+    // invisible — the import succeeded and the map was simply missing edges.
+    const ttl = [
+        '@prefix skos: <http://www.w3.org/2004/02/skos/core#> .',
+        '<https://x.test/m#top> a skos:Concept ; skos:prefLabel "Top" .',
+        '<https://x.test/m#a> a skos:Concept ; skos:prefLabel "A" ; skos:broader <https://x.test/m#top> .',
+        '<https://x.test/m#b> a skos:Concept ; skos:prefLabel "B" ; skos:broader <https://x.test/m#top> .',
+        '<https://x.test/m#c> a skos:Concept ; skos:prefLabel "C" ; skos:broader <https://x.test/m#top> .',
+        '<https://x.test/m#join> a skos:Concept ; skos:prefLabel "Join" ;',
+        '    skos:broader <https://x.test/m#a>, <https://x.test/m#b>, <https://x.test/m#c> .',
+        '',
+    ].join('\n');
+
+    const { graph } = await turtleToGraph(ttl);
+    const join = graph.getNode('join');
+
+    // All three are kept: one as the container, the rest as contributing streams.
+    const allParents = graph.getAllParentIds('join').sort();
+    assert.deepEqual(allParents, ['a', 'b', 'c']);
+    assert.equal(join.parentId, 'a', 'the first broader in document order is the container');
+    assert.deepEqual(join.emergesFrom.sort(), ['b', 'c']);
+});
+
+test('a foreign file naming the container honours it over document order', async () => {
+    const ttl = [
+        '@prefix skos: <http://www.w3.org/2004/02/skos/core#> .',
+        '@prefix fract: <https://fractiverse.com/ns#> .',
+        '<https://x.test/m#a> a skos:Concept ; skos:prefLabel "A" .',
+        '<https://x.test/m#b> a skos:Concept ; skos:prefLabel "B" .',
+        '<https://x.test/m#join> a skos:Concept ; skos:prefLabel "Join" ;',
+        '    skos:broader <https://x.test/m#a>, <https://x.test/m#b> ;',
+        '    fract:containedIn <https://x.test/m#b> .',
+        '',
+    ].join('\n');
+
+    const { graph } = await turtleToGraph(ttl);
+    assert.equal(graph.getNode('join').parentId, 'b');
+    assert.deepEqual(graph.getNode('join').emergesFrom, ['a']);
+});
+
+test('the imported convergent graph still satisfies the tier invariant', async () => {
+    const ttl = [
+        '@prefix skos: <http://www.w3.org/2004/02/skos/core#> .',
+        '<https://x.test/m#top> a skos:Concept ; skos:prefLabel "Top" .',
+        '<https://x.test/m#a> a skos:Concept ; skos:prefLabel "A" ; skos:broader <https://x.test/m#top> .',
+        '<https://x.test/m#deep> a skos:Concept ; skos:prefLabel "Deep" ; skos:broader <https://x.test/m#a> .',
+        '<https://x.test/m#join> a skos:Concept ; skos:prefLabel "Join" ;',
+        '    skos:broader <https://x.test/m#top>, <https://x.test/m#deep> .',
+        '',
+    ].join('\n');
+
+    const { graph } = await turtleToGraph(ttl);
+    for (const node of graph.nodes.values()) {
+        for (const parentId of graph.getAllParentIds(node.id)) {
+            assert.ok(graph.getNode(parentId).depth < node.depth,
+                `${parentId} must sit above ${node.id}`);
+        }
+    }
+    // Contained by top (tier 0) but fed by deep (tier 2), so it belongs at tier 3.
+    assert.equal(graph.getNode('join').depth, 3);
+});
+
 test('a foreign Turtle file with only broader edges still imports', async () => {
     // Another tool may state one direction and not the other, and may not use our
     // base IRI or our fract: terms at all.

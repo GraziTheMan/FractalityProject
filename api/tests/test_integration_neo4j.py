@@ -254,6 +254,141 @@ async def test_a_node_without_a_page_reads_as_empty_not_null(settings, user):
     assert got.metadata.content == ""
 
 
+async def test_convergent_emergence_round_trips(settings, user):
+    """
+    The shape from the axioms: four streams converging into one emergent node.
+
+    Against a real database because EMERGES_FROM is a relationship, not a property —
+    the only thing that proves it is written and read back correctly is Neo4j itself.
+    """
+    summary = await repo.create_map(
+        settings, SUBJECT, "Emergence", "", Visibility.PRIVATE, "fractiverse"
+    )
+
+    nodes = [
+        MapNode(id="fractiverse", depth=0,
+                childIds=["axiom-i", "axiom-ii", "axiom-iii", "axiom-iv", "consciousness"],
+                metadata={"label": "The Fractiverse"}),
+        MapNode(id="axiom-i", parentId="fractiverse", depth=1, metadata={"label": "Axiom I"}),
+        MapNode(id="axiom-ii", parentId="fractiverse", depth=1, metadata={"label": "Axiom II"}),
+        MapNode(id="axiom-iii", parentId="fractiverse", depth=1, metadata={"label": "Axiom III"}),
+        MapNode(id="axiom-iv", parentId="fractiverse", depth=1, metadata={"label": "Axiom IV"}),
+        MapNode(id="consciousness", parentId="fractiverse", depth=2,
+                emergesFrom=["axiom-i", "axiom-ii", "axiom-iii", "axiom-iv"],
+                childIds=["qualia"], metadata={"label": "Consciousness"}),
+        MapNode(id="qualia", parentId="consciousness", depth=3, metadata={"label": "Qualia"}),
+    ]
+    await repo.replace_nodes(settings, summary.id, nodes, "fractiverse")
+
+    fetched = await repo.get_map(settings, summary.id)
+    got = {n.id: n for n in fetched.nodes}
+
+    assert got["consciousness"].emergesFrom == [
+        "axiom-i", "axiom-ii", "axiom-iii", "axiom-iv"
+    ]
+    # Containment is untouched by it: consciousness is filed under the Fractiverse.
+    assert got["consciousness"].parentId == "fractiverse"
+    assert "consciousness" in got["fractiverse"].childIds
+    # And an axiom does not gain it as a containment child.
+    assert "consciousness" not in got["axiom-i"].childIds
+    assert got["axiom-i"].emergesFrom == []
+
+
+async def test_emergence_is_a_separate_relationship_from_containment(settings, user):
+    """
+    HAS_CHILD says "is inside", EMERGES_FROM says "flowed into". Merging them would
+    lose the distinction the feature exists for, so this asserts the graph really has
+    two edge types rather than one used twice.
+    """
+    summary = await repo.create_map(
+        settings, SUBJECT, "Edges", "", Visibility.PRIVATE, "root"
+    )
+    await repo.replace_nodes(settings, summary.id, [
+        MapNode(id="root", depth=0, childIds=["a", "join"]),
+        MapNode(id="a", parentId="root", depth=1),
+        MapNode(id="join", parentId="root", depth=2, emergesFrom=["a"]),
+    ], "root")
+
+    rows = await db.run_read(
+        settings,
+        """
+        MATCH (n:MapNode {map_id: $m, id: 'join'})
+        OPTIONAL MATCH (n)-[e:EMERGES_FROM]->(src:MapNode)
+        OPTIONAL MATCH (p:MapNode)-[:HAS_CHILD]->(n)
+        RETURN collect(DISTINCT src.id) AS emerges, collect(DISTINCT p.id) AS contains
+        """,
+        m=summary.id,
+    )
+    assert rows[0]["emerges"] == ["a"]
+    assert rows[0]["contains"] == ["root"]
+
+
+async def test_a_contributor_that_is_also_the_container_is_not_stored_twice(settings, user):
+    """
+    Would double-count the node's convergence degree, which the cone reads as a radius
+    — so the node would be drawn nearer the axis than it has earned.
+    """
+    summary = await repo.create_map(
+        settings, SUBJECT, "Dedupe", "", Visibility.PRIVATE, "root"
+    )
+    await repo.replace_nodes(settings, summary.id, [
+        MapNode(id="root", depth=0, childIds=["a"]),
+        MapNode(id="a", parentId="root", depth=1, emergesFrom=["root"]),
+    ], "root")
+
+    rows = await db.run_read(
+        settings,
+        "MATCH (:MapNode {map_id: $m, id: 'a'})-[e:EMERGES_FROM]->() RETURN count(e) AS n",
+        m=summary.id,
+    )
+    assert rows[0]["n"] == 0
+
+
+async def test_replacing_nodes_clears_old_emergence_edges(settings, user):
+    """DETACH DELETE, so no emergence edge outlives the node set it belonged to."""
+    summary = await repo.create_map(
+        settings, SUBJECT, "Replace", "", Visibility.PRIVATE, "root"
+    )
+    await repo.replace_nodes(settings, summary.id, [
+        MapNode(id="root", depth=0, childIds=["a", "join"]),
+        MapNode(id="a", parentId="root", depth=1),
+        MapNode(id="join", parentId="root", depth=2, emergesFrom=["a"]),
+    ], "root")
+
+    # Save again without the emergence.
+    await repo.replace_nodes(settings, summary.id, [
+        MapNode(id="root", depth=0, childIds=["a", "join"]),
+        MapNode(id="a", parentId="root", depth=1),
+        MapNode(id="join", parentId="root", depth=1),
+    ], "root")
+
+    fetched = await repo.get_map(settings, summary.id)
+    assert {n.id: n for n in fetched.nodes}["join"].emergesFrom == []
+
+    rows = await db.run_read(
+        settings,
+        "MATCH (:MapNode {map_id: $m})-[e:EMERGES_FROM]->() RETURN count(e) AS n",
+        m=summary.id,
+    )
+    assert rows[0]["n"] == 0
+
+
+async def test_a_wide_convergence_survives_one_round_trip(settings, user):
+    """Fifty streams into one node, in a single write."""
+    summary = await repo.create_map(
+        settings, SUBJECT, "Wide", "", Visibility.PRIVATE, "root"
+    )
+    sources = [f"s{i:02d}" for i in range(50)]
+    nodes = [MapNode(id="root", depth=0, childIds=sources + ["join"])]
+    nodes += [MapNode(id=s, parentId="root", depth=1) for s in sources]
+    nodes.append(MapNode(id="join", parentId="root", depth=2, emergesFrom=sources))
+
+    await repo.replace_nodes(settings, summary.id, nodes, "root")
+
+    fetched = await repo.get_map(settings, summary.id)
+    assert sorted({n.id: n for n in fetched.nodes}["join"].emergesFrom) == sorted(sources)
+
+
 async def test_relationships_are_derived_from_edges_not_properties(settings, user):
     """
     childIds/parentId on the wire are rebuilt from HAS_CHILD relationships. A

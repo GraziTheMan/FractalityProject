@@ -37,9 +37,13 @@ def test_node_defaults_match_frontend_schema():
 
     # Field-for-field parity with FractalNode.toJSON() in NodeSchema.js
     assert set(dumped) == {
-        "id", "parentId", "childIds", "depth",
+        "id", "parentId", "childIds", "emergesFrom", "depth",
         "metadata", "energy", "resonance", "visual", "timestamps",
     }
+    # Two parent relations, and they mean different things: parentId is the containing
+    # scale, emergesFrom the streams that converged. A node with neither is a root.
+    assert dumped["parentId"] is None
+    assert dumped["emergesFrom"] == []
     assert dumped["energy"]["ATP"] == 1.0
     assert dumped["visual"]["color"] == "#00ff00"
     assert dumped["metadata"]["type"] == "default"

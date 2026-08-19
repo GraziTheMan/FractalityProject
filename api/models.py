@@ -104,8 +104,23 @@ class MapNode(BaseModel):
     """One node of a mind map, matching FractalNode.toJSON()."""
 
     id: str
+
+    #: The containing scale. Exactly one, so the hierarchy stays fileable.
     parentId: Optional[str] = None
     childIds: List[str] = Field(default_factory=list)
+
+    #: Contributing streams: what flowed together to make this node.
+    #:
+    #: A different relation from parentId, not a second copy of it. "Consciousness" is
+    #: INSIDE The Fractiverse (one containing scale, one home in the outline) and
+    #: EMERGES FROM four axioms (four contributors). Collapsing the two loses whichever
+    #: half you collapse: with only parentId you cannot say what converged, and with
+    #: only a parent list you cannot say where the node lives.
+    #:
+    #: This is what makes the graph a DAG rather than a tree, and therefore what makes
+    #: cycle checking and depth computation harder — see validate_graph.
+    emergesFrom: List[str] = Field(default_factory=list)
+
     depth: int = 0
     metadata: NodeMetadata = Field(default_factory=NodeMetadata)
     energy: NodeEnergy = Field(default_factory=NodeEnergy)
@@ -495,8 +510,9 @@ def validate_graph(nodes: List[MapNode], root_id: Optional[str]) -> None:
     Reject structurally broken graphs at the edge, so the database never holds a
     map the 3D view cannot traverse.
 
-    Checks: duplicate ids, dangling parent/child references, a root that is not
-    present, and parent/child cycles. Raises ValueError.
+    Checks: duplicate ids, dangling parent/child/emergesFrom references, a root that
+    is not present, cycles across BOTH parent relations, and the tier rule. Raises
+    ValueError.
     """
     if not nodes:
         return
@@ -520,22 +536,97 @@ def validate_graph(nodes: List[MapNode], root_id: Optional[str]) -> None:
         for child_id in node.childIds:
             if child_id not in seen:
                 raise ValueError(f"node {node.id} references missing child {child_id}")
+        for source_id in node.emergesFrom:
+            if source_id not in seen:
+                raise ValueError(
+                    f"node {node.id} emerges from missing node {source_id}"
+                )
+            if source_id == node.id:
+                raise ValueError(f"node {node.id} emerges from itself")
 
     _reject_cycles(nodes)
+    _check_tiers(nodes)
+
+
+def _all_parents(node: MapNode) -> List[str]:
+    """Every id a node descends from, by either relation."""
+    parents = [] if node.parentId is None else [node.parentId]
+    return parents + [pid for pid in node.emergesFrom if pid != node.parentId]
+
+
+def _check_tiers(nodes: List[MapNode]) -> None:
+    """Every parent must sit strictly above its child.
+
+    tier(node) == 1 + max(tier of all parents), which the client computes. Enforced
+    here because it is what makes the visualisation mean anything: emergence must never
+    be drawn above something that feeds into it. A client that computed depth by
+    walking parentId alone would place a node level with its own contributors, and the
+    cone would show convergence flowing upward.
+
+    Only the ordering is checked, not the exact value. A map arriving from an older
+    client can have depths that are internally consistent but not yet maximal, and
+    refusing it would make this an upgrade barrier rather than a correctness check.
+    """
+    depth_of = {n.id: n.depth for n in nodes}
+
+    for node in nodes:
+        for parent_id in _all_parents(node):
+            parent_depth = depth_of.get(parent_id)
+            if parent_depth is None:
+                continue
+            if parent_depth >= node.depth:
+                raise ValueError(
+                    f"node {node.id} is at tier {node.depth} but its parent "
+                    f"{parent_id} is at tier {parent_depth}; a parent must be above "
+                    "its child"
+                )
 
 
 def _reject_cycles(nodes: List[MapNode]) -> None:
     """
-    Walk parent pointers from every node. A mind map is a tree/DAG; a cycle makes
-    depth computation and camera framing non-terminating.
+    Reject a cycle in EITHER parent relation, or any mixture of the two.
+
+    A cycle makes depth computation and camera framing non-terminating.
+
+    The previous version followed the single `parentId` chain, which was sufficient
+    when that was the only parent a node could have. With convergent emergence a loop
+    can leave through an emergesFrom edge and return through containment — invisible to
+    a walk that only knows about one of them, and the whole reason this is now a
+    graph search rather than a chain walk.
+
+    Iterative depth-first with an explicit colour marking, rather than recursion: a
+    deep chain is entirely possible in a user-built map and this must not depend on
+    stack depth.
     """
-    parents = {n.id: n.parentId for n in nodes}
+    parents = {n.id: _all_parents(n) for n in nodes}
+
+    WHITE, GREY, BLACK = 0, 1, 2
+    colour = {node_id: WHITE for node_id in parents}
 
     for start in parents:
-        seen = {start}
-        current = parents[start]
-        while current is not None:
-            if current in seen:
-                raise ValueError(f"parent cycle detected involving node {current!r}")
-            seen.add(current)
-            current = parents.get(current)
+        if colour[start] != WHITE:
+            continue
+
+        # (id, iterator over its parents). GREY means "on the current path", so
+        # meeting a GREY node is a cycle; BLACK means "fully explored, no cycle here".
+        stack = [(start, iter(parents[start]))]
+        colour[start] = GREY
+
+        while stack:
+            node_id, remaining = stack[-1]
+            advanced = False
+            for parent_id in remaining:
+                if parent_id not in colour:
+                    continue          # dangling, already reported by the caller
+                if colour[parent_id] == GREY:
+                    raise ValueError(
+                        f"parent cycle detected involving node {parent_id!r}"
+                    )
+                if colour[parent_id] == WHITE:
+                    colour[parent_id] = GREY
+                    stack.append((parent_id, iter(parents[parent_id])))
+                    advanced = True
+                    break
+            if not advanced:
+                colour[node_id] = BLACK
+                stack.pop()

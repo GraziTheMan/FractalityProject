@@ -41,7 +41,9 @@ export const NS = {
     rdf: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
 };
 
-/** Metadata keys that have a real vocabulary term, so they are not re-emitted as fract:*. */
+/**
+ * Metadata keys that have a real vocabulary term, so they are not re-emitted as fract:*.
+ */
 const MAPPED_METADATA = new Set(['label', 'type', 'tags', 'description', 'content']);
 
 /**
@@ -145,9 +147,25 @@ export async function graphToTurtle(graph, { title = 'Untitled map', mapId = 'ma
         }
 
         // --- structure
+        //
+        // Every parent is emitted as skos:broader, because in SKOS terms every one of
+        // them IS a broader concept — the vocabulary is many-to-many by design and has
+        // been all along. Which of them is the CONTAINING parent is then named
+        // separately by fract:containedIn, since SKOS has no way to say "this is the
+        // one that decides where the node is filed".
+        //
+        // That ordering matters for interoperability in both directions: a foreign
+        // SKOS file with several skos:broader imports without loss, and a file written
+        // here round-trips exactly.
+        for (const sourceId of node.emergesFrom ?? []) {
+            if (sourceId === node.parentId || !graph.nodes.has(sourceId)) continue;
+            add(subject, skos('broader'), namedNode(idToIri(base, sourceId)));
+        }
+
         if (node.parentId && graph.nodes.has(node.parentId)) {
             const parent = graph.nodes.get(node.parentId);
             add(subject, skos('broader'), namedNode(idToIri(base, node.parentId)));
+            add(subject, fract('containedIn'), namedNode(idToIri(base, node.parentId)));
 
             // The position that makes the sibling ORDER survive. Without this the
             // narrower/broader pair is a set and the order is gone.
@@ -239,7 +257,12 @@ export async function turtleToGraph(text) {
             found.set(iri, {
                 iri, label: null, description: null, content: null, type: null,
                 tags: [], tier: null, position: null,
-                parentIri: null, childIris: [], extra: {}, isTopConcept: false,
+                // ALL broader concepts, in the order encountered. Was a single field
+                // that each skos:broader overwrote, so importing a legitimate SKOS
+                // file with several of them silently kept only the last — real data
+                // loss on any real-world vocabulary, and invisible.
+                broaderIris: [], containedInIri: null,
+                childIris: [], extra: {}, isTopConcept: false,
             });
         }
         return found.get(iri);
@@ -270,7 +293,19 @@ export async function turtleToGraph(text) {
         if (p === `${NS.fract}tier`) { ensure(s).tier = _int(o.value); continue; }
         if (p === `${NS.fract}position`) { ensure(s).position = _int(o.value); continue; }
 
-        if (p === `${NS.skos}broader`) { ensure(s).parentIri = o.value; ensure(o.value); continue; }
+        if (p === `${NS.skos}broader`) {
+            const entry = ensure(s);
+            if (!entry.broaderIris.includes(o.value)) entry.broaderIris.push(o.value);
+            ensure(o.value);
+            continue;
+        }
+        // Which of the broader concepts is the containing one. Absent in a foreign
+        // file, in which case one is chosen on import — see below.
+        if (p === `${NS.fract}containedIn`) {
+            ensure(s).containedInIri = o.value;
+            ensure(o.value);
+            continue;
+        }
         if (p === `${NS.skos}narrower`) { ensure(s).childIris.push(o.value); ensure(o.value); continue; }
         if (p === `${NS.skos}topConceptOf`) { ensure(s).isTopConcept = true; continue; }
         if (p === `${NS.skos}hasTopConcept`) { ensure(o.value).isTopConcept = true; continue; }
@@ -338,12 +373,30 @@ export async function turtleToGraph(text) {
     // Parents from skos:broader, which is authoritative. narrower is only used to
     // fill gaps, because a file may state one direction and not the other; taking
     // both as equal would let them contradict each other.
+    //
+    // SKOS allows any number of broader concepts, so the list has to be split into the
+    // one CONTAINING parent and the rest, which become contributing streams:
+    //
+    //   * fract:containedIn names the container outright — our own files say so.
+    //   * Without it, the FIRST broader concept in document order is taken as the
+    //     container. Arbitrary, but deterministic and stated, which beats the previous
+    //     behaviour of keeping whichever skos:broader happened to be parsed last and
+    //     silently discarding the others.
     for (const entry of found.values()) {
         const id = idFor.get(entry.iri);
         const node = graph.nodes.get(id);
-        if (entry.parentIri && idFor.has(entry.parentIri)) {
-            node.parentId = idFor.get(entry.parentIri);
-        }
+
+        const known = entry.broaderIris.filter((iri) => idFor.has(iri));
+        if (known.length === 0) continue;
+
+        const containerIri = (entry.containedInIri && idFor.has(entry.containedInIri))
+            ? entry.containedInIri
+            : known[0];
+
+        node.parentId = idFor.get(containerIri);
+        node.emergesFrom = known
+            .filter((iri) => iri !== containerIri)
+            .map((iri) => idFor.get(iri));
     }
     for (const entry of found.values()) {
         const parentId = idFor.get(entry.iri);

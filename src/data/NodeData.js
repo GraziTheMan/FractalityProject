@@ -13,6 +13,23 @@ export class NodeData {
         this.parentId = null;
         this.childIds = [];
         this.siblingIds = [];
+
+        /**
+         * Additional parents this node emerged from, beyond `parentId`.
+         *
+         * The two are different relations and the distinction is the point:
+         *
+         *   parentId    the CONTAINING scale. Which cone am I inside, and where do I
+         *               live in the outline. Exactly one, so the hierarchy stays a
+         *               tree you can file things in.
+         *   emergesFrom CONTRIBUTING streams. What flowed together to make me. Any
+         *               number, which is what makes the graph a DAG.
+         *
+         * "Consciousness" is inside The Fractiverse (one containing scale) and
+         * emerges from four axioms (four contributing streams). Collapsing those into
+         * one relation loses whichever half you collapse.
+         */
+        this.emergesFrom = [];
         
         // Visual state
         this.position = new THREE.Vector3();
@@ -42,6 +59,9 @@ export class NodeData {
             depth: this.depth,
             parentId: this.parentId,
             childIds: this.childIds,
+            // Omitted when empty. Most nodes in a large map converge from nothing,
+            // and an empty array on every one is bytes in every export and every row.
+            ...(this.emergesFrom.length ? { emergesFrom: [...this.emergesFrom] } : {}),
             metadata: this.metadata
         };
     }
@@ -53,6 +73,7 @@ export class NodeData {
         const node = new NodeData(data.id, data.depth, data.metadata);
         node.parentId = data.parentId;
         node.childIds = data.childIds || [];
+        node.emergesFrom = [...(data.emergesFrom || [])];
         return node;
     }
     
@@ -97,6 +118,8 @@ export class NodeGraph {
         this.nodes = new Map();
         this.childIndex = new Map(); // Parent -> Children mapping
         this.depthIndex = new Map(); // Depth -> Nodes mapping
+        // Source -> nodes that emerged from it. The reverse of node.emergesFrom.
+        this.emergenceIndex = new Map();
         this.stats = {
             totalNodes: 0,
             maxDepth: 0,
@@ -225,11 +248,16 @@ export class NodeGraph {
     }
 
     /**
-     * Every descendant of `nodeId`, deepest-last.
+     * Every CONTAINMENT descendant of `nodeId`, deepest-last.
+     *
+     * Follows childIds only, deliberately. Deleting a container should remove what it
+     * contains, not everything that ever emerged from it — a node that draws on
+     * "Duality" as one of four streams is not inside Duality and must survive it.
+     * For reachability across both relations, which is what a cycle check needs, see
+     * wouldCreateCycle.
      *
      * Cycle-safe: a `parentId`/`childIds` pair that disagrees, or a map edited
-     * by hand, can describe a loop, and this is used by the guard that stops
-     * reparenting from creating one.
+     * by hand, can describe a loop.
      */
     getDescendantIds(nodeId) {
         const out = [];
@@ -332,6 +360,9 @@ export class NodeGraph {
         }
 
         this._refreshSiblings(parentId);
+        // Removing a node can remove a contributor, which lets everything downstream
+        // of it rise. Recomputed rather than patched: the effect is not local.
+        this.recomputeTiers();
         this.updateStats();
         return removed;
     }
@@ -353,7 +384,11 @@ export class NodeGraph {
 
         // Moving a node inside its own subtree would detach that subtree from
         // the graph entirely and loop forever on any traversal.
-        if (newParentId !== null && this.getDescendantIds(nodeId).includes(newParentId)) {
+        //
+        // Checked across BOTH relations. getDescendantIds follows childIds only, so it
+        // cannot see a loop that leaves through an emergence edge and comes back — and
+        // that loop is exactly what convergent parents made possible.
+        if (newParentId !== null && this.wouldCreateCycle(nodeId, newParentId)) {
             return false;
         }
 
@@ -491,6 +526,122 @@ export class NodeGraph {
         return true;
     }
 
+    // --- convergent emergence ----------------------------------------------
+    //
+    // A node's containing scale is `parentId`; the streams that flowed together to
+    // make it are `emergesFrom`. Both are parents; only the first is a home.
+
+    /** Every id this node descends from, by either relation. */
+    getAllParentIds(nodeId) {
+        const node = this.nodes.get(nodeId);
+        if (!node) return [];
+
+        const out = [];
+        if (node.parentId && this.nodes.has(node.parentId)) out.push(node.parentId);
+        for (const id of node.emergesFrom) {
+            if (id !== node.id && this.nodes.has(id) && !out.includes(id)) out.push(id);
+        }
+        return out;
+    }
+
+    /** The nodes this one emerged from, excluding its containing parent. */
+    getEmergentParents(nodeId) {
+        const node = this.nodes.get(nodeId);
+        if (!node) return [];
+        return node.emergesFrom
+            .map((id) => this.nodes.get(id))
+            .filter(Boolean);
+    }
+
+    /** The nodes that emerged from this one, i.e. converged out of it. */
+    getEmergentChildren(nodeId) {
+        return [...(this.emergenceIndex.get(nodeId) ?? [])]
+            .map((id) => this.nodes.get(id))
+            .filter(Boolean);
+    }
+
+    /**
+     * How many streams converge into this node, counting its containing parent.
+     *
+     * The cone reads this as a radius: one parent sits at the rim, many parents sit
+     * near the axis. So this is not a statistic, it is a coordinate.
+     */
+    getConvergenceDegree(nodeId) {
+        return this.getAllParentIds(nodeId).length;
+    }
+
+    /**
+     * Would making `parentId` a parent of `nodeId` close a loop?
+     *
+     * Walks DOWN from nodeId across both relations. `getDescendantIds` follows
+     * childIds only, so it cannot see a loop that runs out through an emergence edge
+     * and back — which is precisely the loop this relation makes possible.
+     */
+    wouldCreateCycle(nodeId, parentId) {
+        if (!parentId || parentId === nodeId) return true;
+
+        const stack = [nodeId];
+        const seen = new Set();
+        while (stack.length > 0) {
+            const id = stack.pop();
+            if (id === parentId) return true;
+            if (seen.has(id)) continue;
+            seen.add(id);
+
+            const node = this.nodes.get(id);
+            if (!node) continue;
+            for (const childId of node.childIds) stack.push(childId);
+            for (const emergentId of this.emergenceIndex.get(id) ?? []) stack.push(emergentId);
+        }
+        return false;
+    }
+
+    /**
+     * Record that `nodeId` emerged partly from `sourceId`.
+     *
+     * Refused when it would close a loop, when the source is the node itself, or when
+     * the source is already the containing parent — that relation is already recorded
+     * and stating it twice would count it twice in the convergence degree, moving the
+     * node toward the axis for no reason.
+     *
+     * Tiers are recomputed, because a new contributor can push this node and
+     * everything below it deeper.
+     *
+     * @returns {boolean} false if refused
+     */
+    addEmergence(nodeId, sourceId) {
+        const node = this.nodes.get(nodeId);
+        if (!node || !this.nodes.has(sourceId)) return false;
+        if (sourceId === nodeId) return false;
+        if (sourceId === node.parentId) return false;
+        if (node.emergesFrom.includes(sourceId)) return false;
+        if (this.wouldCreateCycle(nodeId, sourceId)) return false;
+
+        node.emergesFrom.push(sourceId);
+        if (!this.emergenceIndex.has(sourceId)) this.emergenceIndex.set(sourceId, new Set());
+        this.emergenceIndex.get(sourceId).add(nodeId);
+
+        this.recomputeTiers();
+        this.updateStats();
+        return true;
+    }
+
+    /** Remove one convergent parent. Tiers may rise as a result. */
+    removeEmergence(nodeId, sourceId) {
+        const node = this.nodes.get(nodeId);
+        if (!node) return false;
+
+        const at = node.emergesFrom.indexOf(sourceId);
+        if (at < 0) return false;
+
+        node.emergesFrom.splice(at, 1);
+        this.emergenceIndex.get(sourceId)?.delete(nodeId);
+
+        this.recomputeTiers();
+        this.updateStats();
+        return true;
+    }
+
     /** Nodes with no parent — the tops of the tiers. */
     getRootNodes() {
         return Array.from(this.nodes.values()).filter(n => !n.parentId);
@@ -505,6 +656,7 @@ export class NodeGraph {
     rebuildIndices() {
         this.childIndex.clear();
         this.depthIndex.clear();
+        this.emergenceIndex.clear();
 
         for (const node of this.nodes.values()) {
             if (node.parentId && this.nodes.has(node.parentId)) {
@@ -513,13 +665,105 @@ export class NodeGraph {
                 }
                 this.childIndex.get(node.parentId).add(node.id);
             }
+            // The reverse of emergesFrom: what flows OUT of this node by convergence.
+            // Stored because the cone needs it per frame and walking every node's
+            // emergesFrom to answer it would be quadratic.
+            for (const sourceId of node.emergesFrom) {
+                if (!this.nodes.has(sourceId)) continue;
+                if (!this.emergenceIndex.has(sourceId)) {
+                    this.emergenceIndex.set(sourceId, new Set());
+                }
+                this.emergenceIndex.get(sourceId).add(node.id);
+            }
+        }
+
+        this.recomputeTiers();
+        for (const node of this.nodes.values()) this._refreshSiblings(node.id);
+        this.updateStats();
+    }
+
+    /**
+     * Recompute every node's tier as 1 + the deepest of ALL its parents.
+     *
+     *     tier(node) = 1 + max(tier(p) for p in [parentId, ...emergesFrom])
+     *
+     * Taking the max over both relations rather than following parentId alone is what
+     * makes the geometry mean anything: emergence can then never be drawn above
+     * something that feeds into it. A node contained by a tier-1 parent but fed by a
+     * tier-5 stream belongs at tier 6, not tier 2.
+     *
+     * Done by Kahn's algorithm over the union of both edge types. A breadth-first walk
+     * down parentId — which is what this used to be — cannot express "wait until every
+     * contributor is known", and would settle on whichever depth it reached first.
+     *
+     * Nodes in a cycle are left at tier 0 and reported. The mutators refuse to create
+     * one, but an imported file or a hand-edited row can still contain one, and
+     * hanging is not an acceptable response to bad data.
+     *
+     * @returns {string[]} ids that could not be placed, i.e. are in or below a cycle
+     */
+    recomputeTiers() {
+        const parentsOf = (node) => {
+            const out = [];
+            if (node.parentId && this.nodes.has(node.parentId)) out.push(node.parentId);
+            for (const id of node.emergesFrom) {
+                if (id !== node.id && this.nodes.has(id)) out.push(id);
+            }
+            return out;
+        };
+
+        const remaining = new Map();   // id -> how many parents are not yet placed
+        const dependents = new Map();  // parent id -> ids waiting on it
+        const ready = [];
+
+        for (const node of this.nodes.values()) {
+            const parents = parentsOf(node);
+            remaining.set(node.id, parents.length);
+            for (const parentId of parents) {
+                if (!dependents.has(parentId)) dependents.set(parentId, []);
+                dependents.get(parentId).push(node.id);
+            }
+            if (parents.length === 0) ready.push(node.id);
+        }
+
+        const tier = new Map();
+        while (ready.length > 0) {
+            const id = ready.pop();
+            const node = this.nodes.get(id);
+            const parents = parentsOf(node);
+            tier.set(id, parents.length === 0
+                ? 0
+                : 1 + Math.max(...parents.map((p) => tier.get(p) ?? 0)));
+
+            for (const childId of dependents.get(id) ?? []) {
+                remaining.set(childId, remaining.get(childId) - 1);
+                if (remaining.get(childId) === 0) ready.push(childId);
+            }
+        }
+
+        const unplaced = [];
+        for (const node of this.nodes.values()) {
+            const depth = tier.has(node.id) ? tier.get(node.id) : 0;
+            if (!tier.has(node.id)) unplaced.push(node.id);
+            if (node.depth !== depth) node.depth = depth;
+        }
+
+        // Rebuilt wholesale rather than patched: every tier may have changed, and a
+        // partially updated index is worse than a slower rebuild.
+        this.depthIndex.clear();
+        for (const node of this.nodes.values()) {
             if (!this.depthIndex.has(node.depth)) this.depthIndex.set(node.depth, new Set());
             this.depthIndex.get(node.depth).add(node.id);
         }
 
-        for (const root of this.getRootNodes()) this._renumberSubtree(root.id);
-        for (const node of this.nodes.values()) this._refreshSiblings(node.id);
-        this.updateStats();
+        if (unplaced.length > 0) {
+            console.warn(
+                `${unplaced.length} node(s) are in or below a cycle and could not be `
+                + `placed on a tier: ${unplaced.slice(0, 5).join(', ')}`
+                + (unplaced.length > 5 ? ', …' : '')
+            );
+        }
+        return unplaced;
     }
 
     // --- mutation internals ------------------------------------------------
@@ -542,6 +786,23 @@ export class NodeGraph {
         this.depthIndex.get(node.depth)?.delete(nodeId);
         if (node.parentId) this.childIndex.get(node.parentId)?.delete(nodeId);
         this.childIndex.delete(nodeId);
+
+        // Anything that emerged from this node now names a parent that is gone. Left
+        // dangling, the tier computation would quietly skip it — so the node would keep
+        // a tier it no longer earns — and the API would refuse to save the map at all.
+        for (const dependentId of this.emergenceIndex.get(nodeId) ?? []) {
+            const dependent = this.nodes.get(dependentId);
+            if (!dependent) continue;
+            const at = dependent.emergesFrom.indexOf(nodeId);
+            if (at >= 0) dependent.emergesFrom.splice(at, 1);
+        }
+        this.emergenceIndex.delete(nodeId);
+
+        // And this node's own outgoing references leave the reverse index.
+        for (const sourceId of node.emergesFrom) {
+            this.emergenceIndex.get(sourceId)?.delete(nodeId);
+        }
+
         this.nodes.delete(nodeId);
     }
 

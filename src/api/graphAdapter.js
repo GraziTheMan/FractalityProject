@@ -38,6 +38,7 @@ export function apiMapToNodeGraph(apiMap) {
             depth: n.depth ?? 0,
             parentId: n.parentId ?? null,
             childIds: n.childIds ?? [],
+            emergesFrom: n.emergesFrom ?? [],
             metadata: n.metadata ?? {}
         }))
     });
@@ -78,6 +79,7 @@ export function nodeGraphToApiNodes(graph) {
             id: node.id,
             parentId: node.parentId ?? null,
             childIds: [...(node.childIds ?? [])],
+            emergesFrom: [...(node.emergesFrom ?? [])],
             depth: node.depth ?? 0,
             metadata: { ...(node.metadata ?? {}) },
 
