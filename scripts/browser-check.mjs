@@ -2639,22 +2639,148 @@ if (run_emergence) {
     else if (!picker.sortedByTier) fail('the picker is not ordered by tier');
     else pass(`the picker offers only legal contributors (${picker.count}), shallowest first`);
 
+    // --- the cone: radius means integration
+    //
+    // The radial coordinate is not just depth, it is how integrated a node is. The rim
+    // is maximally differentiated, the axis maximally unified — which is the
+    // Crystallization Spectrum drawn as a distance, with C_1 at the rim and C_4 on the
+    // axis. So a node several streams converge into has to be visibly nearer the centre
+    // than a sibling that nothing converges into.
+    const geometry = await page.evaluate(async () => {
+        const g = window.fractalityEngine().nodeGraph;
+        const cone = window.coneView;
+
+        // Start from a clean slate: earlier checks in this section left edges behind.
+        for (const node of [...g.nodes.values()]) {
+            for (const src of [...node.emergesFrom]) g.removeEmergence(node.id, src);
+        }
+
+        const root = g.getRootNodes()[0];
+        const kids = g.getChildren(root.id);
+        const plain = kids[0].id;
+        const convergent = kids[1].id;
+        const contributors = kids.slice(2, 6).map((n) => n.id);
+
+        cone.show();
+        await new Promise((r) => setTimeout(r, 250));
+
+        // The RADIUS, not the screen x. x is radius * sin(angle), so a node at the
+        // front of the cone sits at the horizontal centre whatever its radius — an
+        // earlier version of this measured x and only passed because the angle happened
+        // not to be zero.
+        const measure = () => {
+            const pts = cone._project(g, cone._computeAngles(g));
+            const byId = new Map(pts.map((pt) => [pt.node.id, pt]));
+            return {
+                plain: byId.get(plain).radius,
+                convergent: byId.get(convergent).radius,
+            };
+        };
+
+        const before = measure();
+        let added = 0;
+        for (const c of contributors) if (g.addEmergence(convergent, c)) added++;
+        await new Promise((r) => setTimeout(r, 250));
+        const after = measure();
+
+        // Select it before reading the readout. An earlier version read whatever the
+        // previous check had left selected, and then reported the readout as broken for
+        // correctly describing a node with no streams.
+        window.fractalityEngine().setFocus(convergent);
+        await new Promise((r) => setTimeout(r, 250));
+
+        return {
+            added,
+            degree: g.getConvergenceDegree(convergent),
+            before,
+            after,
+            plainUnmoved: Math.abs(before.plain - after.plain) < 0.01,
+            readout: document.querySelector('.cone-tier-label')?.textContent ?? '',
+        };
+    });
+
+    if (geometry.added === 0) {
+        fail('no contributor could be added, so the geometry was never exercised');
+    } else if (!(geometry.after.convergent < geometry.before.convergent)) {
+        fail(`convergence did not pull the node inward `
+            + `(radius ${geometry.before.convergent.toFixed(1)} -> ${geometry.after.convergent.toFixed(1)})`);
+    } else if (!geometry.plainUnmoved) {
+        fail('a node with no contributors moved when another node gained some');
+    } else {
+        pass(`convergence pulls a node toward the axis `
+            + `(radius ${geometry.before.convergent.toFixed(0)} -> ${geometry.after.convergent.toFixed(0)}, `
+            + `degree ${geometry.degree})`);
+    }
+
+    // Never ON the axis, however many streams: that position belongs to the apex.
+    const neverZero = await page.evaluate(async () => {
+        const g = window.fractalityEngine().nodeGraph;
+        const cone = window.coneView;
+        const emergent = [...g.nodes.values()].find((n) => n.emergesFrom.length > 0);
+        // Pile on every legal contributor we can find.
+        for (const candidate of [...g.nodes.values()]) g.addEmergence(emergent.id, candidate.id);
+        await new Promise((r) => setTimeout(r, 250));
+
+        const pts = cone._project(g, cone._computeAngles(g));
+        const pt = pts.find((x) => x.node.id === emergent.id);
+        const apex = pts.find((x) => x.node.depth === 0);
+        return {
+            degree: g.getConvergenceDegree(emergent.id),
+            fromAxis: pt.radius,
+            // The apex is on the axis because its tier is 0, which is what makes the
+            // axis mean unity at both ends.
+            apexOnAxis: apex ? apex.radius === 0 : null,
+        };
+    });
+
+    if (neverZero.apexOnAxis !== true) {
+        fail('the apex is not on the axis, so the axis does not mean unity');
+    } else if (!(neverZero.fromAxis > 0)) {
+        fail(`a node with ${neverZero.degree} parents landed ON the axis, `
+            + 'which is the apex\'s position');
+    } else {
+        pass(`the apex sits on the axis and a ${neverZero.degree}-parent node only approaches it`);
+    }
+
+    if (!/converge here/.test(geometry.readout)) {
+        fail(`the readout does not say why the node is off the rim: "${geometry.readout}"`);
+    } else {
+        pass('the readout states how many streams converge on the selected node');
+    }
+
+    await page.evaluate(() => window.coneView.hide());
+
     // And detaching puts the tier back.
+    //
+    // Sets up its own state rather than reusing whatever is attached by now: the check
+    // above deliberately piles on every contributor it can find, so "remove the one
+    // contributor" had nothing to work with and the action fell through to a prompt.
     const detached = await page.evaluate(async () => {
         const g = window.fractalityEngine().nodeGraph;
         const panel = window.nodeManagerPanel;
-        const emergent = [...g.nodes.values()].find((n) => n.emergesFrom.length > 0);
-        panel.selectNode(emergent.id);
-        await new Promise((r) => setTimeout(r, 200));
 
-        const before = g.getNode(emergent.id).depth;
+        for (const node of [...g.nodes.values()]) {
+            for (const src of [...node.emergesFrom]) g.removeEmergence(node.id, src);
+        }
+
+        const root = g.getRootNodes()[0];
+        const kids = g.getChildren(root.id);
+        const emergent = kids[1].id;
+        g.addEmergence(emergent, kids[0].id);
+
+        panel.show();
+        panel.selectNode(emergent);
+        await new Promise((r) => setTimeout(r, 250));
+
+        const before = g.getNode(emergent).depth;
+        // Exactly one contributor, so no menu is shown and nothing is prompted for.
         panel._run('diverge');
         await new Promise((r) => setTimeout(r, 250));
         return {
-            id: emergent.id,
+            id: emergent,
             before,
-            after: g.getNode(emergent.id).depth,
-            emergesFrom: g.getNode(emergent.id).emergesFrom.length,
+            after: g.getNode(emergent).depth,
+            emergesFrom: g.getNode(emergent).emergesFrom.length,
             refsLeft: document.querySelectorAll('.nodemgr-ref').length,
         };
     });

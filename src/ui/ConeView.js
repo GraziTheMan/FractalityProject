@@ -21,8 +21,43 @@
 const TIER_HEIGHT = 78;
 /** How much wider each tier is than the one above it. */
 const RADIUS_PER_TIER = 62;
+/**
+ * How strongly each extra parent pulls a node toward the cone's axis.
+ *
+ * Tuned so two parents is a visible move inward and four is unmistakable, without a
+ * two-parent node — which is the common case — reading as though it were nearly at the
+ * centre. One constant, so the whole behaviour is adjustable from here.
+ */
+const INWARD_PULL_PER_PARENT = 0.6;
 /** Movement beyond this many pixels is a drag, not a tap. */
 const TAP_SLOP = 10;
+
+/**
+ * How far toward the cone's axis a node is pulled by having several parents.
+ *
+ * 1 for a node with a single parent, decreasing as more streams converge into it. The
+ * radial coordinate is therefore not just "how deep" but "how integrated": the rim is
+ * maximally differentiated, the axis maximally unified.
+ *
+ * That is the Crystallization Spectrum drawn as a distance. C_1, physical stability, is
+ * the rim; C_4, unified realization, is the axis. The apex sits on the axis because it
+ * is total unity, and a node that four things flowed into approaches it for the same
+ * reason — so both ends of the axis mean the same thing, which is what makes the
+ * diagram say something rather than merely arrange things.
+ *
+ * A reciprocal rather than a subtraction, so it can never reach or cross zero: a node
+ * with fifty parents should approach the axis, never land on it and be indistinguishable
+ * from the apex.
+ */
+function _inwardPull(graph, node) {
+    const degree = typeof graph.getConvergenceDegree === 'function'
+        ? graph.getConvergenceDegree(node.id)
+        // A graph from an older build has no such method. Falling back to "no pull"
+        // keeps the cone drawable rather than throwing on every frame.
+        : 1;
+    if (degree <= 1) return 1;
+    return 1 / (1 + (degree - 1) * INWARD_PULL_PER_PARENT);
+}
 
 export class ConeView {
     /**
@@ -255,13 +290,21 @@ export class ConeView {
         const out = [];
         for (const node of graph.nodes.values()) {
             const angle = (angles.get(node.id) ?? 0) + this.spin;
-            const radius = node.depth * RADIUS_PER_TIER * scale;
+            const radius = node.depth * RADIUS_PER_TIER * scale * _inwardPull(graph, node);
 
             // cos gives the near/far axis. Squashing it to 0.28 is the ellipse
             // the cone's circular tier makes when seen nearly edge-on.
             const nearness = Math.cos(angle);
             out.push({
                 node,
+                // The radial coordinate itself, not just where it lands on screen.
+                //
+                // Worth carrying because x is radius * sin(angle): a node at the front
+                // or back of the cone sits at the horizontal centre whatever its
+                // radius, so screen position cannot be read as radius. A check that
+                // tried to measure integration from x passed only because the angle
+                // happened not to be zero.
+                radius,
                 x: centreX + radius * Math.sin(angle),
                 y: centreY + (node.depth - this.tierFocus) * TIER_HEIGHT * scale
                      + radius * 0.28 * nearness,
@@ -344,7 +387,24 @@ export class ConeView {
             ctx.stroke();
         }
 
-        // Edges, so the cone reads as a tree and not a cloud of dots.
+        // The axis: apex straight down through the centre of every tier.
+        //
+        // Drawn because it is where the radial coordinate is going. Convergent nodes
+        // move toward it, so without the line their inward drift has nothing to be
+        // inward of, and the geometry reads as noise rather than as integration.
+        const apexY = height / 2 + (0 - this.tierFocus) * TIER_HEIGHT * scale;
+        const baseY = height / 2 + (maxTier - this.tierFocus) * TIER_HEIGHT * scale;
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(width / 2, apexY);
+        ctx.lineTo(width / 2, baseY);
+        ctx.setLineDash([2, 6]);
+        ctx.strokeStyle = 'rgba(0,255,255,0.13)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.restore();
+
+        // Containment edges, so the cone reads as a tree and not a cloud of dots.
         ctx.lineWidth = 1;
         for (const point of points) {
             const parent = point.node.parentId ? byId.get(point.node.parentId) : null;
@@ -355,6 +415,29 @@ export class ConeView {
             ctx.lineTo(point.x, point.y);
             ctx.strokeStyle = `rgba(120,180,200,${0.06 + near * 0.20})`;
             ctx.stroke();
+        }
+
+        // Convergence edges: what flowed into what.
+        //
+        // Drawn in the accent colour and after the containment edges, so where several
+        // cross they read as a funnel into the node rather than as more tree. They are a
+        // different relation and the whole reason a node sits off the rim, so drawing
+        // them identically to containment would hide the cause of what the eye is
+        // already seeing.
+        for (const point of points) {
+            const sources = point.node.emergesFrom ?? [];
+            if (sources.length === 0) continue;
+
+            const near = (point.nearness + 1) / 2;
+            for (const sourceId of sources) {
+                const source = byId.get(sourceId);
+                if (!source) continue;
+                ctx.beginPath();
+                ctx.moveTo(source.x, source.y);
+                ctx.lineTo(point.x, point.y);
+                ctx.strokeStyle = `rgba(0,255,255,${0.10 + near * 0.30})`;
+                ctx.stroke();
+            }
         }
 
         // Nodes.
@@ -408,6 +491,14 @@ export class ConeView {
         const parts = [`Tier ${tier} · ${count} node${count === 1 ? '' : 's'} of ${graph.nodes.size}`];
         if (focused) {
             parts.push(`selected: ${focused.metadata.label || focused.id}`);
+
+            // Why this node sits where it does. A reader who notices a node off the
+            // rim should be able to find out what pulled it in without guessing, and
+            // the count is the reason.
+            const streams = focused.emergesFrom?.length ?? 0;
+            if (streams > 0) {
+                parts.push(`${streams} stream${streams === 1 ? '' : 's'} converge here`);
+            }
         }
         this.tierLabel.textContent = parts.join('  ·  ');
     }
