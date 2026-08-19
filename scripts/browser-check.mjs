@@ -1364,6 +1364,189 @@ if (run_feed) {
         pass('the gauge says in words that only this reader sees it');
     }
 
+    // --- the reader's own lean on the feed
+    //
+    // Its three promises are what make it self-curation rather than an algorithm, so
+    // each is checked in the real DOM: nothing disappears at any setting, zero is
+    // exactly the order things were posted in, and every post that moved says so.
+    const lean = await page.evaluate(() => {
+        const bar = document.querySelector('.pulsefeed-lean');
+        if (!bar) return { missing: true };
+        const notches = [...bar.querySelectorAll('.pulsefeed-notch')];
+        return {
+            notches: notches.map((n) => n.dataset.value),
+            chosen: notches.filter((n) => n.classList.contains('chosen')).map((n) => n.dataset.value),
+            state: bar.querySelector('.pulsefeed-lean-state')?.textContent ?? '',
+            explain: bar.querySelector('.pulsefeed-lean-explain')?.textContent ?? '',
+            // The same control as on a post, so learning one teaches the other.
+            matchesPostSlider: notches.length
+                === document.querySelectorAll('.pulsefeed-pulse .pulsefeed-notch').length / 4,
+        };
+    });
+
+    if (lean.missing) {
+        fail('there is no way for the reader to curate their own feed');
+    } else if (lean.notches.join(',') !== '-2,-1,0,1,2') {
+        fail(`the lean control offers ${lean.notches.join(',')}, not -2..+2`);
+    } else if (lean.chosen.join(',') !== '0') {
+        fail(`the feed does not default to chronological (chosen ${lean.chosen.join(',')})`);
+    } else {
+        pass('the feed has a -2..+2 lean of its own, defaulting to chronological');
+    }
+
+    if (lean.state !== 'Chronological') {
+        fail(`the lean state reads "${lean.state}" at zero`);
+    } else if (!/order things were posted/i.test(lean.explain)) {
+        fail(`the zero setting does not say what it does: "${lean.explain}"`);
+    } else {
+        pass('at zero the control says in words that nothing is being reordered');
+    }
+
+    // Chronological order, to compare every setting against.
+    const chronological = await page.evaluate(() =>
+        [...document.querySelectorAll('.pulsefeed-pulse')].map((c) => c.dataset.pulseId));
+
+    const sweep = await page.evaluate(async (baseline) => {
+        const setLean = async (value) => {
+            document.querySelector(
+                `.pulsefeed-lean .pulsefeed-notch[data-value="${value}"]`).click();
+            await new Promise((r) => setTimeout(r, 250));
+            return {
+                order: [...document.querySelectorAll('.pulsefeed-pulse')].map((c) => c.dataset.pulseId),
+                state: document.querySelector('.pulsefeed-lean-state')?.textContent ?? '',
+                explain: document.querySelector('.pulsefeed-lean-explain')?.textContent ?? '',
+                markers: [...document.querySelectorAll('.pulsefeed-shift')].map((m) => ({
+                    text: m.textContent, title: m.getAttribute('title'),
+                })),
+            };
+        };
+
+        const results = {};
+        for (const value of [1, 2, -1, -2]) results[value] = await setLean(value);
+        // And back. Getting out has to be one move.
+        results.restored = await setLean(0);
+        results.baseline = baseline;
+        return results;
+    }, chronological);
+
+    // 1. Nothing is hidden, at any setting.
+    const lost = Object.entries(sweep)
+        .filter(([key]) => key !== 'baseline')
+        .filter(([, r]) => r.order && (
+            r.order.length !== chronological.length
+            || chronological.some((id) => !r.order.includes(id))
+        ))
+        .map(([key]) => key);
+
+    if (lost.length > 0) {
+        fail(`these lean settings lost or duplicated posts: ${lost.join(', ')}`);
+    } else {
+        pass('no lean setting hides a post — the same posts are always all there');
+    }
+
+    // 2. Back to zero is exactly chronological, in one move.
+    if (sweep.restored.order.join(',') !== chronological.join(',')) {
+        fail('returning the lean to zero did not restore the original order');
+    } else if (sweep.restored.state !== 'Chronological') {
+        fail(`after returning to zero the state reads "${sweep.restored.state}"`);
+    } else {
+        pass('one move back to zero restores the order things were posted in');
+    }
+
+    // 3. The lean actually leans, and the two directions differ.
+    if (sweep[2].order.join(',') === chronological.join(',')) {
+        fail('a strong resonant lean changed nothing');
+    } else if (sweep[2].order.join(',') === sweep[-2].order.join(',')) {
+        fail('leaning resonant and leaning dissonant produced the same order');
+    } else {
+        pass('the two directions reorder the feed differently from each other');
+    }
+
+    // The resonant lean must put the post predicted to resonate above the one
+    // predicted dissonant, and the dissonant lean the other way about.
+    const resonantFirst = sweep[2].order.indexOf('p1') < sweep[2].order.indexOf('p2');
+    const dissonantFirst = sweep[-2].order.indexOf('p2') < sweep[-2].order.indexOf('p1');
+    if (!resonantFirst) {
+        fail('a resonant lean did not bring the post predicted to resonate forward');
+    } else if (!dissonantFirst) {
+        fail('a dissonant lean did not bring the post predicted dissonant forward');
+    } else {
+        pass('each direction brings the posts it names forward');
+    }
+
+    // 4. Every setting states what it is doing, and says nothing is hidden.
+    const silent = [1, 2, -1, -2].filter((v) => !/hidden/i.test(sweep[v].explain));
+    if (silent.length > 0) {
+        fail(`these settings do not say that nothing is hidden: ${silent.join(', ')}`);
+    } else {
+        pass('every leaning setting states in words that nothing is hidden');
+    }
+
+    // 5. A post that moved says how far and why; one that did not stays silent.
+    const marked = sweep[2].markers;
+    if (marked.length === 0) {
+        fail('the feed was reordered and no post said it had moved');
+    } else if (!marked.every((m) => /^[↑↓]\d+$/.test(m.text))) {
+        fail(`a shift marker is not a direction and a number: ${JSON.stringify(marked.map((m) => m.text))}`);
+    } else if (!marked.every((m) => m.title && /place/.test(m.title))) {
+        fail('a shift marker does not explain itself');
+    } else {
+        pass(`each post that moved says how far and why (${marked.map((m) => m.text).join(' ')})`);
+    }
+
+    if (sweep.restored.markers.length > 0) {
+        fail('posts still claim to have moved after the lean returned to zero');
+    } else {
+        pass('at zero no post claims to have moved');
+    }
+
+    // 6. The choice survives a fresh page load, and is still visible when it does.
+    //
+    // Checked in a SECOND page of the same context rather than by reloading this one.
+    // A reload wipes the patched fetch and the counters this section depends on — an
+    // earlier version did reload, and took every check after it down with it. Same
+    // context means the same localStorage, which is what is actually under test.
+    await page.evaluate(async () => {
+        // Something other than the default, or persisting it proves nothing.
+        document.querySelector('.pulsefeed-lean .pulsefeed-notch[data-value="-2"]').click();
+        await new Promise((r) => setTimeout(r, 250));
+    });
+
+    const second = await ctx.newPage();
+    await second.goto(URL, { waitUntil: 'networkidle' });
+    await second.waitForTimeout(1500);
+    const remembered = await second.evaluate(async () => {
+        window.feedPanel.show();
+        await new Promise((r) => setTimeout(r, 400));
+        const state = document.querySelector('.pulsefeed-lean-state');
+        return {
+            lean: window.feedPanel.lean,
+            state: state?.textContent ?? '',
+            // A curation setting in effect but not visibly marked is
+            // indistinguishable from an algorithm the reader did not ask for.
+            highlighted: state?.classList.contains('active') ?? false,
+            chosen: [...document.querySelectorAll('.pulsefeed-lean .pulsefeed-notch.chosen')]
+                .map((n) => n.dataset.value),
+        };
+    });
+    await second.close();
+
+    if (remembered.lean !== -2) {
+        fail(`a fresh page came back with lean ${remembered.lean}, not the -2 it was left at`);
+    } else if (remembered.chosen.join(',') !== '-2') {
+        fail(`the remembered lean is not shown on the control (chosen ${remembered.chosen.join(',')})`);
+    } else if (!remembered.highlighted) {
+        fail('a lean is in effect but nothing marks the feed as non-chronological');
+    } else {
+        pass(`the lean is remembered on a fresh page and shown as "${remembered.state}"`);
+    }
+
+    // Back to chronological, so the checks after this see the order they expect.
+    await page.evaluate(async () => {
+        document.querySelector('.pulsefeed-lean .pulsefeed-notch[data-value="0"]').click();
+        await new Promise((r) => setTimeout(r, 250));
+    });
+
     // --- impressions are reported for what was actually seen
     //
     // The model's denominator. Counting everything the API returned would inflate it

@@ -24,6 +24,9 @@ import { ApiError } from '../api/feedClient.js';
 import { safeUrl } from '../utils/sanitize.js';
 import { hasAuth, getAuthState, signIn } from '../auth/clerkClient.js';
 import { createResonanceSlider, createResonanceGauge } from './ResonanceControl.js';
+import {
+    applyLean, clampLean, describeLean, describeShift, leanLabel, loadLean, saveLean,
+} from './feedLean.js';
 
 /** Report reasons the API accepts. Kept in step with PulseReport in models.py. */
 const REPORT_REASONS = [
@@ -78,6 +81,18 @@ export class FeedPanel {
         /** False once a page comes back short — there is nothing more to load. */
         this.hasMore = true;
 
+        /**
+         * How much the reader has chosen to lean the feed, -2..+2.
+         *
+         * Remembered between visits, and always visible while it is in effect: a
+         * curation setting the reader cannot see is indistinguishable from an
+         * algorithm they did not ask for.
+         */
+        this.lean = loadLean();
+
+        /** Shift per pulse id from the last ordering, for the per-post markers. */
+        this._shifts = new Map();
+
         this._unsubscribe = null;
     }
 
@@ -95,6 +110,7 @@ export class FeedPanel {
                 <button class="pulsefeed-refresh" type="button" title="Reload">🔄</button>
                 <button class="pulsefeed-close" type="button" title="Close">×</button>
             </div>
+            <div class="pulsefeed-lean"></div>
             <div class="pulsefeed-compose"></div>
             <div class="pulsefeed-list"></div>
             <div class="pulsefeed-more"></div>
@@ -107,12 +123,14 @@ export class FeedPanel {
         this.composeEl = this.container.querySelector('.pulsefeed-compose');
         this.filterEl = this.container.querySelector('.pulsefeed-filter');
         this.moreEl = this.container.querySelector('.pulsefeed-more');
+        this.leanEl = this.container.querySelector('.pulsefeed-lean');
 
         this.container.querySelector('.pulsefeed-close')
             .addEventListener('click', () => this.hide());
         this.container.querySelector('.pulsefeed-refresh')
             .addEventListener('click', () => this.refresh());
 
+        this._renderLean();
         this._injectStyles();
 
         if (hasAuth()) {
@@ -371,9 +389,90 @@ export class FeedPanel {
 
     _renderList() {
         this.listEl.innerHTML = '';
-        for (const pulse of this.pulses) {
+
+        // this.pulses stays in the order the server sent it — newest first. The lean
+        // is applied on the way to the screen, so returning to 0 restores chronology
+        // exactly rather than approximately, and no reordering can accumulate.
+        const ordered = applyLean(this.pulses, this.lean);
+
+        this._shifts = new Map(ordered.map(({ pulse, shift }) => [pulse.id, shift]));
+        for (const { pulse } of ordered) {
             this.listEl.appendChild(this._renderPulse(pulse));
         }
+    }
+
+    // --- self-curation -----------------------------------------------------
+    //
+    // The reader decides how much the feed leans, and can see both the setting and
+    // what it did. Three things make this different from a feed algorithm rather
+    // than a nicer one: nothing is hidden at any setting, one move restores
+    // chronological order, and every post that changed place says so.
+    //
+    // An echo chamber is reachable from here. That is deliberate — it is reachable
+    // by holding the slider at +2 on purpose, which is a choice the reader made and
+    // can see they are making, rather than one made for them.
+
+    _renderLean() {
+        if (!this.leanEl) return;
+        this.leanEl.replaceChildren();
+
+        const row = document.createElement('div');
+        row.className = 'pulsefeed-lean-row';
+
+        const caption = document.createElement('span');
+        caption.className = 'pulsefeed-lean-caption';
+        caption.textContent = 'Lean';
+
+        // The same control as on a post, deliberately: it is the same scale, and a
+        // reader who has learned one has learned the other.
+        const slider = createResonanceSlider({
+            value: this.lean,
+            // Enabled whether or not the reader is signed in. Curation is local and
+            // needs no account; only the predictions it leans on need one, and with
+            // none the lean simply has nothing to act on.
+            enabled: true,
+            label: 'How much should the feed lean toward what resonates with you?',
+            onChange: (value) => this._setLean(value)
+        });
+        slider.classList.add('pulsefeed-lean-slider');
+
+        const state = document.createElement('span');
+        state.className = 'pulsefeed-lean-state';
+        state.textContent = leanLabel(this.lean);
+        if (this.lean !== 0) state.classList.add('active');
+
+        row.append(caption, slider, state);
+
+        const explain = document.createElement('p');
+        explain.className = 'pulsefeed-lean-explain';
+        explain.textContent = describeLean(this.lean);
+
+        this.leanEl.append(row, explain);
+    }
+
+    /**
+     * Change the lean and re-order what is already loaded.
+     *
+     * No refetch. The lean arranges the posts the reader has, rather than changing
+     * which posts they are given — so it cannot be the mechanism by which something
+     * never reaches them.
+     */
+    _setLean(value) {
+        const next = clampLean(value);
+        if (next === this.lean) return;
+
+        this.lean = next;
+        saveLean(next);
+        this._renderLean();
+        this._renderList();
+
+        // Said out loud, because a reordering that happens silently is the thing
+        // this control exists to not be.
+        this._setStatus(
+            next === 0
+                ? 'Back to newest first.'
+                : `${leanLabel(next)}. ${describeLean(next)}`
+        );
     }
 
     // --- impressions -------------------------------------------------------
@@ -585,6 +684,19 @@ export class FeedPanel {
             confidence: pulse.prediction_confidence ?? 0
         });
         if (gauge) actions.appendChild(gauge);
+
+        // Why this post is where it is. The other half of a transparent algorithm:
+        // the setting is visible above, and here is what it did to this one post, so
+        // a reader who wonders can check rather than being asked to trust.
+        const shift = this._shifts?.get(pulse.id) ?? 0;
+        const reason = describeShift(shift, pulse.predicted ?? null);
+        if (reason) {
+            const marker = document.createElement('span');
+            marker.className = `pulsefeed-shift ${shift > 0 ? 'up' : 'down'}`;
+            marker.textContent = `${shift > 0 ? '↑' : '↓'}${Math.abs(shift)}`;
+            marker.title = reason;
+            actions.appendChild(marker);
+        }
 
         const spacer = document.createElement('span');
         spacer.className = 'pulsefeed-spacer';
@@ -1144,6 +1256,51 @@ export class FeedPanel {
             /* Clickable while unavailable, so a press can explain itself rather
                than doing nothing to a reader who is not signed in. */
             .pulsefeed-notch.unavailable { opacity: 0.4; }
+
+            /* --- the feed lean ------------------------------------------- */
+            .pulsefeed-lean {
+                padding: 8px 12px;
+                border-bottom: 1px solid #1e1e1e;
+                background: rgba(255,255,255,0.02);
+            }
+            .pulsefeed-lean-row {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                flex-wrap: wrap;
+            }
+            .pulsefeed-lean-caption {
+                color: #777;
+                font-size: 10px;
+                letter-spacing: 0.6px;
+                text-transform: uppercase;
+            }
+            .pulsefeed-lean-state {
+                color: #666;
+                font-size: 11px;
+                white-space: nowrap;
+            }
+            /* Highlighted only when it is doing something, so a reader can tell at a
+               glance whether the order they are seeing is chronological. */
+            .pulsefeed-lean-state.active { color: #0ff; }
+            .pulsefeed-lean-explain {
+                margin: 6px 0 0;
+                color: #666;
+                font-size: 11px;
+                line-height: 1.45;
+            }
+
+            /* How far one post moved, and why. */
+            .pulsefeed-shift {
+                flex: 0 0 auto;
+                font-size: 10px;
+                font-family: 'Consolas', 'Monaco', monospace;
+                padding: 1px 4px;
+                border-radius: 3px;
+                cursor: help;
+            }
+            .pulsefeed-shift.up { color: #0ff; background: rgba(0,255,255,0.10); }
+            .pulsefeed-shift.down { color: #888; background: rgba(255,255,255,0.06); }
 
             /* --- the prediction gauge ------------------------------------ */
             .pulsefeed-gauge { display: inline-flex; align-items: center; flex: 0 0 auto; }

@@ -45,13 +45,23 @@ const MIN_CONFIDENCE_TO_DRAW = 0.15;
 /**
  * Build the five-notch slider for one pulse.
  *
+ * Also used for the feed's lean control, which is the same scale applied to the
+ * whole feed rather than one post — hence the label option: a screen reader must not
+ * be told the feed slider is asking about "this" post.
+ *
  * @param {object} options
  * @param {number} options.value current rating, -2..+2
  * @param {boolean} options.enabled false for a reader who is not signed in
+ * @param {string} [options.label] what the group is asking
  * @param {(value: number) => void} options.onChange
  * @returns {HTMLElement}
  */
-export function createResonanceSlider({ value = 0, enabled = true, onChange } = {}) {
+export function createResonanceSlider({
+    value = 0,
+    enabled = true,
+    label = 'How much does this resonate with you?',
+    onChange,
+} = {}) {
     const wrap = document.createElement('div');
     wrap.className = 'pulsefeed-resonance';
 
@@ -66,7 +76,7 @@ export function createResonanceSlider({ value = 0, enabled = true, onChange } = 
     const track = document.createElement('div');
     track.className = 'pulsefeed-notches';
     track.setAttribute('role', 'radiogroup');
-    track.setAttribute('aria-label', 'How much does this resonate with you?');
+    track.setAttribute('aria-label', label);
 
     const current = clamp(value);
 

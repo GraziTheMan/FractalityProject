@@ -76,8 +76,15 @@ post, once. Not how long, not how often, and it is never read back to any user. 
 client counts a post as seen when its card has been half on screen, not when the API
 returned it.
 
-The feed stays strictly reverse-chronological. Predictions are shown to the reader;
-they do not order the feed.
+**The server always returns the feed reverse-chronologically.** There is no ranking
+endpoint and no ordering parameter: the API does not decide what is in a page.
+
+The reader can then lean their own view, with a -2..+2 control in the client that
+reorders the posts they have already loaded (`src/ui/feedLean.js`). It reorders and
+never filters, so no setting can hide a post; returning it to 0 restores the server's
+order exactly; and each post that changed place says how far it moved and why. That is
+self-curation the reader can see and reverse, which is a different thing from a feed
+ranked before it reaches them — hence the choice to keep it entirely client-side.
 
 `MERGE` is used for ratings, impressions, reports and blocks, so all four are
 idempotent: a double tap cannot create two relationships, rating twice replaces
