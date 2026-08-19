@@ -20,9 +20,37 @@
 # persistence), so it deploys as a Static Site: free tier, global CDN, free TLS,
 # and no idle spin-down. That is the right shape until there is a backend.
 #
-# Custom domain: add fractiverse.com to this service in the Render dashboard
+# Custom domain: add the app's hostname to this service in the Render dashboard
 # (Settings -> Custom Domains) and point your DNS at the target Render shows.
 # Certificates are issued automatically.
+#
+# PLANNED: the app moves to a subdomain — fp.fractiverse.com — leaving the root
+# domain free to be a landing page for the several platforms under it. Nothing in
+# the application code depends on the hostname (base is './', there is no
+# path-based routing, share links are '/?map=...', and the API base is an env var),
+# so the move is entirely configuration:
+#
+#   1. Add the subdomain here as a Custom Domain, and a DNS CNAME for it.
+#   2. Add the new origin to the API's CORS_ORIGIN, below.
+#   3. Add the subdomain to Clerk (Domains). A Clerk production instance is
+#      configured for one primary domain and its CNAMEs; verify sign-in on the new
+#      origin before removing the old one.
+#   4. Only then point the root domain at whatever serves the landing page.
+#
+# Do the app first and the landing page last, so there is never a moment when the
+# only working origin is the one being replaced.
+#
+# The ORDER matters more than it looks, for one reason: a PWA's identity — its
+# installed app, its service worker, its caches — is scoped to an origin and cannot
+# be migrated. An app installed from the root domain would keep pointing there
+# after the move, with no way to tell it otherwise. Settling the hostname before
+# anyone installs is the cheap version of this decision; afterwards it costs every
+# installed copy.
+#
+# If the root domain HAS ever served sw.js by the time it becomes a landing page,
+# it needs a self-unregistering worker left at that origin for a while — a browser
+# holds a registration until something replaces it. Check before assuming: an
+# origin that never served a worker needs nothing.
 #
 # NOTE ON ENV VARS: Vite substitutes VITE_* at BUILD time, so changing one
 # requires a redeploy, not a restart. Never put a provider API key in a VITE_
@@ -158,6 +186,11 @@ services:
       # only one is what broke the deployed app once already. A wildcard is
       # refused at boot in production, because browsers reject wildcard +
       # credentials and every request here carries an Authorization header.
+      #
+      # On the planned move to a subdomain: add the new origin BEFORE changing any
+      # DNS, and keep the old ones until the move is done. This variable is a list
+      # precisely so that two origins can work at once; a migration with one entry
+      # in it has a window where the app cannot reach its own API.
       - key: CORS_ORIGIN
         value: https://fractiverse.com,https://www.fractiverse.com
 

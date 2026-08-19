@@ -414,7 +414,8 @@ async def test_a_default_map_that_was_deleted_reads_as_no_default(settings, user
     await repo.update_profile(
         settings, SUBJECT, default_map_id=summary.id, set_default=True
     )
-    await repo.delete_map(settings, SUBJECT, summary.id)
+    # No owner argument: ownership is enforced in the route (_require_owner), not here.
+    await repo.delete_map(settings, summary.id)
 
     assert (await repo.get_profile(settings, SUBJECT)).default_map_id is None
 

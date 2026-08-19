@@ -32,6 +32,12 @@ import { NodeData, NodeGraph } from './NodeData.js';
 export const NS = {
     skos: 'http://www.w3.org/2004/02/skos/core#',
     dcterms: 'http://purl.org/dc/terms/',
+    // This is an IDENTIFIER, not a URL, and it must not follow the app to whatever
+    // host serves it. An RDF namespace IRI is a name that happens to look like an
+    // address; changing it renames every term, so a file exported before the change
+    // and one exported after would describe two unrelated vocabularies. The root
+    // domain names the project, which is exactly what it should keep doing when the
+    // app itself moves to a subdomain.
     fract: 'https://fractiverse.com/ns#',
     // schema.org, for the one field that has a well-known term: a node's page is
     // the text of a work, which is exactly what schema:text means. Everything else
