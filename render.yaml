@@ -62,11 +62,27 @@
 #      Verify sign-in on the new origin before removing the old one.
 #
 #      THIS STEP IS DEFERRABLE. Steps 1-3 do not touch Clerk, and the app serves
-#      on the new origin without it. Check the publishable key's prefix to see
-#      whether there is anything to do at all: pk_test_ is a DEVELOPMENT instance,
-#      which is not locked to a hostname — that is why sign-in works on the live
-#      site today rather than only on localhost — so the subdomain needs no Clerk
-#      change. pk_live_ means a production instance already exists.
+#      on the new origin without it. To see whether there is anything to do at
+#      all, read the instance selector in the top right of Clerk's dashboard: it
+#      says Development or Production. (Equivalently, the publishable key's
+#      prefix: pk_test_ or pk_live_.)
+#
+#      A DEVELOPMENT instance is not locked to a hostname, so the subdomain needs
+#      no Clerk change. The proof is the live site: sign-in works on
+#      fractiverse.com today, which is an ordinary custom domain and not
+#      localhost. The test for the new origin is to load it and click sign in.
+#
+#      Do NOT read Domains -> "Allowed subdomains" as the gate. That feature
+#      RESTRICTS access to named subdomains — it is an allowlist for narrowing,
+#      and its being unavailable on a development instance means no restriction is
+#      applied rather than that subdomains are refused. Its notice ("create a
+#      production instance to enable this feature") reads like a paywall on
+#      subdomains and is not one.
+#
+#      Satellites, on the other hand, IS a Pro feature and carries the badge to
+#      say so — which is the second reason the primary domain belongs at the apex.
+#      Subdomains beneath the primary are not satellites, so tef will not trip it
+#      either.
 #
 #      A development instance serving real traffic has its own problems (user
 #      caps, Clerk's branding on the modal, not intended for production), but the
