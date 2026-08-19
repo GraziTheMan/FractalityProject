@@ -67,7 +67,9 @@ loud failure at deploy than a quiet one in production.
 cp .env.example .env.local     # frontend, VITE_* only, gitignored
 ```
 
-For the API, export in your shell or use a `.env` at the repo root:
+For the API, put them in `.env.local` at the repo root (the same file Vite uses — the
+API reads `.env` and `.env.local`, with `.env.local` winning) or export in your shell,
+which overrides any file:
 
 ```bash
 export NEO4J_URI='neo4j+s://xxxxxxxx.databases.neo4j.io'

@@ -7,10 +7,13 @@ logs
 *.log
 
 # Environment
-# .env.example IS tracked; real values never are.
-.env
-.env.local
-.env.*.local
+#
+# Everything .env-ish is ignored, with .env.example the one exception. Listing the
+# exact filenames was not enough: an editor that appends an extension produces
+# `.env.local.txt`, which held real credentials and was perfectly committable. The
+# broad pattern means a mis-named credentials file cannot be added by accident.
+.env*
+!.env.example
 
 # Build output
 dist/

@@ -16,9 +16,17 @@ over Neo4j.
 | Media uploads | not started — needs object storage, see below |
 | Admin review queue | not started — needs a notion of an admin role |
 
-**The Cypher is verified.** All 16 integration tests in
-`api/tests/test_integration_neo4j.py` pass against a live AuraDB Free instance
-(32s, Neo4j 5 / Aura, Python 3.14 on Windows). That covers the full wire-shape
+**The Cypher is partly verified.** `api/tests/test_integration_neo4j.py` holds 47
+tests. 33 of them have been run against a live AuraDB Free instance and passed
+(61s, Neo4j 5 / Aura, Python 3.14 on Windows). The 14 added since — the signed
+resonance rating, impressions, and the reader model — have NOT been run against a
+real database yet; they pass only in the sense that they are collected and skipped.
+
+Stated this way on purpose: "the Cypher is verified" was true when written and
+quietly stopped being true as tests were added, which is exactly how a stale claim
+becomes a false one.
+
+The verified 33 cover the full wire-shape
 round trip including the JSON-encoded nested objects, relationship derivation,
 per-map node id scoping, cascade delete, a 500-node bulk write, the complete
 share-link lifecycle, and schema idempotency.
@@ -225,17 +233,40 @@ The suite covers graph validation, JWT verification (with real RSA signing), and
 the full authorization matrix with the repository stubbed. It is verified to be
 meaningful: disabling the ownership check makes 5 tests fail.
 
-To exercise the Cypher, point it at a **scratch** database:
+To exercise the Cypher, point it at a **scratch** database. Either a file in the
+repository root:
+
+```ini
+# .env.local   (or .env — both are read, and .env.local wins)
+NEO4J_URI=neo4j+s://xxxxxxxx.databases.neo4j.io
+NEO4J_USERNAME=xxxxxxxx    # instance ID, per the Aura credentials file
+NEO4J_PASSWORD=...
+```
+
+or the shell, which overrides any file:
 
 ```bash
 export NEO4J_URI='neo4j+s://xxxxx.databases.neo4j.io'
-export NEO4J_USERNAME='xxxxx'    # instance ID, per the Aura credentials file
+export NEO4J_USERNAME='xxxxx'
 export NEO4J_PASSWORD='...'
+```
+
+then:
+
+```bash
 pytest api/tests/test_integration_neo4j.py -v
 ```
 
-Those 16 tests skip silently without `NEO4J_URI`. They create and delete data
-prefixed `itest-`; **never point them at production.**
+They skip without credentials, and **the skip reason says why** — which files were
+read, whether the values were there but commented out, and whether a nearby file looks
+misnamed (`.env.local.txt`, which is what Notepad produces when "All Files" is not
+selected and which Explorer then hides the extension of). `python scripts/check_neo4j.py`
+checks the connection on its own.
+
+They create and delete data prefixed `itest-`, and the cleanup matches on that prefix
+so nothing else is touched. Still: **never point them at production.** Before the first
+test they print which host they are about to write to, so it is never something you have
+to infer.
 
 ## Data model
 

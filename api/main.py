@@ -10,6 +10,7 @@ Deployed (see render.yaml):
     uvicorn api.main:app --host 0.0.0.0 --port $PORT
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -29,6 +30,12 @@ logging.basicConfig(
 logger = logging.getLogger("api")
 
 
+async def _connect_database() -> None:
+    """Open the driver and apply the schema. Separated so it can be given a deadline."""
+    await db.init_driver(settings)
+    await db.apply_schema(settings)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Refuse to start quietly misconfigured in production. These are conditions
@@ -42,9 +49,25 @@ async def lifespan(app: FastAPI):
         for problem in problems:
             logger.warning("Config: %s", problem)
 
+    # Bounded, because the except below cannot catch a hang.
+    #
+    # The intent here was always "boot anyway and let /health report the problem",
+    # but without a timeout an unreachable host does not raise — it blocks. DNS that
+    # does not answer, or a paused Aura instance behind a TLS handshake that never
+    # completes, held startup open indefinitely. On Render that is a deploy that never
+    # goes live and reports nothing; locally it was a test run that hung during
+    # collection with no output at all.
     try:
-        await db.init_driver(settings)
-        await db.apply_schema(settings)
+        await asyncio.wait_for(
+            _connect_database(),
+            timeout=settings.startup_db_timeout_seconds,
+        )
+    except asyncio.TimeoutError:
+        logger.error(
+            "Neo4j did not respond within %ss; booting without it. "
+            "Database routes will return 503 and /health will report the failure.",
+            settings.startup_db_timeout_seconds,
+        )
     except Exception as exc:  # noqa: BLE001
         # Boot anyway so /health can report the failure; database routes 503.
         logger.error("Neo4j initialisation failed: %s", exc)

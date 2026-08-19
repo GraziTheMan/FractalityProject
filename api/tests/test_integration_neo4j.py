@@ -4,13 +4,26 @@ Integration tests against a real Neo4j.
 These are the only tests that exercise the Cypher in api/repository.py. They are
 SKIPPED unless NEO4J_URI is set, so the default suite runs anywhere.
 
-Run them against AuraDB Free:
+Run them against AuraDB Free either way round. A file in the repository root:
+
+    # .env.local  (or .env — both are read, .env.local wins)
+    NEO4J_URI=neo4j+s://xxxxxxxx.databases.neo4j.io
+    NEO4J_USERNAME=xxxxxxxx      # instance ID, per Aura's credentials file
+    NEO4J_PASSWORD=...
+    # leave NEO4J_DATABASE unset
+
+or in the shell, which overrides any file:
 
     export NEO4J_URI='neo4j+s://xxxxx.databases.neo4j.io'
-    export NEO4J_USERNAME='xxxxx'   # instance ID, per Aura's credentials file
+    export NEO4J_USERNAME='xxxxx'
     export NEO4J_PASSWORD='...'
-    # leave NEO4J_DATABASE unset
+
+then:
+
     pytest api/tests/test_integration_neo4j.py -v
+
+If they skip, the reason says which files were read and what was missing from them
+rather than only that a variable is unset.
 
 WARNING: these create and delete nodes. Point them at a scratch database, never
 at production data. Everything created is prefixed `itest-` and removed in
@@ -27,10 +40,19 @@ from api import db, repository as repo
 from api.models import MapNode, SharePermission, Visibility
 from api.settings import Settings
 
-pytestmark = pytest.mark.skipif(
-    not os.getenv("NEO4J_URI"),
-    reason="NEO4J_URI is not set; skipping Neo4j integration tests",
-)
+from .envfiles import get as env_value, skip_reason, target_description
+
+# Evaluated at import time, after conftest.py has loaded any env files.
+_SKIP = skip_reason()
+
+pytestmark = pytest.mark.skipif(bool(_SKIP), reason=_SKIP or "runnable")
+
+if not _SKIP:
+    # These tests create and delete data. Which database that happens on should
+    # never be something the person running them has to infer, so it is stated
+    # before the first test rather than left to whatever the file happened to hold.
+    print(f"\n[integration] writing to {target_description()}")
+    print("[integration] creates and removes 'itest-' data only; other data is untouched.")
 
 SUBJECT = "itest-subject"
 
@@ -38,15 +60,19 @@ SUBJECT = "itest-subject"
 @pytest.fixture
 def settings():
     return Settings(
+        # Explicit, and read through envfiles rather than os.environ, so a value in
+        # .env.local reaches these tests without being injected into the process
+        # environment where it would reconfigure everything else.
+        _env_file=None,
         environment="test",
-        neo4j_uri=os.environ["NEO4J_URI"],
+        neo4j_uri=env_value("NEO4J_URI"),
         # Aura's credentials file names it NEO4J_USERNAME; accept either.
         neo4j_user=(
-            os.getenv("NEO4J_USER") or os.getenv("NEO4J_USERNAME") or "neo4j"
+            env_value("NEO4J_USER") or env_value("NEO4J_USERNAME") or "neo4j"
         ),
-        neo4j_password=os.environ["NEO4J_PASSWORD"],
+        neo4j_password=env_value("NEO4J_PASSWORD"),
         # Empty = server default; do not force a name that may not exist
-        neo4j_database=os.getenv("NEO4J_DATABASE", ""),
+        neo4j_database=env_value("NEO4J_DATABASE"),
     )
 
 

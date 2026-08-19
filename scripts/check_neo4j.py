@@ -27,6 +27,7 @@ from __future__ import annotations
 import os
 import socket
 import sys
+from pathlib import Path
 from urllib.parse import urlparse
 
 try:
@@ -65,25 +66,57 @@ def warn(msg: str) -> None:
     print(f"{YELLOW} WARN {RESET}{msg}")
 
 
+def _read_config() -> "callable":
+    """Return a getter for NEO4J_* settings: real environment first, then env files.
+
+    Shares api/tests/envfiles.py so there is one implementation of "where do local
+    credentials live" rather than two that can drift apart. That module deliberately
+    does not touch os.environ, so this asks it for values rather than expecting them
+    to appear there.
+
+    Falls back to os.getenv if the import fails: a connection check that only reads
+    the environment is worse than one that reads files too, but far better than one
+    that cannot run.
+    """
+    root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(root))
+    try:
+        from api.tests.envfiles import get, source_of
+
+        if get("NEO4J_URI"):
+            print(f"       reading credentials from {source_of('NEO4J_URI')}")
+        return get
+    except Exception:
+        return lambda key, default="": os.getenv(key, default)
+
+
 def main() -> int:
     print("Neo4j connection check")
     print("=" * 66)
 
-    uri = os.getenv("NEO4J_URI", "").strip()
+    # Read .env / .env.local too, or this reports "not set" for credentials that are
+    # sitting in a file right next to it — which is exactly what it did, while also
+    # being the thing the test suite tells you to run when it skips.
+    cfg = _read_config()
+
+    uri = cfg("NEO4J_URI", "").strip()
     # Aura's downloaded credentials file calls it NEO4J_USERNAME; accept both.
-    user = (os.getenv("NEO4J_USER") or os.getenv("NEO4J_USERNAME") or "neo4j").strip()
-    password = os.getenv("NEO4J_PASSWORD", "")
+    user = (cfg("NEO4J_USER") or cfg("NEO4J_USERNAME") or "neo4j").strip()
+    password = cfg("NEO4J_PASSWORD", "")
     # Empty means "let the server choose". Deliberately NOT defaulted to "neo4j":
     # forcing that name is what produced DatabaseNotFound on an instance whose
     # default database is called something else.
-    database = (os.getenv("NEO4J_DATABASE") or "").strip()
+    database = (cfg("NEO4J_DATABASE") or "").strip()
 
     # --- 1. environment ---------------------------------------------------
     if not uri:
         fail(
-            "NEO4J_URI is not set.",
-            "PowerShell:  $env:NEO4J_URI = 'neo4j+s://xxxxxxxx.databases.neo4j.io'",
-            "These variables only live in the current terminal window.",
+            "NEO4J_URI is not set, and no .env or .env.local supplied it.",
+            "Easiest: put it in .env.local in the repository root, uncommented:",
+            "    NEO4J_URI=neo4j+s://xxxxxxxx.databases.neo4j.io",
+            "Or for this terminal only:",
+            "    PowerShell:  $env:NEO4J_URI = 'neo4j+s://xxxxxxxx.databases.neo4j.io'",
+            "A shell variable only lives in the window you set it in; the file persists.",
         )
         return 1
     if not password:

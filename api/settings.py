@@ -16,8 +16,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    # Both filenames, with .env.local winning — the same precedence Vite uses, so
+    # the two halves of the project do not disagree about which file is the more
+    # specific one.
+    #
+    # `.env` alone was a trap: .env.example tells you to copy it to `.env.local`
+    # (correct for the frontend, which is what that file was written for), and doing
+    # so produced a file the API never read. Nothing reported this; the values were
+    # simply absent.
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", ".env.local"),
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
@@ -77,6 +85,14 @@ class Settings(BaseSettings):
     # rather than in memory, because Render runs more than one instance and a
     # per-process counter would give each of them its own allowance.
     max_pulses_per_hour: int = Field(default=20)
+
+    #: How long startup waits for Neo4j before booting without it.
+    #:
+    #: Bounded because an unreachable host does not raise, it blocks — so the
+    #: "boot anyway and let /health report it" behaviour needs a deadline to be real.
+    #: 20s is generous for a cold Aura instance waking up and short enough that a
+    #: deploy is not held open by a database that is never coming back.
+    startup_db_timeout_seconds: float = Field(default=20.0, gt=0)
 
     @field_validator("environment")
     @classmethod
