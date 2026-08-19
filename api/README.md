@@ -16,20 +16,21 @@ over Neo4j.
 | Media uploads | not started — needs object storage, see below |
 | Admin review queue | not started — needs a notion of an admin role |
 
-**The Cypher is partly verified.** `api/tests/test_integration_neo4j.py` holds 47
-tests. 33 of them have been run against a live AuraDB Free instance and passed
-(61s, Neo4j 5 / Aura, Python 3.14 on Windows). The 14 added since — the signed
-resonance rating, impressions, and the reader model — have NOT been run against a
-real database yet; they pass only in the sense that they are collected and skipped.
+**The Cypher is verified.** All 47 integration tests in
+`api/tests/test_integration_neo4j.py` pass against a live AuraDB Free instance
+(88s, Neo4j 5 / Aura, Python 3.14 on Windows).
 
-Stated this way on purpose: "the Cypher is verified" was true when written and
-quietly stopped being true as tests were added, which is exactly how a stale claim
-becomes a false one.
+This line has been wrong before, in the direction that matters: it claimed every test
+passed while tests had been added since the last run. If you add to that file, either
+run it or change this sentence — a verification claim rots silently, and a stale one
+reads exactly like a true one.
 
-The verified 33 cover the full wire-shape
-round trip including the JSON-encoded nested objects, relationship derivation,
-per-map node id scoping, cascade delete, a 500-node bulk write, the complete
-share-link lifecycle, and schema idempotency.
+They cover the full wire-shape round trip including the JSON-encoded nested objects,
+relationship derivation, per-map node id scoping, cascade delete, a 500-node bulk
+write, the complete share-link lifecycle, schema idempotency, node content up to the
+64 KB cap, the signed resonance scale with a rating private to the reader who gave
+it, impressions counted once per viewer, and the reader model seeing only its own
+reader's ratings.
 
 Re-run them after any change to `repository.py` — they are the only thing
 standing between a Cypher typo and silent data loss.
