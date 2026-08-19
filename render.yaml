@@ -25,10 +25,14 @@
 # Certificates are issued automatically.
 #
 # PLANNED: the app moves to a subdomain — fp.fractiverse.com — leaving the root
-# domain free to be a landing page for the several platforms under it. Nothing in
-# the application code depends on the hostname (base is './', there is no
-# path-based routing, share links are '/?map=...', and the API base is an env var),
-# so the move is entirely configuration:
+# domain to be a small landing page pointing at the several platforms beneath it:
+# the Fractality Platform (fp), The Extended Fractiverse (tef), and whatever
+# follows. Initials rather than a name like "app": with siblings, "app" does not
+# identify anything.
+#
+# Nothing in the application code depends on the hostname (base is './', there is
+# no path-based routing, share links are '/?map=...', and the API base is an env
+# var), so the move is entirely configuration:
 #
 #   1. Add fp.fractiverse.com to THIS service in Render (Settings -> Custom
 #      Domains) BEFORE touching DNS. Render routes by the Host header, so a name
@@ -42,9 +46,20 @@
 #      the record would be aliasing the app to the thing that is about to stop
 #      being the app. Match the existing www record, which already does this.
 #   3. Add the new origin to the API's CORS_ORIGIN, below.
-#   4. Add the subdomain to Clerk (Domains). A Clerk production instance is
-#      configured for one primary domain and its CNAMEs; verify sign-in on the new
-#      origin before removing the old one.
+#   4. In Clerk, set the PRIMARY DOMAIN to fractiverse.com — the apex — and add
+#      fp.fractiverse.com as an allowed origin. Not the other way round, and this
+#      is the expensive one to get wrong.
+#
+#      A Clerk production instance is configured for one primary domain, and its
+#      session cookie is scoped to it: subdomains beneath that domain inherit the
+#      session, siblings of it do not. Primary = the apex means fp and tef share a
+#      sign-in for nothing. Primary = fp means tef is a SIBLING needing Clerk's
+#      satellite-domain setup and a cross-origin handoff, and changing a
+#      production instance's primary domain later means new DNS records and
+#      invalidated live sessions.
+#
+#      Confirm the current behaviour in Clerk's dashboard before relying on this.
+#      Verify sign-in on the new origin before removing the old one.
 #   5. Only then point the apex AND www at whatever serves the landing page, and
 #      narrow CORS_ORIGIN to the subdomain alone.
 #
