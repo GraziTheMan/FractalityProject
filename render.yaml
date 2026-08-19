@@ -30,15 +30,35 @@
 # path-based routing, share links are '/?map=...', and the API base is an env var),
 # so the move is entirely configuration:
 #
-#   1. Add the subdomain here as a Custom Domain, and a DNS CNAME for it.
-#   2. Add the new origin to the API's CORS_ORIGIN, below.
-#   3. Add the subdomain to Clerk (Domains). A Clerk production instance is
+#   1. Add fp.fractiverse.com to THIS service in Render (Settings -> Custom
+#      Domains) BEFORE touching DNS. Render routes by the Host header, so a name
+#      that resolves here but is not registered on the service gets Render's own
+#      404, and the DNS looks broken when it is not. Render then shows the exact
+#      CNAME target to use.
+#   2. In DNS, add:  CNAME  fp  ->  <this-service>.onrender.com   (DNS only)
+#
+#      Point it at the RENDER HOST, never at fractiverse.com. An alias of the apex
+#      would follow the apex to the landing page at step 4 and take the app down —
+#      the record would be aliasing the app to the thing that is about to stop
+#      being the app. Match the existing www record, which already does this.
+#   3. Add the new origin to the API's CORS_ORIGIN, below.
+#   4. Add the subdomain to Clerk (Domains). A Clerk production instance is
 #      configured for one primary domain and its CNAMEs; verify sign-in on the new
 #      origin before removing the old one.
-#   4. Only then point the root domain at whatever serves the landing page.
+#   5. Only then point the apex AND www at whatever serves the landing page, and
+#      narrow CORS_ORIGIN to the subdomain alone.
 #
 # Do the app first and the landing page last, so there is never a moment when the
 # only working origin is the one being replaced.
+#
+# www matters as much as the apex: it currently serves the app, and the app should
+# end up on EXACTLY ONE origin. Two origins serving it means two independently
+# installable apps with separate service workers and separate caches, and people
+# install whichever one they happened to land on.
+#
+# What Email Routing calls a "subdomain" is unrelated to any of this — it is for
+# receiving mail at name@fp.fractiverse.com, and it puts MX records on the label
+# the CNAME needs. Not required, and worth avoiding.
 #
 # The ORDER matters more than it looks, for one reason: a PWA's identity — its
 # installed app, its service worker, its caches — is scoped to an origin and cannot
