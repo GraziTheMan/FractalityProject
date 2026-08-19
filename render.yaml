@@ -60,6 +60,20 @@
 #
 #      Confirm the current behaviour in Clerk's dashboard before relying on this.
 #      Verify sign-in on the new origin before removing the old one.
+#
+#      THIS STEP IS DEFERRABLE. Steps 1-3 do not touch Clerk, and the app serves
+#      on the new origin without it. Check the publishable key's prefix to see
+#      whether there is anything to do at all: pk_test_ is a DEVELOPMENT instance,
+#      which is not locked to a hostname — that is why sign-in works on the live
+#      site today rather than only on localhost — so the subdomain needs no Clerk
+#      change. pk_live_ means a production instance already exists.
+#
+#      A development instance serving real traffic has its own problems (user
+#      caps, Clerk's branding on the modal, not intended for production), but the
+#      subdomain neither causes nor worsens any of them. Separate decision.
+#
+#      And the floor is soft: with no key at all, hasAuth() is false, loadAuth()
+#      returns null, and the app runs on local data. Sign-in disabled, not broken.
 #   5. Only then point the apex AND www at whatever serves the landing page, and
 #      narrow CORS_ORIGIN to the subdomain alone.
 #
