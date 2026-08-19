@@ -2025,7 +2025,13 @@ if (run_identity) {
                 maps = [{ ...maps[0], ...body }];
                 return json(maps[0]);
             }
-            if (u === '/me') return json({ id: 'u1', display_name: 'Me' });
+            if (u === '/me' && method === 'PATCH') {
+                const body = JSON.parse(opts.body);
+                window.__patched.push(body);
+                window.__profile = { ...(window.__profile ?? {}), ...body };
+                return json({ id: 'u1', display_name: 'Me', ...window.__profile });
+            }
+            if (u === '/me') return json({ id: 'u1', display_name: 'Me', ...(window.__profile ?? {}) });
             return json({});
         };
         window.confirm = () => true;
@@ -2087,6 +2093,69 @@ if (run_identity) {
         await new Promise((r) => setTimeout(r, 700));
         return window.__patched;
     });
+    // --- the map that opens on sign-in
+    //
+    // Stored on the profile rather than in the browser, because which map you live in is
+    // a fact about you and not about the device you are signed in from — which was the
+    // whole reason for asking rather than remembering it locally.
+    const starred = await page.evaluate(async () => {
+        const panel = window.mapsPanel;
+        panel._renderList(await panel.client.listMyMaps().catch(() => []), true);
+        await new Promise((r) => setTimeout(r, 150));
+
+        const star = document.querySelector('.maps-default');
+        if (!star) return { missing: true };
+
+        const before = { text: star.textContent, pressed: star.getAttribute('aria-pressed') };
+        window.__patched = [];
+        star.click();
+        await new Promise((r) => setTimeout(r, 500));
+
+        panel._renderList(await panel.client.listMyMaps().catch(() => []), true);
+        const after = document.querySelector('.maps-default');
+        return {
+            before,
+            sent: window.__patched,
+            after: { text: after?.textContent, pressed: after?.getAttribute('aria-pressed') },
+        };
+    });
+
+    if (starred.missing) {
+        fail('there is no way to choose which map opens on sign-in');
+    } else if (starred.before.pressed !== 'false') {
+        fail(`the star starts pressed (${starred.before.pressed})`);
+    } else if (starred.sent.length === 0 || !('default_map_id' in starred.sent[0])) {
+        fail(`pressing the star sent ${JSON.stringify(starred.sent)}`);
+    } else if (!starred.sent[0].default_map_id) {
+        fail('pressing an unset star cleared the default instead of setting it');
+    } else {
+        pass(`a map can be nominated to open on sign-in (sent ${starred.sent[0].default_map_id})`);
+    }
+
+    // And pressing it again has to be the way back: a default you cannot un-choose is a
+    // setting that only goes one way.
+    const unstarred = await page.evaluate(async () => {
+        const panel = window.mapsPanel;
+        panel.defaultMapId = 'm1';
+        panel._renderList(await panel.client.listMyMaps().catch(() => []), true);
+        await new Promise((r) => setTimeout(r, 150));
+
+        const star = document.querySelector('.maps-default');
+        const shown = { text: star.textContent, pressed: star.getAttribute('aria-pressed') };
+        window.__patched = [];
+        star.click();
+        await new Promise((r) => setTimeout(r, 500));
+        return { shown, sent: window.__patched };
+    });
+
+    if (unstarred.shown.pressed !== 'true') {
+        fail('the nominated map is not marked as nominated');
+    } else if (unstarred.sent[0]?.default_map_id !== null) {
+        fail(`pressing the nominated star sent ${JSON.stringify(unstarred.sent)}, not null`);
+    } else {
+        pass('pressing it again clears the nomination');
+    }
+
     if (toPublic[0]?.visibility !== 'public') {
         fail(`unlisted should step to public, got ${toPublic[0]?.visibility}`);
     } else {
@@ -2794,6 +2863,56 @@ if (run_emergence) {
     } else {
         pass(`detaching a contributor raises the tier again (${detached.before} -> ${detached.after})`);
     }
+
+    // A node can be DECLARED on the axis, which is a claim about the ontology rather
+    // than something derivable from its edges. Every derivable rule founders on sibling
+    // branches: a node hanging off the side as a consequence would block the
+    // reunification of something it has nothing to do with.
+    const declared = await page.evaluate(async () => {
+        const g = window.fractalityEngine().nodeGraph;
+        const cone = window.coneView;
+
+        for (const node of [...g.nodes.values()]) {
+            for (const src of [...node.emergesFrom]) g.removeEmergence(node.id, src);
+        }
+        const deep = [...g.nodes.values()].sort((a, b) => b.depth - a.depth)[0];
+
+        cone.show();
+        await new Promise((r) => setTimeout(r, 250));
+        const radiusOf = (id) => {
+            const view = cone._view(g);
+            const pts = cone._project(g, cone._computeAngles(g, view), view);
+            return pts.find((x) => x.node.id === id)?.radius;
+        };
+
+        const before = radiusOf(deep.id);
+        deep.metadata.onAxis = true;
+        window.fractalityEngine().setFocus(deep.id);
+        await new Promise((r) => setTimeout(r, 250));
+
+        return {
+            id: deep.id,
+            tier: deep.depth,
+            before,
+            after: radiusOf(deep.id),
+            readout: document.querySelector('.cone-tier-label')?.textContent ?? '',
+        };
+    });
+
+    if (!(declared.before > 0)) {
+        fail('the test node was already on the axis, so nothing was proven');
+    } else if (declared.after !== 0) {
+        fail(`a node declared onAxis has radius ${declared.after}, not 0`);
+    } else if (!/on the axis/.test(declared.readout)) {
+        fail(`the readout does not say the node is on the axis: "${declared.readout}"`);
+    } else {
+        pass(`a node declared onAxis sits exactly on it (radius ${declared.before.toFixed(0)} -> 0, tier ${declared.tier})`);
+    }
+
+    await page.evaluate(() => {
+        const g = window.fractalityEngine().nodeGraph;
+        for (const n of g.nodes.values()) delete n.metadata.onAxis;
+    });
 
     // --- descending into an emergent node
     //

@@ -63,11 +63,12 @@ async def update_me(
     principal: Principal = Depends(current_user),
     settings: Settings = Depends(get_settings),
 ):
-    """Change display name or avatar.
+    """Change display name, avatar, or which map opens on sign-in.
 
     PATCH, and the fields are genuinely optional: omitting one leaves it alone,
     while sending it as null clears it. Without that distinction an avatar could
-    be set but never removed.
+    be set but never removed — and the same applies to the default map, where
+    "no default" is a state a user needs to be able to get back to.
     """
     _require_db(settings)
     await repo.upsert_user(settings, principal.subject, principal.username, principal.email)
@@ -78,8 +79,10 @@ async def update_me(
         principal.subject,
         display_name=fields.get("display_name"),
         avatar_url=fields.get("avatar_url"),
+        default_map_id=fields.get("default_map_id"),
         set_name="display_name" in fields,
         set_avatar="avatar_url" in fields,
+        set_default="default_map_id" in fields,
     )
     if profile is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")

@@ -50,16 +50,20 @@ def client(monkeypatch, settings):
         return state["profile"]
 
     async def fake_update_profile(_s, subject, display_name=None, avatar_url=None,
-                                  set_name=False, set_avatar=False):
+                                  default_map_id=None, set_name=False, set_avatar=False,
+                                  set_default=False):
         state["profile_calls"].append({
             "display_name": display_name, "avatar_url": avatar_url,
+            "default_map_id": default_map_id,
             "set_name": set_name, "set_avatar": set_avatar,
+            "set_default": set_default,
         })
         current = state["profile"]
         state["profile"] = Profile(
             id=current.id,
             display_name=display_name if set_name else current.display_name,
             avatar_url=avatar_url if set_avatar else current.avatar_url,
+            default_map_id=default_map_id if set_default else current.default_map_id,
             username=current.username, email=current.email,
         )
         return state["profile"]
@@ -232,3 +236,50 @@ def test_clearing_a_link_is_distinguishable_from_leaving_it(client):
 
     client.patch(f"/pulses/{PULSE_ID}", json={"media": None})
     assert client.state["pulse_updates"][1]["media_json"] is None, "null means clear"
+
+
+# --- the map that opens on sign-in -----------------------------------------
+
+
+def test_setting_a_default_map(client):
+    client.state["principal"] = ME
+    response = client.patch("/me", json={"default_map_id": "map-abc"})
+    assert response.status_code == 200
+    assert client.state["profile_calls"][-1] == {
+        "display_name": None, "avatar_url": None, "default_map_id": "map-abc",
+        "set_name": False, "set_avatar": False, "set_default": True,
+    }
+    assert response.json()["default_map_id"] == "map-abc"
+
+
+def test_clearing_the_default_map(client):
+    """
+    "No default" is a state a user has to be able to get back to, which is why null and
+    omitted have to mean different things here.
+    """
+    client.state["principal"] = ME
+    client.patch("/me", json={"default_map_id": "map-abc"})
+    response = client.patch("/me", json={"default_map_id": None})
+    assert response.status_code == 200
+    assert client.state["profile_calls"][-1]["set_default"] is True
+    assert client.state["profile_calls"][-1]["default_map_id"] is None
+    assert response.json()["default_map_id"] is None
+
+
+def test_omitting_the_default_map_leaves_it_alone(client):
+    client.state["principal"] = ME
+    client.patch("/me", json={"default_map_id": "map-abc"})
+    response = client.patch("/me", json={"display_name": "Nick"})
+    assert client.state["profile_calls"][-1]["set_default"] is False
+    assert response.json()["default_map_id"] == "map-abc", "an unrelated edit cleared it"
+
+
+def test_the_default_map_is_returned_by_a_plain_read(client):
+    client.state["principal"] = ME
+    client.patch("/me", json={"default_map_id": "map-abc"})
+    assert client.get("/me").json()["default_map_id"] == "map-abc"
+
+
+def test_setting_a_default_map_requires_sign_in(client):
+    client.state["principal"] = None
+    assert client.patch("/me", json={"default_map_id": "map-abc"}).status_code == 401

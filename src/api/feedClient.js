@@ -124,23 +124,10 @@ export class FeedClient extends MindMapClient {
         });
     }
 
-    // --- profile -----------------------------------------------------------
-
-    /** The caller's profile, creating the local row on a first visit. */
-    getProfile() {
-        return this._request('/me');
-    }
-
-    /**
-     * Change display name or avatar.
-     *
-     * Send a field as null to clear it; omit it to leave it alone. That
-     * distinction is why this is a PATCH — otherwise an avatar could be set and
-     * never removed.
-     */
-    updateProfile(changes) {
-        return this._request('/me', { method: 'PATCH', body: changes });
-    }
+    // Profile methods live on MindMapClient, which this extends. They were here, but
+    // /me is not a feed concern — it carries the display name, the avatar AND which map
+    // opens on sign-in, and the Maps panel needs that last one without having any reason
+    // to hold a feed client.
 }
 
 /**

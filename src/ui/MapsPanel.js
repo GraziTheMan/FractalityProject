@@ -53,6 +53,9 @@ export class MapsPanel {
         this.listEl = null;
         this.isOpen = false;
 
+        /** The map nominated to open on sign-in, or null. Read from the profile. */
+        this.defaultMapId = null;
+
         /** The map currently loaded from the cloud, if any. */
         this.currentMap = null;
 
@@ -225,6 +228,22 @@ export class MapsPanel {
                 ? await this.client.listMyMaps({ onRetry })
                 : await this.client.listPublicMaps({ onRetry });
 
+            // Which map is nominated to open on sign-in, so the star renders in the
+            // right state. Read alongside the list rather than cached at construction,
+            // because it can be changed from another device.
+            if (signedIn) {
+                try {
+                    this.defaultMapId =
+                        (await this.client.getProfile())?.default_map_id ?? null;
+                } catch {
+                    // Not worth failing the list over: an unknown default just shows
+                    // every star as unset, and pressing one still works.
+                    this.defaultMapId = null;
+                }
+            } else {
+                this.defaultMapId = null;
+            }
+
             this._renderList(maps, signedIn);
             ok = true;
             this._setStatus(
@@ -363,6 +382,20 @@ export class MapsPanel {
                 visibilityBtn.addEventListener('click', () => this.cycleVisibility(map));
                 actions.appendChild(visibilityBtn);
 
+                // Which map opens on sign-in. A star rather than a menu: it is one
+                // choice across all maps, so the control belongs on each row where you
+                // can see which one currently holds it.
+                const isDefault = this.defaultMapId === map.id;
+                const defaultBtn = document.createElement('button');
+                defaultBtn.className = 'maps-default';
+                defaultBtn.textContent = isDefault ? '★' : '☆';
+                defaultBtn.title = isDefault
+                    ? 'Opens on sign-in. Press to stop.'
+                    : 'Open this map automatically on sign-in';
+                defaultBtn.setAttribute('aria-pressed', String(isDefault));
+                defaultBtn.addEventListener('click', () => this.setDefault(map, !isDefault));
+                actions.appendChild(defaultBtn);
+
                 const delBtn = document.createElement('button');
                 delBtn.textContent = 'Delete';
                 delBtn.className = 'danger';
@@ -490,6 +523,28 @@ export class MapsPanel {
      * to strangers is the step that cannot be taken back for anyone who has
      * already seen it.
      */
+    /**
+     * Nominate a map to open on sign-in, or clear the nomination.
+     *
+     * Stored on the profile, so it follows the person to any device they sign in from —
+     * which is the point of asking for it rather than remembering it locally.
+     */
+    async setDefault(map, on) {
+        this._setStatus(on ? 'Setting your default map…' : 'Clearing your default map…');
+        try {
+            const profile = await this.client.updateProfile({
+                default_map_id: on ? map.id : null
+            });
+            this.defaultMapId = profile?.default_map_id ?? null;
+            this.notify(on
+                ? `"${map.title}" will open when you sign in`
+                : 'No map will open automatically');
+            await this.refresh();
+        } catch (error) {
+            this._setStatus(this._describe(error), 'error');
+        }
+    }
+
     async cycleVisibility(map) {
         const current = VISIBILITY_ORDER.indexOf(map.visibility);
         const next = VISIBILITY_ORDER[(current + 1) % VISIBILITY_ORDER.length];
@@ -676,6 +731,15 @@ export class MapsPanel {
             .maps-item-meta { color: #888; font-size: 11px; margin-bottom: 6px; }
             .maps-item-actions { display: flex; gap: 4px; flex-wrap: wrap; }
             .maps-visibility { white-space: nowrap; }
+            /* The map that opens on sign-in. Filled when it holds the nomination, so
+               which one it is can be seen without pressing anything. */
+            .maps-default {
+                min-width: 30px;
+                color: #666;
+                font-size: 13px;
+                line-height: 1;
+            }
+            .maps-default[aria-pressed="true"] { color: #fcd34d; border-color: #fcd34d; }
             .maps-status {
                 padding: 8px 12px;
                 color: #888;

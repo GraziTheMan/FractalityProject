@@ -294,6 +294,28 @@ export class MindMapClient {
         if (!mapId) return null;
         return { mapId, shareToken: params.get('token') || undefined };
     }
+
+    // --- profile -----------------------------------------------------------
+    //
+    // Here rather than on the feed client because /me is not a feed concern: it carries
+    // the display name, the avatar, and which map to open on sign-in. The Maps panel
+    // needs the last of those and has no reason to hold a feed client.
+
+    /** The caller's profile, creating the local row on a first visit. */
+    getProfile() {
+        return this._request('/me');
+    }
+
+    /**
+     * Change display name, avatar, or the map that opens on sign-in.
+     *
+     * Send a field as null to clear it; omit it to leave it alone. That distinction is
+     * why this is a PATCH — otherwise an avatar could be set and never removed, and
+     * neither could a default map be un-chosen.
+     */
+    updateProfile(changes) {
+        return this._request('/me', { method: 'PATCH', body: changes });
+    }
 }
 
 /** Shared instance using the deploy config. */

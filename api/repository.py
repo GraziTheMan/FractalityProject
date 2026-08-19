@@ -1107,10 +1107,20 @@ async def count_recent_pulses(settings: Settings, subject: str, window_ms: int) 
 
 # --- profile ---------------------------------------------------------------
 
+# The default map is validated on READ, not on write.
+#
+# A map can be deleted, or its visibility narrowed, long after being chosen as the
+# default. Checking only at write time would leave a profile pointing at something the
+# user can no longer open, and the app would report a failure on every sign-in with no
+# way to see why. So the pointer is only returned while it still resolves to a map this
+# user owns; otherwise it reads as "no default" and sign-in falls back to the most
+# recent map.
 GET_PROFILE = """
 MATCH (u:User {subject: $subject})
+OPTIONAL MATCH (u)-[:OWNS]->(d:MindMap {id: u.default_map_id})
 RETURN u.id AS id, u.display_name AS display_name, u.avatar_url AS avatar_url,
-       u.username AS username, u.email AS email
+       u.username AS username, u.email AS email,
+       d.id AS default_map_id
 """
 
 
@@ -1121,10 +1131,14 @@ async def get_profile(settings: Settings, subject: str) -> Optional[Profile]:
 
 UPDATE_PROFILE = """
 MATCH (u:User {subject: $subject})
-SET u.display_name = CASE WHEN $set_name   THEN $display_name ELSE u.display_name END,
-    u.avatar_url   = CASE WHEN $set_avatar THEN $avatar_url   ELSE u.avatar_url   END
+SET u.display_name    = CASE WHEN $set_name    THEN $display_name  ELSE u.display_name END,
+    u.avatar_url      = CASE WHEN $set_avatar  THEN $avatar_url    ELSE u.avatar_url   END,
+    u.default_map_id  = CASE WHEN $set_default THEN $default_map_id ELSE u.default_map_id END
+WITH u
+OPTIONAL MATCH (u)-[:OWNS]->(d:MindMap {id: u.default_map_id})
 RETURN u.id AS id, u.display_name AS display_name, u.avatar_url AS avatar_url,
-       u.username AS username, u.email AS email
+       u.username AS username, u.email AS email,
+       d.id AS default_map_id
 """
 
 
@@ -1133,8 +1147,10 @@ async def update_profile(
     subject: str,
     display_name: Optional[str] = None,
     avatar_url: Optional[str] = None,
+    default_map_id: Optional[str] = None,
     set_name: bool = False,
     set_avatar: bool = False,
+    set_default: bool = False,
 ) -> Optional[Profile]:
     """Partial profile update.
 
@@ -1149,8 +1165,10 @@ async def update_profile(
         subject=subject,
         display_name=display_name,
         avatar_url=avatar_url,
+        default_map_id=default_map_id,
         set_name=set_name,
         set_avatar=set_avatar,
+        set_default=set_default,
     )
     return Profile(**rows[0]) if rows else None
 

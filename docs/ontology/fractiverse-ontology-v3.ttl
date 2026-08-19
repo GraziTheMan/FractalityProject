@@ -1,0 +1,274 @@
+@prefix skos: <http://www.w3.org/2004/02/skos/core#>.
+@prefix dcterms: <http://purl.org/dc/terms/>.
+@prefix schema: <https://schema.org/>.
+@prefix fract: <https://fractiverse.com/ns#>.
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#>.
+@prefix : <https://fractiverse.com/map/ontology-full#>.
+
+# The Fractiverse Full Ontology, v3
+#
+# Changes from v2, each explained on the node it affects:
+#   * Duality restored between the Fractiverse and the Motion/Stillness pair.
+#   * Structure moved under Stillness, giving that branch content.
+#   * Axiom IV and Candidate Axiom 3 connected to C4, completing the pairing.
+#   * fract:containedIn added everywhere, so the containing parent is stated rather
+#     than inferred from document order.
+#   * Tier numbers omitted. They are recomputed as 1 + max(all parents), so stating
+#     them can only disagree with the edges — as one did in v2.
+#   * fract:onAxis on the two ends of the axis.
+#   * schema:text used for the page behind each node, where there is something to say.
+
+<https://fractiverse.com/map/ontology-full> a skos:ConceptScheme;
+    dcterms:title "The Fractiverse Full Ontology";
+    skos:hasTopConcept :fractiverse.
+
+# --- The unknowable container ----------------------------------------------
+
+:fractiverse a skos:Concept;
+    skos:prefLabel "The Fractiverse";
+    fract:nodeType "spiral-root";
+    fract:onAxis true;
+    dcterms:description "The ultimate unknowable container.";
+    schema:text """# The Fractiverse
+
+The ultimate container. Unknowable in the sense the Gnostics meant by the Monad:
+not hidden, but prior to the distinctions that knowing requires.
+
+Everything below is a distinction made within it. It sits on the axis because it is
+the one thing that is not yet differentiated from anything.""";
+    skos:topConceptOf <https://fractiverse.com/map/ontology-full>.
+
+# --- The first distinction -------------------------------------------------
+#
+# Restored. v2 had Motion and Stillness hanging directly off the Fractiverse, which
+# skips the step that makes them a pair rather than two arbitrary children.
+
+:duality a skos:Concept;
+    skos:prefLabel "Duality";
+    fract:nodeType "spiral-node";
+    dcterms:description "The first distinction: that there is more than one thing.";
+    schema:text """# Duality
+
+The first cut. Not "two things" but the possibility of two — the appearance of
+difference within what was undifferentiated.
+
+Everything below is a consequence of this one move, which is why it is the only child
+of the Fractiverse.""";
+    skos:broader :fractiverse;
+    fract:containedIn :fractiverse.
+
+:motion a skos:Concept;
+    skos:prefLabel "Motion";
+    fract:nodeType "spiral-node";
+    dcterms:description "The changing pole of the first duality.";
+    skos:broader :duality;
+    fract:containedIn :duality.
+
+:stillness a skos:Concept;
+    skos:prefLabel "Stillness";
+    fract:nodeType "spiral-node";
+    dcterms:description "The abiding pole of the first duality.";
+    schema:text """# Stillness
+
+In v2 this had no descendants while Motion had twenty, which made the duality
+nominal — a label on a branch that never happened.
+
+Axiom II names the pair directly: persistence comes from "a recurrent cycle of
+field-induced **ordering** (Structure) and ion-induced randomized **dissociation**
+(Reset)." Ordering is the still pole. So Structure belongs here, not under Motion.""";
+    skos:broader :duality;
+    fract:containedIn :duality.
+
+# --- The three quantities --------------------------------------------------
+#
+# qs, qp, qc read as a triad, and Axiom I says why: the temporal interval is composed
+# of three orthogonal dimensions. They are kept as siblings-in-kind across the duality
+# rather than being bundled under one pole.
+
+:structure a skos:Concept;
+    skos:prefLabel "Structure (qs)";
+    fract:nodeType "spiral-node";
+    dcterms:description "The ordering quantity. Axiom II's structure-forming half.";
+    skos:broader :stillness;
+    fract:containedIn :stillness.
+
+:dynamics a skos:Concept;
+    skos:prefLabel "Dynamics";
+    fract:nodeType "spiral-node";
+    dcterms:description "The dissociating half: change, reset, flow.";
+    skos:broader :motion;
+    fract:containedIn :motion.
+
+:phase a skos:Concept;
+    skos:prefLabel "Phase (qp)";
+    fract:nodeType "spiral-node";
+    dcterms:description "Where in a cycle. Axiom I's interaction scale, t2.";
+    skos:broader :dynamics;
+    fract:containedIn :dynamics.
+
+:scale a skos:Concept;
+    skos:prefLabel "Scale (qc)";
+    fract:nodeType "spiral-node";
+    dcterms:description "At what magnitude. Axiom I's cosmological scale, t3.";
+    skos:broader :dynamics;
+    fract:containedIn :dynamics.
+
+# --- The eight axioms ------------------------------------------------------
+#
+# Each draws on the quantities it actually concerns. The containing parent is stated,
+# so the convergence is unambiguous rather than resolved by whichever edge came first
+# in the file.
+
+:principia-axiom-I a skos:Concept;
+    skos:prefLabel "Principia Axiom I: 3D Time";
+    fract:nodeType "spiral-node";
+    dcterms:description "Time is three orthogonal dimensions; masses are its eigenvalues.";
+    skos:broader :phase, :scale;
+    fract:containedIn :phase.
+
+:candidate-axiom-3 a skos:Concept;
+    skos:prefLabel "Candidate Axiom 3: Universal Scaling";
+    fract:nodeType "spiral-node";
+    dcterms:description "Critical transitions collapse onto a universal curve.";
+    skos:broader :phase, :scale;
+    fract:containedIn :phase.
+
+:principia-axiom-II a skos:Concept;
+    skos:prefLabel "Principia Axiom II: Thermodynamic Pulse";
+    fract:nodeType "spiral-node";
+    dcterms:description "Persistence through a cycle of ordering and reset.";
+    skos:broader :structure, :phase;
+    fract:containedIn :structure.
+
+:candidate-axiom-4 a skos:Concept;
+    skos:prefLabel "Candidate Axiom 4: Resonant Phase-Locking";
+    fract:nodeType "spiral-node";
+    dcterms:description "Coupled oscillators lock phase above a critical coupling.";
+    skos:broader :structure, :phase;
+    fract:containedIn :phase.
+
+:principia-axiom-III a skos:Concept;
+    skos:prefLabel "Principia Axiom III: Scale-Invariant Coupling";
+    fract:nodeType "spiral-node";
+    dcterms:description "t2 acts as a universal scale-coupler; everything is a fractal hologram.";
+    skos:broader :structure, :scale;
+    fract:containedIn :scale.
+
+:candidate-axiom-1 a skos:Concept;
+    skos:prefLabel "Candidate Axiom 1: Geometry Constrains Observables";
+    fract:nodeType "spiral-node";
+    dcterms:description "Amplituhedron: locality and unitarity emerge from positivity.";
+    skos:broader :structure, :scale;
+    fract:containedIn :structure.
+
+:principia-axiom-IV a skos:Concept;
+    skos:prefLabel "Principia Axiom IV: Crystallization Spectrum";
+    fract:nodeType "spiral-node";
+    dcterms:description "Potential becomes real through four stages, C1 to C4.";
+    schema:text """# Axiom IV: The Crystallization Spectrum
+
+This is the axiom that *states* the C1 to C4 spectrum, and in v2 nothing flowed out of
+it — the axiom defining the ladder was not attached to the ladder.
+
+It now feeds C4 directly, which is what the pairing pattern predicts: six axioms pair
+into C1, C2 and C3, leaving Axiom IV and Candidate Axiom 3 as the remaining pair. The
+axiom about the spectrum itself and the axiom about universal critical transitions are
+exactly the two that belong at the meta stage.""";
+    skos:broader :structure, :phase, :scale;
+    fract:containedIn :structure.
+
+:candidate-axiom-2 a skos:Concept;
+    skos:prefLabel "Candidate Axiom 2: Topological Protection";
+    fract:nodeType "spiral-node";
+    dcterms:description "Topological invariants cannot degrade continuously, enabling cross-scale coherence.";
+    skos:broader :structure, :phase, :scale;
+    fract:containedIn :structure.
+
+# --- The crystallization stages -------------------------------------------
+
+:c1-lattice a skos:Concept;
+    skos:prefLabel "C1: Lattice Crystallization";
+    fract:nodeType "spiral-node";
+    dcterms:description "Physical stability. The Emperor.";
+    skos:broader :principia-axiom-II, :candidate-axiom-1;
+    fract:containedIn :principia-axiom-II.
+
+:c2-dynamic a skos:Concept;
+    skos:prefLabel "C2: Dynamic Crystallization";
+    fract:nodeType "spiral-node";
+    dcterms:description "Isolated potential. The Hermit.";
+    skos:broader :principia-axiom-I, :candidate-axiom-4;
+    fract:containedIn :principia-axiom-I.
+
+:c3-informational a skos:Concept;
+    skos:prefLabel "C3: Informational Crystallization";
+    fract:nodeType "spiral-node";
+    dcterms:description "Directed attention. The Magician.";
+    skos:broader :principia-axiom-III, :candidate-axiom-2;
+    fract:containedIn :principia-axiom-III.
+
+# --- The four operators ---------------------------------------------------
+
+:resonance a skos:Concept;
+    skos:prefLabel "Resonance (R)";
+    fract:nodeType "spiral-node";
+    dcterms:description "How strongly components couple.";
+    skos:broader :c2-dynamic;
+    fract:containedIn :c2-dynamic.
+
+:emergent-complexity a skos:Concept;
+    skos:prefLabel "Emergent Complexity (Sigma)";
+    fract:nodeType "spiral-node";
+    dcterms:description "What the coupling produces that the parts do not have.";
+    skos:broader :c3-informational;
+    fract:containedIn :c3-informational.
+
+:temporal-stability a skos:Concept;
+    skos:prefLabel "Temporal Stability (Gamma)";
+    fract:nodeType "spiral-node";
+    dcterms:description "How long a pattern persists across the reset cycle.";
+    skos:broader :c1-lattice, :c2-dynamic;
+    fract:containedIn :c1-lattice.
+
+:inter-scale-coupling a skos:Concept;
+    skos:prefLabel "Inter-Scale Coupling (Omega)";
+    fract:nodeType "spiral-node";
+    dcterms:description "How a pattern at one scale reaches another.";
+    skos:broader :c1-lattice, :c3-informational;
+    fract:containedIn :c1-lattice.
+
+# --- Where it all comes back together -------------------------------------
+
+:consciousness a skos:Concept;
+    skos:prefLabel "C4: Meta-Crystallization / Consciousness";
+    fract:nodeType "spiral-node";
+    fract:onAxis true;
+    dcterms:description "Unified realization. The Sun.";
+    schema:text """# C4: Meta-Crystallization
+
+Where the four operators and the two remaining axioms reunify.
+
+On the axis, declared rather than derived. The axis runs from the Fractiverse at the
+apex to here at the base: the undifferentiated container and its full realization, the
+two points that are not partial. Everything between them sits off the axis in
+proportion to how much it has been differentiated and how little has yet flowed back
+together.
+
+That is Axiom IV drawn as a distance. C1, physical stability, sits at the rim; C4 sits
+on the line.""";
+    skos:broader :resonance, :emergent-complexity, :temporal-stability, :inter-scale-coupling,
+                 :principia-axiom-IV, :candidate-axiom-3;
+    fract:containedIn :resonance.
+
+# --- A consequence, not an input ------------------------------------------
+#
+# Kept as a leaf on purpose. QFT is something the framework should account for rather
+# than something that flows into consciousness, and its v2 tier of 7 disagreed with its
+# own single edge — the importer computed 6.
+
+:quantum-field-theory a skos:Concept;
+    skos:prefLabel "Quantum Field Theory";
+    fract:nodeType "spiral-node";
+    dcterms:description "An account the framework has to be consistent with.";
+    skos:broader :c3-informational;
+    fract:containedIn :c3-informational.

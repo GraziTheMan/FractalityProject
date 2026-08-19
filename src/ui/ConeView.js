@@ -50,6 +50,19 @@ const TAP_SLOP = 10;
  * from the apex.
  */
 function _inwardPull(graph, node) {
+    // A node can be DECLARED a reunification point, which puts it on the axis exactly.
+    //
+    // Declared rather than derived, after trying to derive it. Every rule that suggests
+    // itself founders on sibling branches: "is an ancestor of nothing that dead-ends
+    // above it" sounds right until a node like Quantum Field Theory — a consequence
+    // hanging off the side, not an input — blocks the reunification of something it has
+    // nothing to do with. Whether a node is where everything comes back together is a
+    // claim about the ontology, not a fact about its edges, so the author makes it.
+    //
+    // What CAN be derived is the diagnosis: which branches never rejoin. That is
+    // reported rather than silently encoded in the geometry.
+    if (node.metadata?.onAxis === true) return 0;
+
     const degree = typeof graph.getConvergenceDegree === 'function'
         ? graph.getConvergenceDegree(node.id)
         // A graph from an older build has no such method. Falling back to "no pull"
@@ -727,6 +740,9 @@ export class ConeView {
             if (streams > 0) {
                 parts.push(`${streams} stream${streams === 1 ? '' : 's'} converge here`);
             }
+            // Otherwise a node sitting exactly on the centre line reads as a rendering
+            // accident rather than as the claim it is.
+            if (focused.metadata?.onAxis === true) parts.push('on the axis');
         }
         this.tierLabel.textContent = parts.join('  ·  ');
     }

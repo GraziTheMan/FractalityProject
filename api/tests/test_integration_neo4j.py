@@ -389,6 +389,73 @@ async def test_a_wide_convergence_survives_one_round_trip(settings, user):
     assert sorted({n.id: n for n in fetched.nodes}["join"].emergesFrom) == sorted(sources)
 
 
+async def test_a_default_map_is_stored_and_returned(settings, user):
+    summary = await repo.create_map(
+        settings, SUBJECT, "My default", "", Visibility.PRIVATE, "root"
+    )
+    updated = await repo.update_profile(
+        settings, SUBJECT, default_map_id=summary.id, set_default=True
+    )
+    assert updated.default_map_id == summary.id
+    assert (await repo.get_profile(settings, SUBJECT)).default_map_id == summary.id
+
+
+async def test_a_default_map_that_was_deleted_reads_as_no_default(settings, user):
+    """
+    Validated on READ, not on write.
+
+    A map can be deleted long after being nominated. Checking only at write time would
+    leave a profile pointing at something that cannot be opened, and the app would report
+    a failure on every sign-in with no way to see why.
+    """
+    summary = await repo.create_map(
+        settings, SUBJECT, "Doomed", "", Visibility.PRIVATE, "root"
+    )
+    await repo.update_profile(
+        settings, SUBJECT, default_map_id=summary.id, set_default=True
+    )
+    await repo.delete_map(settings, SUBJECT, summary.id)
+
+    assert (await repo.get_profile(settings, SUBJECT)).default_map_id is None
+
+
+async def test_another_users_map_cannot_be_your_default(settings, user, other_user):
+    """The pointer is only honoured while it resolves to a map the caller owns."""
+    theirs = await repo.create_map(
+        settings, OTHER_SUBJECT, "Theirs", "", Visibility.PUBLIC, "root"
+    )
+    await repo.update_profile(
+        settings, SUBJECT, default_map_id=theirs.id, set_default=True
+    )
+    assert (await repo.get_profile(settings, SUBJECT)).default_map_id is None
+
+
+async def test_clearing_a_default_map(settings, user):
+    summary = await repo.create_map(
+        settings, SUBJECT, "For a while", "", Visibility.PRIVATE, "root"
+    )
+    await repo.update_profile(
+        settings, SUBJECT, default_map_id=summary.id, set_default=True
+    )
+    await repo.update_profile(settings, SUBJECT, default_map_id=None, set_default=True)
+
+    assert (await repo.get_profile(settings, SUBJECT)).default_map_id is None
+
+
+async def test_an_unrelated_profile_edit_keeps_the_default_map(settings, user):
+    summary = await repo.create_map(
+        settings, SUBJECT, "Keep me", "", Visibility.PRIVATE, "root"
+    )
+    await repo.update_profile(
+        settings, SUBJECT, default_map_id=summary.id, set_default=True
+    )
+    await repo.update_profile(settings, SUBJECT, display_name="Nick", set_name=True)
+
+    profile = await repo.get_profile(settings, SUBJECT)
+    assert profile.default_map_id == summary.id
+    assert profile.display_name == "Nick"
+
+
 async def test_relationships_are_derived_from_edges_not_properties(settings, user):
     """
     childIds/parentId on the wire are rebuilt from HAS_CHILD relationships. A

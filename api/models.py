@@ -245,10 +245,18 @@ class Profile(BaseModel):
     username: Optional[str] = None
     email: Optional[str] = None
 
+    #: The map to open on sign-in, or None to open the most recently edited one.
+    #:
+    #: Stored on the profile rather than in the browser because it is a statement about
+    #: the person, not the device: someone with one map they live in wants it on every
+    #: machine they sign in from, which was the whole point of asking for it.
+    default_map_id: Optional[str] = None
+
 
 class ProfileUpdate(BaseModel):
     display_name: Optional[str] = Field(default=None, max_length=60)
     avatar_url: Optional[str] = Field(default=None, max_length=2_000)
+    default_map_id: Optional[str] = Field(default=None, max_length=64)
 
     @field_validator("display_name", mode="before")
     @classmethod

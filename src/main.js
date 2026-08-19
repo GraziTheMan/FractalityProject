@@ -638,17 +638,41 @@ function setupSearchListeners() {
  * Coming back to the generated demo map instead makes it look as though the saved
  * work is gone.
  *
+ * Prefers the map the user nominated as their default, then the most recently edited
+ * one. Stored on the profile rather than in the browser, because which map you live in
+ * is a fact about you and not about the device you happen to be signed in from.
+ *
  * Silent about failure on purpose: this runs during boot, and a cold API or an
  * unreachable network must fall through to the demo rather than leaving an empty
  * screen. The Maps panel reports properly when opened deliberately.
  *
  * @returns {Promise<boolean>} true when a map was loaded
  */
-async function openMostRecentMap() {
+async function openStartingMap() {
   if (!mindMapClient.available) return false;
   if (hasAuth() && !getAuthState().signedIn) return false;
 
   try {
+    // The map the user chose, if they chose one. The API returns the pointer only while
+    // it still resolves to a map they own, so a deleted default reads as "no default"
+    // rather than as a failure on every sign-in for evermore.
+    let chosen = null;
+    try {
+      chosen = (await feedClient.getProfile())?.default_map_id ?? null;
+    } catch {
+      // A profile that will not load is not a reason to open nothing.
+    }
+
+    if (chosen) {
+      const opened = await mapsPanel.loadMap(chosen);
+      if (opened) {
+        showNotification(`Opened your default map, "${opened.title}"`);
+        return true;
+      }
+      // Fall through rather than giving up: whatever went wrong with the default, the
+      // most recently edited map is a better outcome than the generated demo.
+    }
+
     const maps = await mindMapClient.listMyMaps({ limit: 1 });
     if (!maps?.length) return false;
 
@@ -658,7 +682,7 @@ async function openMostRecentMap() {
     showNotification(`Opened "${maps[0].title}"`);
     return true;
   } catch (error) {
-    console.warn('Could not open the most recent map:', error.message);
+    console.warn('Could not open a starting map:', error.message);
     return false;
   }
 }
@@ -1025,7 +1049,7 @@ AppState.on('viewChanged', async (view) => {
         showNotification('That shared map could not be opened', 'error');
         await fractalityEngine.loadData(testGenerator.generateTestPattern('golden'));
       }
-    } else if (await openMostRecentMap()) {
+    } else if (await openStartingMap()) {
       // Your own most recent map, which is almost always what you came back for.
     } else {
       // Check for CLI data first
