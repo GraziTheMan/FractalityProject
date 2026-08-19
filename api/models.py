@@ -121,6 +121,18 @@ class MapNode(BaseModel):
     #: cycle checking and depth computation harder — see validate_graph.
     emergesFrom: List[str] = Field(default_factory=list)
 
+    #: Nodes this one cycles back to. The one relation that may be circular.
+    #:
+    #: Not a parent relation, deliberately. Axiom II describes "a recurrent cycle" and
+    #: calls death "the mandatory refresh rate of the information field", so terminal
+    #: entropy returning to a new beginning is central to the framework — but tiers are
+    #: 1 + max(parents), which requires an acyclic graph.
+    #:
+    #: The resolution is that this edge bears no tier: it is excluded from the depth
+    #: computation and from the cycle check, so it can state "this returns to that"
+    #: without claiming one derives from the other.
+    resetsTo: List[str] = Field(default_factory=list)
+
     depth: int = 0
     metadata: NodeMetadata = Field(default_factory=NodeMetadata)
     energy: NodeEnergy = Field(default_factory=NodeEnergy)
@@ -551,6 +563,16 @@ def validate_graph(nodes: List[MapNode], root_id: Optional[str]) -> None:
                 )
             if source_id == node.id:
                 raise ValueError(f"node {node.id} emerges from itself")
+        # Dangling and self-reference are still errors here; a CYCLE is not, and must
+        # not be checked for. _reject_cycles and _check_tiers both ignore this relation
+        # on purpose — see MapNode.resetsTo.
+        for target_id in node.resetsTo:
+            if target_id not in seen:
+                raise ValueError(
+                    f"node {node.id} resets to missing node {target_id}"
+                )
+            if target_id == node.id:
+                raise ValueError(f"node {node.id} resets to itself")
 
     _reject_cycles(nodes)
     _check_tiers(nodes)

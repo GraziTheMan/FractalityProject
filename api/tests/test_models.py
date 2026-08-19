@@ -37,7 +37,7 @@ def test_node_defaults_match_frontend_schema():
 
     # Field-for-field parity with FractalNode.toJSON() in NodeSchema.js
     assert set(dumped) == {
-        "id", "parentId", "childIds", "emergesFrom", "depth",
+        "id", "parentId", "childIds", "emergesFrom", "resetsTo", "depth",
         "metadata", "energy", "resonance", "visual", "timestamps",
     }
     # Two parent relations, and they mean different things: parentId is the containing

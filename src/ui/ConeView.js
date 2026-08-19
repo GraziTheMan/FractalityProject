@@ -630,6 +630,49 @@ export class ConeView {
             }
         }
 
+        // Recurrence: the cycle closing back on itself.
+        //
+        // Drawn as a bowed arc well outside the cone rather than as a straight line
+        // through it. A straight line from the base to the apex would run along the axis
+        // — the one place in this diagram that already means something — and would read
+        // as a containment edge between the two most important nodes.
+        for (const point of points) {
+            for (const targetId of point.node.resetsTo ?? []) {
+                const target = byId.get(targetId);
+                if (!target) continue;
+
+                const bulge = Math.max(Math.abs(point.x - width / 2),
+                                       Math.abs(target.x - width / 2)) + 110;
+                const side = point.x >= width / 2 ? 1 : -1;
+                const cx = width / 2 + side * bulge;
+
+                ctx.save();
+                ctx.beginPath();
+                ctx.moveTo(point.x, point.y);
+                ctx.quadraticCurveTo(cx, (point.y + target.y) / 2, target.x, target.y);
+                ctx.setLineDash([5, 5]);
+                ctx.strokeStyle = 'rgba(252,211,77,0.42)';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+
+                // An arrowhead, because a cycle without a direction is just a line.
+                const dx = target.x - cx;
+                const dy = target.y - (point.y + target.y) / 2;
+                const len = Math.hypot(dx, dy) || 1;
+                const ux = dx / len;
+                const uy = dy / len;
+                ctx.setLineDash([]);
+                ctx.beginPath();
+                ctx.moveTo(target.x, target.y);
+                ctx.lineTo(target.x - ux * 9 - uy * 4, target.y - uy * 9 + ux * 4);
+                ctx.lineTo(target.x - ux * 9 + uy * 4, target.y - uy * 9 - ux * 4);
+                ctx.closePath();
+                ctx.fillStyle = 'rgba(252,211,77,0.65)';
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
         // The inflow collar: what flowed into this cone's apex from outside it.
         //
         // Above the apex, small, with lines converging down into it. Deliberately NOT a
@@ -743,6 +786,13 @@ export class ConeView {
             // Otherwise a node sitting exactly on the centre line reads as a rendering
             // accident rather than as the claim it is.
             if (focused.metadata?.onAxis === true) parts.push('on the axis');
+
+            const resets = focused.resetsTo?.length ?? 0;
+            if (resets > 0) {
+                const names = graph.getResetTargets(focused.id)
+                    .map((n) => n.metadata.label || n.id).join(', ');
+                parts.push(`cycles back to ${names}`);
+            }
         }
         this.tierLabel.textContent = parts.join('  ·  ');
     }

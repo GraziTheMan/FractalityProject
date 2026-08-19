@@ -30,6 +30,23 @@ export class NodeData {
          * one relation loses whichever half you collapse.
          */
         this.emergesFrom = [];
+
+        /**
+         * Nodes this one cycles back to, closing a loop the hierarchy cannot hold.
+         *
+         * A third relation, and the only one that is allowed to be circular. Axiom II
+         * says persistence comes from "a recurrent cycle" and that death is "the
+         * mandatory refresh rate of the information field" — so terminal entropy
+         * resetting into a new beginning is central rather than incidental. But tiers
+         * are 1 + max(parents), which requires an acyclic graph: a loop leaves every
+         * node in it unplaceable.
+         *
+         * The resolution is that this edge is NOT a parent relation. It is excluded
+         * from getAllParentIds, from tier computation and from the cycle guard, so it
+         * can say "this returns to that" without any claim that one derives from the
+         * other. It is drawn, and it is never traversed for depth.
+         */
+        this.resetsTo = [];
         
         // Visual state
         this.position = new THREE.Vector3();
@@ -62,6 +79,7 @@ export class NodeData {
             // Omitted when empty. Most nodes in a large map converge from nothing,
             // and an empty array on every one is bytes in every export and every row.
             ...(this.emergesFrom.length ? { emergesFrom: [...this.emergesFrom] } : {}),
+            ...(this.resetsTo.length ? { resetsTo: [...this.resetsTo] } : {}),
             metadata: this.metadata
         };
     }
@@ -74,6 +92,7 @@ export class NodeData {
         node.parentId = data.parentId;
         node.childIds = data.childIds || [];
         node.emergesFrom = [...(data.emergesFrom || [])];
+        node.resetsTo = [...(data.resetsTo || [])];
         return node;
     }
     
@@ -642,6 +661,50 @@ export class NodeGraph {
         return true;
     }
 
+    // --- recurrence ---------------------------------------------------------
+    //
+    // The one relation that may be circular, because the framework it serves is.
+
+    /**
+     * Record that `nodeId` cycles back to `targetId`.
+     *
+     * Deliberately permits what addEmergence refuses. A cycle is the point: heat death
+     * returning to a new beginning is a loop, and forbidding it would mean the format
+     * cannot state the thing Axiom II is about.
+     *
+     * Safe because this edge bears no tier. Nothing downstream reads it when computing
+     * depth, so a loop here cannot make a node unplaceable.
+     *
+     * @returns {boolean} false only for a missing node, a self-reference, or a duplicate
+     */
+    addReset(nodeId, targetId) {
+        const node = this.nodes.get(nodeId);
+        if (!node || !this.nodes.has(targetId)) return false;
+        // A node resetting to itself says nothing and would draw an arc to nowhere.
+        if (targetId === nodeId) return false;
+        if (node.resetsTo.includes(targetId)) return false;
+
+        node.resetsTo.push(targetId);
+        return true;
+    }
+
+    /** Remove a recurrence edge. */
+    removeReset(nodeId, targetId) {
+        const node = this.nodes.get(nodeId);
+        if (!node) return false;
+        const at = node.resetsTo.indexOf(targetId);
+        if (at < 0) return false;
+        node.resetsTo.splice(at, 1);
+        return true;
+    }
+
+    /** The nodes this one cycles back to. */
+    getResetTargets(nodeId) {
+        const node = this.nodes.get(nodeId);
+        if (!node) return [];
+        return node.resetsTo.map((id) => this.nodes.get(id)).filter(Boolean);
+    }
+
     /** Nodes with no parent — the tops of the tiers. */
     getRootNodes() {
         return Array.from(this.nodes.values()).filter(n => !n.parentId);
@@ -801,6 +864,13 @@ export class NodeGraph {
         // And this node's own outgoing references leave the reverse index.
         for (const sourceId of node.emergesFrom) {
             this.emergenceIndex.get(sourceId)?.delete(nodeId);
+        }
+
+        // Recurrence edges pointing at it, which bear no tier but would still be drawn
+        // as an arc to a node that is gone.
+        for (const other of this.nodes.values()) {
+            const at = other.resetsTo.indexOf(nodeId);
+            if (at >= 0) other.resetsTo.splice(at, 1);
         }
 
         this.nodes.delete(nodeId);

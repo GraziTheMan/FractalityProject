@@ -175,6 +175,16 @@ export async function graphToTurtle(graph, { title = 'Untitled map', mapId = 'ma
             add(subject, skos('topConceptOf'), scheme);
         }
 
+        // Recurrence: the one edge that may be circular.
+        //
+        // Its own predicate rather than skos:broader, and that is the whole point. A
+        // reader must be able to follow the hierarchy without walking into this loop, and
+        // stating it as "broader" would put the loop in the hierarchy.
+        for (const targetId of node.resetsTo ?? []) {
+            if (!graph.nodes.has(targetId) || targetId === node.id) continue;
+            add(subject, fract('resetsTo'), namedNode(idToIri(base, targetId)));
+        }
+
         // Emitted as well as broader, for readers that only follow one direction.
         // On import, broader wins and this is ignored — see turtleToGraph.
         for (const childId of node.childIds) {
@@ -261,7 +271,7 @@ export async function turtleToGraph(text) {
                 // that each skos:broader overwrote, so importing a legitimate SKOS
                 // file with several of them silently kept only the last — real data
                 // loss on any real-world vocabulary, and invisible.
-                broaderIris: [], containedInIri: null,
+                broaderIris: [], containedInIri: null, resetIris: [],
                 childIris: [], extra: {}, isTopConcept: false,
             });
         }
@@ -301,6 +311,12 @@ export async function turtleToGraph(text) {
         }
         // Which of the broader concepts is the containing one. Absent in a foreign
         // file, in which case one is chosen on import — see below.
+        if (p === `${NS.fract}resetsTo`) {
+            const entry = ensure(s);
+            if (!entry.resetIris.includes(o.value)) entry.resetIris.push(o.value);
+            ensure(o.value);
+            continue;
+        }
         if (p === `${NS.fract}containedIn`) {
             ensure(s).containedInIri = o.value;
             ensure(o.value);
@@ -397,6 +413,16 @@ export async function turtleToGraph(text) {
         node.emergesFrom = known
             .filter((iri) => iri !== containerIri)
             .map((iri) => idFor.get(iri));
+    }
+
+    // Recurrence, kept out of the loop above so it can never become a parent.
+    for (const entry of found.values()) {
+        const node = graph.nodes.get(idFor.get(entry.iri));
+        if (!node) continue;
+        node.resetsTo = entry.resetIris
+            .filter((iri) => idFor.has(iri))
+            .map((iri) => idFor.get(iri))
+            .filter((id) => id !== node.id);
     }
     for (const entry of found.values()) {
         const parentId = idFor.get(entry.iri);

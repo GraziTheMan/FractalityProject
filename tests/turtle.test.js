@@ -387,6 +387,22 @@ test('the imported convergent graph still satisfies the tier invariant', async (
     assert.equal(graph.getNode('join').depth, 3);
 });
 
+test('a recurrence edge round-trips, and stays out of the hierarchy', async () => {
+    const graph = makeGraph();
+    assert.equal(graph.addReset('b1', 'root'), true);
+
+    const ttl = await graphToTurtle(graph, { mapId: 'test' });
+    // Its own predicate, deliberately. Stating it as skos:broader would put the loop in
+    // the hierarchy, and a reader following broader would walk into it.
+    assert.match(ttl, /fract:resetsTo/);
+
+    const { graph: restored } = await turtleToGraph(ttl);
+    assert.deepEqual(restored.getNode('b1').resetsTo, ['root']);
+    assert.equal(restored.getNode('root').parentId, null, 'the target gained no parent');
+    assert.deepEqual(restored.getAllParentIds('root'), []);
+    assert.deepEqual(restored.recomputeTiers(), [], 'the loop left nothing unplaced');
+});
+
 test('a foreign Turtle file with only broader edges still imports', async () => {
     // Another tool may state one direction and not the other, and may not use our
     // base IRI or our fract: terms at all.

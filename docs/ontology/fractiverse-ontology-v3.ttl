@@ -8,14 +8,20 @@
 # The Fractiverse Full Ontology, v3
 #
 # Changes from v2, each explained on the node it affects:
-#   * Duality restored between the Fractiverse and the Motion/Stillness pair.
-#   * Structure moved under Stillness, giving that branch content.
+#   * Duality inserted between the Fractiverse and the Motion/Stillness pair. OPTIONAL:
+#     naming the pair of original dualities instead is a defensible choice, and this node
+#     can be deleted without touching anything else.
+#   * Stillness left childless, which is correct and deliberate — see its page. An earlier
+#     revision moved Structure under it, which was a misreading and is undone.
 #   * Axiom IV and Candidate Axiom 3 connected to C4, completing the pairing.
 #   * fract:containedIn added everywhere, so the containing parent is stated rather
 #     than inferred from document order.
 #   * Tier numbers omitted. They are recomputed as 1 + max(all parents), so stating
 #     them can only disagree with the edges — as one did in v2.
 #   * fract:onAxis on the two ends of the axis.
+#   * fract:resetsTo from Stillness back to the Fractiverse, closing the cycle Axiom II
+#     describes. That edge bears no tier and is exempt from the acyclic rule, which is how
+#     a hierarchy can state a loop without collapsing.
 #   * schema:text used for the page behind each node, where there is something to say.
 
 <https://fractiverse.com/map/ontology-full> a skos:ConceptScheme;
@@ -60,24 +66,52 @@ of the Fractiverse.""";
 :motion a skos:Concept;
     skos:prefLabel "Motion";
     fract:nodeType "spiral-node";
-    dcterms:description "The changing pole of the first duality.";
+    dcterms:description "The changing pole of the first duality. Everything emerges from here.";
+    schema:text """# Motion
+
+The split of Duality from the singularity is the catalyst — the Big Bang — and motion
+begot more motion. Every branch of this ontology descends from here, which is not an
+imbalance to be corrected but the claim itself: there is nothing in the observable
+universe without motion.
+
+Its twin, Stillness, is childless for the same reason.""";
     skos:broader :duality;
     fract:containedIn :duality.
 
 :stillness a skos:Concept;
     skos:prefLabel "Stillness";
     fract:nodeType "spiral-node";
-    dcterms:description "The abiding pole of the first duality.";
+    fract:terminal true;
+    dcterms:description "Terminal entropy. Heat death. Deliberately childless.";
     schema:text """# Stillness
 
-In v2 this had no descendants while Motion had twenty, which made the duality
-nominal — a label on a branch that never happened.
+**Childless on purpose.** Not an unfinished branch.
 
-Axiom II names the pair directly: persistence comes from "a recurrent cycle of
-field-induced **ordering** (Structure) and ion-induced randomized **dissociation**
-(Reset)." Ordering is the still pole. So Structure belongs here, not under Motion.""";
+Stillness is the final end state of entropy — heat death. Everything in the observable
+universe, and in the quantum, has motion; part of why absolute zero is unreachable is
+that there is no state of the universe in which nothing moves. So nothing *emerges from*
+Stillness. It is where things arrive, not where things come from.
+
+An earlier revision of this file moved Structure under here, reading Axiom II's
+"field-induced **ordering** (Structure)" as the still pole. That was a misreading: the
+ordering half of Axiom II's cycle is something motion *does*, and terminal entropy is
+its opposite, not its home. Structure belongs under Motion.
+
+## The cycle
+
+Axiom II says persistence comes from "a recurrent cycle" and that "Death (Key 13) is not
+an end, but the mandatory refresh rate of the information field." So Stillness is not
+where the story stops — it is where it turns over.
+
+That is a **loop**, and a hierarchy cannot hold one: tiers are 1 + max(parents), which
+requires an acyclic graph. The `fract:resetsTo` edge below is the resolution. It is drawn,
+it is exported, and it is deliberately excluded from the tier computation and from the
+cycle check — so it states "this returns to that" without claiming either derives from the
+other. It is the one relation in this format allowed to be circular, because the framework
+it serves is.""";
     skos:broader :duality;
-    fract:containedIn :duality.
+    fract:containedIn :duality;
+    fract:resetsTo :fractiverse.
 
 # --- The three quantities --------------------------------------------------
 #
@@ -88,9 +122,9 @@ field-induced **ordering** (Structure) and ion-induced randomized **dissociation
 :structure a skos:Concept;
     skos:prefLabel "Structure (qs)";
     fract:nodeType "spiral-node";
-    dcterms:description "The ordering quantity. Axiom II's structure-forming half.";
-    skos:broader :stillness;
-    fract:containedIn :stillness.
+    dcterms:description "The ordering quantity. Axiom II's structure-forming half — something motion does.";
+    skos:broader :motion;
+    fract:containedIn :motion.
 
 :dynamics a skos:Concept;
     skos:prefLabel "Dynamics";

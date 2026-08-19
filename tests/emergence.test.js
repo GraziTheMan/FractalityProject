@@ -290,3 +290,134 @@ test('a graph with no emergence behaves exactly as before', () => {
     assert.deepEqual([tier(g, 'root'), tier(g, 'a'), tier(g, 'b'), tier(g, 'c')], [0, 1, 2, 3]);
     for (const node of g.nodes.values()) assert.deepEqual(node.emergesFrom, []);
 });
+
+// --- recurrence ------------------------------------------------------------
+//
+// The one relation that may be circular, because the framework it serves is. Axiom II
+// says persistence comes from "a recurrent cycle" and calls death "the mandatory refresh
+// rate of the information field", so terminal entropy returning to a new beginning is
+// central rather than incidental — but tiers are 1 + max(parents), which needs an acyclic
+// graph. The resolution is that this edge bears no tier, and every test below is about
+// that separation holding.
+
+test('a node can cycle back to one it descends from', () => {
+    const g = graph([['fractiverse', null], ['duality', 'fractiverse'],
+                     ['motion', 'duality'], ['stillness', 'duality']]);
+    assert.equal(g.addReset('stillness', 'fractiverse'), true);
+    assert.deepEqual(g.getNode('stillness').resetsTo, ['fractiverse']);
+});
+
+test('a recurrence edge bears no tier', () => {
+    // The load-bearing property. If this were a parent relation the loop would leave
+    // every node in it unplaceable, and the whole map would collapse to tier 0.
+    //
+    // The direction matters for the fixture. An earlier version pointed the reset from a
+    // deep node to a shallow one — the heat-death-to-singularity direction — and treating
+    // THAT as a parent edge is a harmless shortcut, not a loop, so the mutation survived.
+    // Pointing it the other way is the claim that the singularity arises from the
+    // previous cycle's end state, and as a parent edge it closes a real loop.
+    const g = graph([['fractiverse', null], ['duality', 'fractiverse'],
+                     ['motion', 'duality'], ['end', 'motion']]);
+    assert.equal(tier(g, 'end'), 3);
+
+    assert.equal(g.addReset('fractiverse', 'end'), true);
+
+    assert.deepEqual(g.recomputeTiers(), [], 'nothing may be left unplaced');
+    assert.equal(tier(g, 'fractiverse'), 0, 'the apex must not sink below its own cycle');
+    assert.equal(tier(g, 'duality'), 1);
+    assert.equal(tier(g, 'end'), 3);
+});
+
+test('a recurrence edge in either direction leaves every tier alone', () => {
+    const before = () => {
+        const g = graph([['a', null], ['b', 'a'], ['c', 'b'], ['d', 'c']]);
+        return g;
+    };
+    const tiers = (g) => [...g.nodes.values()].map((n) => `${n.id}=${n.depth}`).sort().join(' ');
+
+    const baseline = tiers(before());
+
+    const downward = before();
+    downward.addReset('a', 'd');
+    assert.equal(tiers(downward), baseline, 'a reset pointing down changed a tier');
+
+    const upward = before();
+    upward.addReset('d', 'a');
+    assert.equal(tiers(upward), baseline, 'a reset pointing up changed a tier');
+});
+
+test('a recurrence target is not a parent', () => {
+    const g = graph([['a', null], ['b', 'a']]);
+    g.addReset('b', 'a');
+    assert.deepEqual(g.getAllParentIds('a'), [], 'the target gained no parent');
+    assert.equal(g.getConvergenceDegree('a'), 0, 'nor any convergence');
+});
+
+test('recurrence does not pull a node toward the axis', () => {
+    // Convergence is a claim about what made a node; recurrence is not, so it must not
+    // move the node the way convergence does.
+    const g = graph([['a', null], ['b', 'a'], ['c', 'b']]);
+    const before = g.getConvergenceDegree('c');
+    g.addReset('c', 'a');
+    assert.equal(g.getConvergenceDegree('c'), before);
+});
+
+test('a real emergence loop is still refused after a recurrence edge exists', () => {
+    // The permission is scoped to this one relation and does not leak.
+    const g = graph([['a', null], ['b', 'a']]);
+    g.addReset('b', 'a');
+    assert.equal(g.addEmergence('a', 'b'), false);
+    assert.equal(g.setParent('a', 'b'), false);
+});
+
+test('resetting to itself is refused', () => {
+    const g = graph([['a', null], ['b', 'a']]);
+    assert.equal(g.addReset('b', 'b'), false);
+});
+
+test('a duplicate recurrence edge is refused', () => {
+    const g = graph([['a', null], ['b', 'a']]);
+    assert.equal(g.addReset('b', 'a'), true);
+    assert.equal(g.addReset('b', 'a'), false);
+    assert.equal(g.getNode('b').resetsTo.length, 1);
+});
+
+test('a recurrence edge can be removed', () => {
+    const g = graph([['a', null], ['b', 'a']]);
+    g.addReset('b', 'a');
+    assert.equal(g.removeReset('b', 'a'), true);
+    assert.deepEqual(g.getNode('b').resetsTo, []);
+    assert.equal(g.removeReset('b', 'a'), false, 'removing it twice reports nothing done');
+});
+
+test('deleting a node removes recurrence edges pointing at it', () => {
+    // They bear no tier, so a dangling one breaks nothing computationally — it would just
+    // be drawn as an arc to a node that is not there.
+    const g = graph([['a', null], ['b', 'a'], ['c', 'a']]);
+    g.addReset('b', 'c');
+    g.removeNode('c', { strategy: 'cascade' });
+
+    assert.deepEqual(g.getNode('b').resetsTo, []);
+    for (const node of g.nodes.values()) {
+        for (const id of node.resetsTo) assert.ok(g.nodes.has(id));
+    }
+});
+
+test('recurrence survives a JSON round trip, and is absent when unused', () => {
+    const g = graph([['a', null], ['b', 'a']]);
+    g.addReset('b', 'a');
+
+    assert.equal('resetsTo' in g.getNode('a').toJSON(), false, 'no empty arrays exported');
+    const restored = NodeGraph.fromJSON({
+        nodes: [...g.nodes.values()].map((n) => n.toJSON())
+    });
+    assert.deepEqual(restored.getNode('b').resetsTo, ['a']);
+    assert.deepEqual(restored.recomputeTiers(), []);
+});
+
+test('the reset targets are reachable as nodes', () => {
+    const g = graph([['fractiverse', null], ['stillness', 'fractiverse']]);
+    g.addReset('stillness', 'fractiverse');
+    assert.deepEqual(g.getResetTargets('stillness').map((n) => n.id), ['fractiverse']);
+    assert.deepEqual(g.getResetTargets('fractiverse'), []);
+});

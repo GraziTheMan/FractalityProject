@@ -234,3 +234,80 @@ def test_nulls_from_an_empty_collect_are_dropped():
     from api.repository import _row_to_node
 
     assert _row_to_node({"id": "a", "depth": 0, "emergesFrom": [None]}).emergesFrom == []
+
+
+# --- recurrence ------------------------------------------------------------
+#
+# The one relation that may be circular. Axiom II describes "a recurrent cycle" and calls
+# death "the mandatory refresh rate of the information field", so a map that cannot state
+# a loop cannot state the framework. These tests are about the cycle being ACCEPTED, which
+# is the opposite of what every other cycle test here asserts.
+
+
+def test_a_recurrence_cycle_is_accepted():
+    """
+    The whole point. As a parent edge this would be rejected; as a recurrence edge it must
+    not be, because the framework it represents is cyclical.
+    """
+    nodes = [
+        node("fractiverse", children=["duality"], emerges=(), depth=0),
+        node("duality", parent="fractiverse", depth=1, children=["end"]),
+        node("end", parent="duality", depth=2),
+    ]
+    nodes[0] = MapNode(
+        id="fractiverse", childIds=["duality"], depth=0,
+        resetsTo=["end"], metadata={"label": "The Fractiverse"},
+    )
+    validate_graph(nodes, root_id="fractiverse")
+
+
+def test_a_two_node_recurrence_loop_is_accepted():
+    nodes = [
+        MapNode(id="a", childIds=["b"], depth=0, resetsTo=["b"]),
+        MapNode(id="b", parentId="a", depth=1, resetsTo=["a"]),
+    ]
+    validate_graph(nodes, root_id="a")
+
+
+def test_the_same_pair_as_parent_edges_is_still_rejected():
+    """The permission is scoped to the recurrence relation and does not leak."""
+    nodes = [
+        MapNode(id="a", childIds=["b"], depth=0, emergesFrom=["b"]),
+        MapNode(id="b", parentId="a", depth=1),
+    ]
+    with pytest.raises(ValueError, match="parent cycle"):
+        validate_graph(nodes, root_id="a")
+
+
+def test_a_recurrence_edge_does_not_have_to_respect_tiers():
+    """
+    It bears no tier, so the "parent above child" rule must not apply to it. Requiring it
+    would forbid exactly the case the relation exists for: the end returning to the start.
+    """
+    nodes = [
+        MapNode(id="a", childIds=["b"], depth=0),
+        MapNode(id="b", parentId="a", depth=1, resetsTo=["a"]),
+    ]
+    validate_graph(nodes, root_id="a")
+
+
+def test_resetting_to_a_missing_node_is_refused():
+    nodes = [MapNode(id="a", depth=0, resetsTo=["ghost"])]
+    with pytest.raises(ValueError, match="resets to missing node ghost"):
+        validate_graph(nodes, root_id="a")
+
+
+def test_resetting_to_itself_is_refused():
+    nodes = [MapNode(id="a", depth=0, resetsTo=["a"])]
+    with pytest.raises(ValueError, match="resets to itself"):
+        validate_graph(nodes, root_id="a")
+
+
+def test_recurrence_is_stored_as_relationships_not_properties():
+    from api.repository import _node_to_params, _row_to_node
+
+    params = _node_to_params(MapNode(id="a", depth=0, resetsTo=["b", "c"]))
+    assert "resetsTo" not in params
+
+    read = _row_to_node({"id": "a", "depth": 0, "resetsTo": ["c", "b"]})
+    assert read.resetsTo == ["b", "c"], "sorted, so an unchanged map does not look changed"

@@ -17,6 +17,7 @@ Data model
     (:MindMap)-[:CONTAINS]->(:MapNode)
     (:MapNode)-[:HAS_CHILD]->(:MapNode)
     (:MapNode)-[:EMERGES_FROM]->(:MapNode)
+    (:MapNode)-[:RESETS_TO]->(:MapNode)      # may be circular; bears no tier
     (:MindMap)-[:SHARED_VIA]->(:ShareLink)
 
 HAS_CHILD and EMERGES_FROM are deliberately separate types. HAS_CHILD is
@@ -189,6 +190,9 @@ def _row_to_node(row: Dict[str, Any]) -> MapNode:
         emergesFrom=sorted(
             c for c in (row.get("emergesFrom") or []) if c is not None
         ),
+        resetsTo=sorted(
+            c for c in (row.get("resetsTo") or []) if c is not None
+        ),
         depth=row.get("depth") or 0,
         metadata=metadata,
         energy=NodeEnergy(**load(row.get("energy_json"), {})),
@@ -314,9 +318,11 @@ MATCH (m:MindMap {id: $map_id})-[:CONTAINS]->(n:MapNode)
 OPTIONAL MATCH (n)-[:HAS_CHILD]->(c:MapNode)
 OPTIONAL MATCH (p:MapNode)-[:HAS_CHILD]->(n)
 OPTIONAL MATCH (n)-[:EMERGES_FROM]->(e:MapNode)
+OPTIONAL MATCH (n)-[:RESETS_TO]->(r:MapNode)
 RETURN n.id AS id, n.depth AS depth, p.id AS parentId,
        collect(DISTINCT c.id) AS childIds,
        collect(DISTINCT e.id) AS emergesFrom,
+       collect(DISTINCT r.id) AS resetsTo,
        n.label AS label, n.type AS type, n.tags AS tags,
        n.description AS description, n.content AS content,
        n.metadata_json AS metadata_json,
@@ -442,6 +448,15 @@ MATCH (target:MapNode {map_id: $map_id, id: edge.target})
 MERGE (target)-[:EMERGES_FROM]->(source)
 """
 
+# Recurrence. Its own type because it is the one relation that may be circular, and
+# keeping it apart is what lets every traversal that computes depth simply not ask for it.
+LINK_RESETS = """
+UNWIND $edges AS edge
+MATCH (from:MapNode {map_id: $map_id, id: edge.from})
+MATCH (to:MapNode {map_id: $map_id, id: edge.to})
+MERGE (from)-[:RESETS_TO]->(to)
+"""
+
 FINALIZE_MAP = """
 MATCH (m:MindMap {id: $map_id})
 SET m.node_count = $node_count,
@@ -501,6 +516,15 @@ async def replace_nodes(
             await db.run_write(
                 settings, LINK_EMERGENCE, map_id=map_id, edges=emergence
             )
+
+        resets = [
+            {"from": node.id, "to": target_id}
+            for node in nodes
+            for target_id in node.resetsTo
+            if target_id != node.id
+        ]
+        if resets:
+            await db.run_write(settings, LINK_RESETS, map_id=map_id, edges=resets)
 
     await db.run_write(
         settings,
