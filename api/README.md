@@ -283,6 +283,7 @@ to infer.
 (:User)-[:OWNS]->(:MindMap)
 (:MindMap)-[:CONTAINS]->(:MapNode)
 (:MapNode)-[:HAS_CHILD]->(:MapNode)
+(:MapNode)-[:EMERGES_FROM]->(:MapNode)
 (:MindMap)-[:SHARED_VIA]->(:ShareLink)
 ```
 
@@ -291,7 +292,22 @@ Two design notes:
 **`HAS_CHILD` is authoritative; `childIds`/`parentId` are derived on read.** The
 relationship is what makes traversal cheap — the entire reason for choosing a
 graph database — while the scalar fields are what the frontend expects on the
-wire.
+wire. `EMERGES_FROM` works the same way for `emergesFrom`.
+
+**A node has two kinds of parent, and they are different relations.** `HAS_CHILD` is
+containment: which node is inside which, and where a node lives in the outline — exactly
+one. `EMERGES_FROM` is convergence: which streams flowed together to make a node — any
+number. "Consciousness" is inside The Fractiverse and emerges from four axioms; one
+relation cannot carry both facts, and merging them would lose the distinction the feature
+exists for.
+
+That makes the graph a DAG, so `validate_graph` does two things a tree did not need. It
+rejects cycles across the **union** of both relations, by coloured depth-first search
+rather than a chain walk — the colouring is what tells a diamond from a loop, and a diamond
+is the most likely shape in a real map. And it enforces that every parent sits strictly
+above its child, because that is what stops emergence being drawn above something that
+feeds it. Ordering is checked, not the exact depth, so a map from an older client is
+accepted rather than being locked out.
 
 **Nested objects are JSON strings.** Neo4j properties must be primitives or
 arrays of primitives. `energy`, `resonance`, `visual` and any free-form extra
