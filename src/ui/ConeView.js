@@ -21,6 +21,20 @@
 const TIER_HEIGHT = 78;
 /** How much wider each tier is than the one above it. */
 const RADIUS_PER_TIER = 62;
+
+/**
+ * Zoom bounds.
+ *
+ * Zoom is a VIEWER transform: it multiplies the one scale factor that every
+ * radius and every tier height is already built from, so all of it moves
+ * together and no ratio changes. That matters here more than it usually would —
+ * radial distance carries meaning in this view (Axiom IV's spectrum, rim to
+ * axis), so a transform that changed radii unevenly would change what the
+ * picture says. This one cannot.
+ */
+const ZOOM_MIN = 0.4;
+const ZOOM_MAX = 5;
+const ZOOM_STEP = 1.3;
 /**
  * How strongly each extra parent pulls a node toward the cone's axis.
  *
@@ -138,6 +152,11 @@ export class ConeView {
         this._frame = null;
         this._drag = null;
 
+        // 1 is "fit the whole cone", which is what the scale factor computes.
+        // Not persisted, unlike the label preference: a zoom level is where you
+        // are in a reading session, not a standing choice about what to show.
+        this.zoom = 1;
+
         // Label every node, or only the tier being read.
         //
         // Off is the default and stays the default: 25 names at once is a wall of
@@ -166,6 +185,12 @@ export class ConeView {
                 <span class="cone-tier-label"></span>
                 <span class="cone-hint">drag sideways to spin · up and down to change tier</span>
             </div>
+            <div class="cone-zoom">
+                <button class="cone-zoom-out" type="button" title="Zoom out">−</button>
+                <button class="cone-zoom-fit" type="button"
+                    title="Fit the tier you are reading">100%</button>
+                <button class="cone-zoom-in" type="button" title="Zoom in">+</button>
+            </div>
             <button class="cone-labels" type="button" aria-pressed="false"
                 title="Show every node's name">Labels</button>
             <button class="cone-close" type="button" title="Close the cone view">×</button>
@@ -176,6 +201,14 @@ export class ConeView {
         this.ctx = this.canvas.getContext('2d');
         this.tierLabel = this.container.querySelector('.cone-tier-label');
         this.breadcrumbEl = this.container.querySelector('.cone-breadcrumb');
+
+        this.zoomReadout = this.container.querySelector('.cone-zoom-fit');
+        this.container.querySelector('.cone-zoom-in')
+            .addEventListener('click', () => this.zoomBy(ZOOM_STEP));
+        this.container.querySelector('.cone-zoom-out')
+            .addEventListener('click', () => this.zoomBy(1 / ZOOM_STEP));
+        this.zoomReadout.addEventListener('click', () => this.fitTier());
+        this._syncZoom();
 
         this.labelsButton = this.container.querySelector('.cone-labels');
         this.labelsButton.addEventListener('click', () => {
@@ -488,7 +521,7 @@ export class ConeView {
 
         // Keep the whole cone inside a phone's width at the widest tier.
         const maxTier = Math.max(1, this._maxTier(graph, view));
-        const scale = Math.min(1, (width * 0.42) / (maxTier * RADIUS_PER_TIER));
+        const scale = Math.min(1, (width * 0.42) / (maxTier * RADIUS_PER_TIER)) * this.zoom;
 
         const out = [];
         for (const node of graph.nodes.values()) {
@@ -814,6 +847,45 @@ export class ConeView {
         this.tierLabel.textContent = parts.join('  ·  ');
     }
 
+    // --- zoom ----------------------------------------------------------------
+
+    setZoom(value) {
+        const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Number(value) || 1));
+        this.zoom = next;
+        this._syncZoom();
+        // No explicit redraw: the cone repaints from the graph every frame.
+        return this.zoom;
+    }
+
+    zoomBy(factor) {
+        return this.setZoom(this.zoom * factor);
+    }
+
+    /**
+     * Scale so the tier being READ fills the frame, rather than the deepest one.
+     *
+     * The base scale factor fits the whole cone — it divides by maxTier — which is
+     * right for seeing the shape and wrong for reading a tier near the apex, where
+     * a handful of nodes share the smallest circle on screen. Measuring the label
+     * space showed tier 1 losing three of its five names to crowding; this is the
+     * lever that gives that tier the room the base fit gives tier 8.
+     *
+     * The apex is a special case with no width to fit, so it resets instead.
+     */
+    fitTier() {
+        const graph = this.getGraph?.();
+        const tier = Math.round(this.tierFocus);
+        if (!graph || tier <= 0) return this.setZoom(1);
+
+        const maxTier = Math.max(1, this._maxTier(graph, this._view(graph)));
+        return this.setZoom(maxTier / tier);
+    }
+
+    _syncZoom() {
+        if (!this.zoomReadout) return;
+        this.zoomReadout.textContent = `${Math.round(this.zoom * 100)}%`;
+    }
+
     // --- label visibility ---------------------------------------------------
 
     static LABEL_PREF_KEY = 'fractality.cone.showAllLabels';
@@ -1024,9 +1096,15 @@ export class ConeView {
         });
         canvas.addEventListener('pointercancel', () => { this._drag = null; });
 
-        // A wheel is the desktop equivalent of the vertical drag.
+        // A wheel is the desktop equivalent of the vertical drag — EXCEPT with a
+        // modifier held, which is the web's established zoom gesture and is also
+        // what a trackpad pinch arrives as.
         canvas.addEventListener('wheel', (event) => {
             event.preventDefault();
+            if (event.ctrlKey || event.metaKey) {
+                this.zoomBy(event.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP);
+                return;
+            }
             this.tierFocus = this._clampTier(Math.round(this.tierFocus + Math.sign(event.deltaY)));
         }, { passive: false });
     }
@@ -1215,6 +1293,43 @@ export class ConeView {
                 cursor: pointer;
             }
             .cone-labels:hover { border-color: #0ff; }
+
+            /* BOTTOM-right, not top-right. The top-right corner is where
+               #perf-dashboard lives, and a control put there was rendered,
+               visible and unreachable for as long as it existed. This corner is
+               empty, and it is also where map interfaces conventionally put zoom.
+               The view's own bottom already clears the dock. */
+            .cone-zoom {
+                position: absolute;
+                right: 10px;
+                bottom: 10px;
+                display: flex;
+                gap: 4px;
+                background: rgba(0,0,0,0.7);
+                border: 1px solid #333;
+                border-radius: 8px;
+                padding: 3px;
+            }
+            .cone-zoom button {
+                min-width: 34px;
+                min-height: 34px;
+                background: transparent;
+                border: none;
+                border-radius: 6px;
+                color: #9fb;
+                font-size: 15px;
+                line-height: 1;
+                cursor: pointer;
+            }
+            /* The readout doubles as the fit action, so it needs room for "100%"
+               and should not look like the two symbol buttons beside it. */
+            .cone-zoom-fit {
+                min-width: 52px !important;
+                font-size: 11px !important;
+                font-variant-numeric: tabular-nums;
+                color: #7a8f99 !important;
+            }
+            .cone-zoom button:hover { background: rgba(0,255,255,0.14); color: #0ff; }
             .cone-labels.active {
                 border-color: #0ff;
                 color: #0ff;

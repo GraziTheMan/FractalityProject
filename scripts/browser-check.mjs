@@ -3354,33 +3354,46 @@ const run_cone_labels = section('cone labels');
 if (run_cone_labels) {
     const { ctx, page } = await openApp(VIEWPORTS[2]);   // desktop
 
-    // Count painted labels by instrumenting fillText on the cone's own context.
-    // Reading pixels would tell us something was drawn but not what, and the
-    // collision rule means the count is the whole question.
+    // Count painted labels by instrumenting fillText, bounded to ONE FRAME by
+    // wrapping _paintLabels.
+    //
+    // The frame boundary is the whole point. A first version collected across two
+    // animation frames and deduplicated by label TEXT to compensate — and the demo
+    // graph has duplicate labels: tier 3 holds ten nodes with five distinct
+    // strings, tier 4 holds fifteen with five. So that version was counting
+    // distinct strings, reported a hard ceiling of 5 that was really the fixture's
+    // vocabulary, and produced a completely false finding about crowded tiers.
+    // Wrapping _paintLabels gives an exact frame, so labels are counted by paint
+    // and duplicate text stops mattering.
     const install = async () => page.evaluate(() => {
         const cone = window.coneView;
         const c = cone.ctx;
-        window.__labels = [];
-        if (!c.__patched) {
-            const original = c.fillText.bind(c);
-            c.fillText = (text, x, y) => {
-                window.__labels.push({ text, x, y, font: c.font, fill: c.fillStyle });
-                return original(text, x, y);
-            };
-            c.__patched = true;
-        }
+        if (c.__patched) return;
+
+        let collecting = null;
+        const originalFill = c.fillText.bind(c);
+        c.fillText = (text, x, y) => {
+            if (collecting) collecting.push({ text, x, y, font: c.font, fill: c.fillStyle });
+            return originalFill(text, x, y);
+        };
+
+        const originalPaint = cone._paintLabels.bind(cone);
+        cone._paintLabels = (ctx, candidates) => {
+            collecting = [];
+            const result = originalPaint(ctx, candidates);
+            window.__labels = collecting;
+            collecting = null;
+            return result;
+        };
+        c.__patched = true;
     });
 
-    // Deduplicated BY NAME, not counted raw. The cone repaints continuously, so a
-    // sample spanning two frames sees every label twice — which first reported "12
-    // of 36 nodes named" for six names. Every node is painted at most once per
-    // frame, so collapsing on the name gives the count the assertions actually mean.
+    // One frame's worth of paints, counted as paints. NOT deduplicated by text:
+    // see install() above for why that was wrong.
     const sample = async () => page.evaluate(async () => {
         window.__labels = [];
         await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-
-        const byName = new Map();
-        for (const label of window.__labels) byName.set(label.text, label);
+        const all = window.__labels ?? [];
 
         // getFocusedNode(), not a .focusedId property — there isn't one, and reading
         // a missing field would quietly make `focused` null and turn the assertion
@@ -3390,7 +3403,6 @@ if (run_cone_labels) {
             ? (window.fractalityEngine().nodeGraph.getNode(focusedId)?.metadata?.label ?? null)
             : null;
 
-        const all = [...byName.values()];
         return {
             focused,
             names: all.map((l) => l.text),
