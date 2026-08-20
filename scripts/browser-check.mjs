@@ -3512,6 +3512,39 @@ if (run_cone_labels) {
             + `${tierWithContext.worst} of ${onTierCount}, either way)`);
     }
 
+    // --- the second label slot ---------------------------------------------
+    //
+    // A label that cannot fit above its node is placed below it before being
+    // dropped. Measured at tier 1, the apex, where five nodes share the least
+    // space on screen and a single slot showed only two of them at the worst
+    // rotation. Tiers 3 and 4 are deliberately NOT used here: their crowding is
+    // horizontal — front and back of the ellipse both project to the centre x —
+    // and a second row does not reach it, so a check placed there would pass
+    // whether the slot existed or not.
+    const apex = await page.evaluate(() => {
+        const g = window.fractalityEngine().nodeGraph;
+        return [...g.nodes.values()].filter((n) => n.depth === 1).length;
+    });
+
+    await page.evaluate(() => {
+        window.coneView.tierFocus = 1;
+        window.coneView.setShowAllLabels(true);
+    });
+    const atApex = await sweep(true);
+
+    // 4 of 5, not 5 of 5: two slots are an improvement, not a solution, and
+    // asserting perfection here would be asserting something untrue.
+    if (apex < 4) {
+        fail(`tier 1 holds only ${apex} node(s); too few to say anything about crowding`);
+    } else if (atApex.worst < apex - 1) {
+        fail(`the crowded apex shows only ${atApex.worst} of ${apex} names at its worst `
+            + `angle; a second label slot should keep all but one. Per angle `
+            + JSON.stringify(atApex.perAngle));
+    } else {
+        pass(`a label crowded out from above is placed below instead `
+            + `(apex keeps ${atApex.worst} of ${apex} at every angle)`);
+    }
+
     // The button reflects it, and the preference survives a reload.
     const button = await page.evaluate(() => {
         const b = document.querySelector('.cone-labels');

@@ -882,6 +882,10 @@ export class ConeView {
         });
 
         const placed = [];
+        const hits = (box) => placed.some((other) =>
+            box.left < other.right && other.left < box.right
+            && box.top < other.bottom && other.top < box.bottom);
+
         for (const { point, radius, near, isFocused, onTier } of ordered) {
             // Set the font BEFORE measuring. Bold text is wider, so measuring in
             // one face and painting in another under-reports the box and lets the
@@ -891,13 +895,38 @@ export class ConeView {
             const text = this._truncate(point.node.metadata.label || point.node.id, 20);
             const width = ctx.measureText(text).width;
             const x = point.x;
-            const y = point.y - radius - 5;
-            const box = { left: x - width / 2, right: x + width / 2, top: y - 11, bottom: y + 3 };
 
-            const collides = placed.some((other) =>
-                box.left < other.right && other.left < box.right
-                && box.top < other.bottom && other.top < box.bottom);
-            if (collides && !isFocused) continue;
+            // Two slots: above the node, then below it.
+            //
+            // Measuring the label space showed the real cost of a single slot — a
+            // crowded tier could not show most of its OWN names, losing them to
+            // siblings rather than to anything off-tier. Tier 4 of the test graph
+            // showed 5 of 15 at the worst rotation.
+            //
+            // Above is tried first, so nothing moves unless it has to: above is the
+            // convention, and a label that jumps below its node for no reason is
+            // harder to read than one that stays put. The second slot is a fallback,
+            // not an alternation.
+            const boxAt = (y) => ({
+                y,
+                left: x - width / 2,
+                right: x + width / 2,
+                top: y - 11,
+                bottom: y + 3
+            });
+            const above = boxAt(point.y - radius - 5);
+            const below = boxAt(point.y + radius + 14);
+
+            let box = null;
+            if (!hits(above)) box = above;
+            else if (!hits(below)) box = below;
+
+            if (!box) {
+                // The selection is never dropped, so it takes its usual place and
+                // overlaps rather than disappearing.
+                if (!isFocused) continue;
+                box = above;
+            }
 
             // Off-tier names are dimmer than they were, and only exist at all when
             // every label is on. They are context for the tier being read, so they
@@ -907,7 +936,7 @@ export class ConeView {
                 : onTier
                     ? `rgba(255,255,255,${0.55 + near * 0.45})`
                     : `rgba(190,205,215,${0.2 + near * 0.35})`;
-            ctx.fillText(text, x, y);
+            ctx.fillText(text, x, box.y);
             placed.push(box);
         }
     }
