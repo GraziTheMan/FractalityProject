@@ -1070,6 +1070,16 @@ function showNotification(message, type = 'info') {
         gap: 8px;
         font-size: 13px;
         line-height: 1.4;
+        /* A toast never receives a tap.
+           There is nothing clickable inside one, and it appears top-right on a
+           wide screen and full-width at the top on a phone — exactly where both
+           full-screen views keep their ×, their Out button and their trail. So
+           for the seconds it is up it was eating the taps meant for those, and
+           the reachability audit caught it on two viewports at once:
+             .bubble-close covered by div.fractality-toast.info
+             .bubble-crumb covered by span.fractality-toast-icon
+           Informational, therefore transparent to the pointer. */
+        pointer-events: none;
         z-index: 1002;
         backdrop-filter: blur(10px);
         transition: opacity 0.3s ease, transform 0.3s ease;

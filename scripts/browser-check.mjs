@@ -3625,6 +3625,12 @@ if (run_cone_labels) {
         return ['.cone-labels', '.cone-close'].map((sel) => {
             const el = document.querySelector(sel);
             if (!el) return { sel, missing: true };
+            // A control the app deliberately hides is absent, not unreachable. The
+            // cone's × is hidden at the top level — there is nothing behind the
+            // default screen to close to — and a 0x0 rect at 0,0 read as "off
+            // screen". That it is hidden in the right circumstances is asserted in
+            // the default-screen section; this one is about what IS on offer.
+            if (el.hidden || el.offsetParent === null) return { sel, notOffered: true };
             const r = el.getBoundingClientRect();
             const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
             return {
@@ -3638,14 +3644,17 @@ if (run_cone_labels) {
     });
 
     const unreachable = reachable.filter((r) => r.missing || r.covered || r.offscreen);
+    const offered = reachable.filter((r) => !r.notOffered);
     if (unreachable.length > 0) {
         fail('cone controls that cannot be pressed: ' + unreachable
             .map((r) => r.missing ? `${r.sel} is not in the DOM`
                 : r.offscreen ? `${r.sel} is off screen`
                 : `${r.sel} is covered by ${r.by}`)
             .join('; '));
+    } else if (offered.length === 0) {
+        fail('no cone controls were on offer at all, so this checked nothing');
     } else {
-        pass(`every cone control can actually be pressed (${reachable.length} checked)`);
+        pass(`every cone control on offer can actually be pressed (${offered.length})`);
     }
 
     // The button reflects it, and the preference survives a reload.
@@ -3984,17 +3993,21 @@ if (run_bubble) {
             return ['.bubble-close', '.bubble-up', '.bubble-crumb'].map((sel) => {
                 const el = document.querySelector(sel);
                 if (!el) return { sel, missing: true };
+                if (el.hidden || el.offsetParent === null) return { sel, notOffered: true };
                 const r = el.getBoundingClientRect();
                 const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
                 return { sel, covered: !(hit === el || el.contains(hit)), by: describe(hit) };
             });
         });
         const buried = reach.filter((r) => r.missing || r.covered);
+        const shown = reach.filter((r) => !r.notOffered);
         if (buried.length > 0) {
             fail(`[${vp.name}] bubble controls that cannot be pressed: ` + buried
                 .map((r) => r.missing ? `${r.sel} missing` : `${r.sel} covered by ${r.by}`).join('; '));
+        } else if (shown.length === 0) {
+            fail(`[${vp.name}] no bubble controls were on offer, so this checked nothing`);
         } else {
-            pass(`[${vp.name}] every bubble control can actually be pressed`);
+            pass(`[${vp.name}] every bubble control on offer can be pressed (${shown.length})`);
         }
 
         await ctx.close();
