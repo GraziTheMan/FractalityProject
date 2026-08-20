@@ -249,9 +249,43 @@ export class FractalityEngine {
         
         this.state.setFocus(nodeId);
         this.state.needsLayout = true;
+
+        // Keep an OPEN info panel on the current node.
+        //
+        // The panel used to be driven entirely from clicks and hovers on the 3D
+        // canvas. Once the cone view became the default screen that canvas is never
+        // visible, so those were the only two ways in and the panel became
+        // unreachable — a capability lost as a side effect of a layout change.
+        // Following the focus here means every surface that selects a node keeps it
+        // current: the cone, the bubble view, the Node Manager and search.
+        if (this.nodeInfo?.isVisible) {
+            this.nodeInfo.show(this.nodeGraph.getNode(nodeId), { immediate: true });
+        }
         
         // Emit focus change event
         this._emitEvent('focusChanged', { nodeId });
+    }
+
+    /**
+     * Show or hide the info panel for whatever is selected.
+     *
+     * The way in, now that tapping the 3D canvas is not one. Reads the selection
+     * rather than taking an argument, so the dock does not need to know which node
+     * is current.
+     */
+    toggleNodeInfo() {
+        if (!this.nodeInfo) return false;
+
+        if (this.nodeInfo.isVisible) {
+            this.nodeInfo.hide();
+            return false;
+        }
+
+        const node = this.nodeGraph.getNode(this.state.focusNode);
+        if (!node) return false;
+
+        this.nodeInfo.show(node, { immediate: true });
+        return true;
     }
     
     /**

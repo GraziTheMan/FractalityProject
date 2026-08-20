@@ -1200,7 +1200,9 @@ export class ConeView {
                      1     the 3D canvas
                      900   full-screen views (this, and the bubble view)
                      1000  #perf-dashboard
-                     1001  panels: Maps, Find, Node Manager, Feed, Account
+                     1001  panels: Maps, Find, Node Manager, Feed, Account,
+                           Node info  (this one styles itself inside its own
+                           module, which is how it got missed the first time)
                      1200  the dock
 
                    This view is CONTENT, not an overlay — it is the default screen

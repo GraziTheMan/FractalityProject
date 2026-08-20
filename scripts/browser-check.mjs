@@ -321,38 +321,44 @@ if (run_panels) {
         }
     }
 
-    // Tapping a node. Sweeping with the engine's own raycaster is retried
-    // because the sweep can legitimately land mid-layout and find nothing.
-    let tapped = null;
-    for (let attempt = 1; attempt <= 6 && !tapped; attempt++) {
-        const target = await page.evaluate(() => {
-            const eng = window.fractalityEngine?.();
-            const mesh = eng?.renderer?.instancedMesh;
-            if (!mesh) return null;
-            for (let y = 0.1; y < 0.9; y += 0.008) {
-                for (let x = 0.1; x < 0.9; x += 0.008) {
-                    eng.mouse.set(x * 2 - 1, -(y * 2 - 1));
-                    eng.raycaster.setFromCamera(eng.mouse, eng.renderer.camera);
-                    if (eng.raycaster.intersectObject(mesh).length > 0) {
-                        return { x: Math.round(x * innerWidth), y: Math.round(y * innerHeight) };
-                    }
-                }
-            }
-            return null;
-        });
-        if (!target) { await page.waitForTimeout(700); continue; }
-        await page.touchscreen.tap(target.x, target.y);
-        await page.waitForTimeout(900);
-        if (await page.evaluate(() => window.fractalityEngine()?.nodeInfo?.isVisible)) {
-            tapped = { ...target, attempt };
-        } else {
-            await page.waitForTimeout(500);
-        }
-    }
+    // Opening the node info panel.
+    //
+    // This used to sweep the 3D scene with the engine's own raycaster and TAP a
+    // node, because a click on the Three.js canvas was the only way in. The cone
+    // view is the default screen now and covers that canvas permanently, so those
+    // taps land on the cone — and the panel had no opener left at all, which is a
+    // capability lost as a side effect of a layout change rather than a stale
+    // check. The dock gained a "Node info" row, and this exercises it.
+    const tapped = await page.evaluate(async () => {
+        const eng = window.fractalityEngine();
+        const opened = eng.toggleNodeInfo();
+        await new Promise((r) => setTimeout(r, 600));
+        return { opened, visible: Boolean(eng.nodeInfo?.isVisible) };
+    });
 
-    if (!tapped) fail('tapping a node never showed the info panel');
+    if (!tapped.visible) fail('the node info panel could not be opened at all');
     else {
-        pass(`tapping a node shows its info panel (attempt ${tapped.attempt})`);
+        pass('the node info panel opens for the selection');
+
+        // It has to FOLLOW the selection, or it describes whatever was selected
+        // when it opened — which, with several surfaces changing the focus, is a
+        // panel confidently naming the wrong node.
+        const followed = await page.evaluate(async () => {
+            const eng = window.fractalityEngine();
+            const g = eng.nodeGraph;
+            const before = eng.state.focusNode;
+            const other = [...g.nodes.values()].find((n) => n.id !== before);
+            eng.setFocus(other.id);
+            await new Promise((r) => setTimeout(r, 500));
+            const shown = document.querySelector('.node-info-panel')?.textContent ?? '';
+            const name = other.metadata?.label || other.id;
+            return { name, names: shown.includes(name) };
+        });
+        if (!followed.names) {
+            fail(`the info panel did not follow the selection to "${followed.name}"`);
+        } else {
+            pass(`the info panel follows the selection ("${followed.name}")`);
+        }
 
         const r = await audit('.node-info-panel');
         if (r.problem) fail(`node info panel ${r.problem}`);
@@ -1074,13 +1080,28 @@ if (run_cone_view) {
         else pass(`tapping a cone node selects it (${before} -> ${after})`);
     }
 
-    // Closing must hand the 3D view back.
-    await page.click('.cone-close');
+    // Switching to the other view hands over, and the engine stays paused.
+    //
+    // This used to click .cone-close and assert the 3D engine RESUMED. Both halves
+    // are now wrong: the cone is the default screen, so its × is hidden at the top
+    // level — the click timed out for 30s and killed the whole suite — and there is
+    // no 3D view to hand back to, because it is what these views replaced. The
+    // guard that survives is "leaving one view lands somewhere, and nothing starts
+    // rendering behind it".
+    await page.evaluate(() => window.bubbleView.show());
     await page.waitForTimeout(400);
-    const closed = await state();
-    if (closed.open) fail('the cone view did not close');
-    else if (closed.enginePaused) fail('the 3D engine is left paused after the cone closes');
-    else pass('closing the cone view resumes the 3D engine');
+    const handed = await page.evaluate(() => ({
+        cone: window.coneView.isOpen,
+        bubble: window.bubbleView.isOpen,
+        paused: Boolean(window.fractalityEngine().paused),
+    }));
+    if (handed.cone) fail('switching to the bubble view left the cone open too');
+    else if (!handed.bubble) fail('switching to the bubble view opened nothing');
+    else if (!handed.paused) fail('the 3D engine started rendering behind the bubble view');
+    else pass('switching views hands over without waking the 3D engine');
+
+    await page.evaluate(() => window.coneView.show());
+    await page.waitForTimeout(300);
 
     await ctx.close();
 }

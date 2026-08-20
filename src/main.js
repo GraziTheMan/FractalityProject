@@ -458,6 +458,17 @@ function buildDockItems() {
           onSelect: () => nodeDebugPanel.toggle()
         },
         {
+          id: 'nodeinfo',
+          icon: '\u{1f5c2}',
+          label: 'Node info',
+          description: 'Details, metadata and family for the selected node',
+          disabledReason: needsEngine,
+          isActive: () => Boolean(fractalityEngine?.nodeInfo?.isVisible),
+          // The way in. It used to be a click on the 3D canvas, which the default
+          // screen now covers, so without this the panel had no opener at all.
+          onSelect: () => fractalityEngine.toggleNodeInfo()
+        },
+        {
           id: 'perf',
           icon: '\u{1f4c8}',
           label: 'Performance',

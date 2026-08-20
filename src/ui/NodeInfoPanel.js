@@ -264,7 +264,14 @@ export class NodeInfoPanel {
                 box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
                 overflow-y: auto;
                 pointer-events: auto;
-                z-index: 100;
+                /* 1001, with the other panels. See ConeView's stylesheet for the
+                   full order. At 100 this sat UNDER the full-screen views, so once
+                   the cone view became the default screen the panel was drawn but
+                   every one of its buttons — pin, ×, Navigate Here, Expand — was
+                   under cone-canvas and could not be pressed. It was missed in the
+                   survey that set the other five panels because it styles itself
+                   here rather than in main.css. */
+                z-index: 1001;
                 transition: transform 0.3s ease, box-shadow 0.3s ease;
             }
             
