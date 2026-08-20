@@ -168,4 +168,19 @@ async def health():
         "environment": settings.environment,
         "database": database,
         "auth": "configured" if settings.auth_configured else "unconfigured",
+        # The origins this service will answer a browser from.
+        #
+        # Reported because the failure it causes is invisible from outside a
+        # browser: with the wrong list the service is healthy, fast, and refuses
+        # every request the app makes — which reaches the user as a spinner that
+        # never stops. curl sees a working API. So "is my origin allowed?" now has
+        # an answer you can read instead of infer.
+        #
+        # Not a secret: every successful response already announces the matching
+        # value in its Access-Control-Allow-Origin header.
+        #
+        # Read at import time, which means this also answers "did my change take
+        # effect?" — editing the variable without restarting leaves the old list
+        # live, and this is where that would show.
+        "allowed_origins": settings.cors_origins,
     }

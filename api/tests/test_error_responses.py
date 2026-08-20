@@ -108,3 +108,16 @@ def test_an_unlisted_origin_still_gets_no_cors_header(client):
     response = client.get("/pulses", headers={"Origin": "https://not-allowed.example"})
     assert response.status_code == 500
     assert response.headers.get("access-control-allow-origin") is None
+
+
+def test_health_reports_the_allowed_origins(client):
+    """So "is my origin allowed?" is answerable without guessing.
+
+    The failure this exists for is silent from outside the browser: with the wrong
+    list the service is healthy and fast and refuses every request the app makes.
+    curl sees a working API; the user sees a spinner that never stops.
+    """
+    body = client.get("/health").json()
+    assert "allowed_origins" in body
+    assert isinstance(body["allowed_origins"], list)
+    assert ORIGIN in body["allowed_origins"]
