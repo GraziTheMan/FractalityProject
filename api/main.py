@@ -14,8 +14,10 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import db
 from .routers import feed, me, mindmaps
@@ -84,8 +86,48 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+class CrashesBecomeResponses(BaseHTTPMiddleware):
+    """Turn an unhandled exception into a real 500, INSIDE the CORS middleware.
+
+    Order is the whole point, and it is why @app.exception_handler(Exception) does
+    not work here: that is served by Starlette's ServerErrorMiddleware, which is
+    the outermost layer of all, so its response never passes back through
+    CORSMiddleware. The browser then receives a bare 500 with no
+    Access-Control-Allow-Origin, blocks it, and JavaScript sees a network error —
+    indistinguishable from the API being down or this origin being unlisted.
+
+    The practical cost of that was real: every bug in this codebase described
+    itself to the user as a misconfiguration, sending them to check CORS_ORIGIN
+    while the actual cause was a traceback nobody had seen.
+
+    Registered BEFORE CORSMiddleware because add_middleware puts the most recently
+    added outermost — so this ends up inside it, and the JSONResponse it returns is
+    processed by CORS on the way out. Moving these two calls past each other
+    silently reinstates the bug.
+
+    The body says nothing about the exception. The traceback goes to the log, where
+    it is useful; internal error text is exactly what should not reach a browser.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        try:
+            return await call_next(request)
+        except Exception:
+            logger.exception(
+                "Unhandled error on %s %s", request.method, request.url.path
+            )
+            return JSONResponse(
+                status_code=500,
+                content={"detail": "Something went wrong on the server."},
+            )
+
+
+app.add_middleware(CrashesBecomeResponses)
+
 # Explicit origins, never "*": the frontend sends credentials, and browsers
 # refuse wildcard origins on credentialed requests.
+#
+# Added AFTER the crash handler above, which puts it outside — see that class.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
