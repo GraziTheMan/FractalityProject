@@ -396,6 +396,15 @@ class Comment(BaseModel):
     predicted: Optional[float] = None
     prediction_confidence: Optional[float] = None
 
+    #: Whether the caller wrote this, decided SERVER-side from the auth subject.
+    #:
+    #: The client must not work this out by comparing ids. A comment carries its
+    #: author's API user id, while the browser knows the auth provider's id — a
+    #: different namespace — so the comparison would quietly answer "no" for
+    #: everybody, offering Report on your own writing and never Edit. Same field
+    #: and same reasoning as Pulse.own.
+    own: bool = False
+
 
 class CommentCreate(BaseModel):
     text: str = Field(min_length=1, max_length=MAX_COMMENT_TEXT)

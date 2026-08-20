@@ -60,18 +60,28 @@ export function createResonanceSlider({
     value = 0,
     enabled = true,
     label = 'How much does this resonate with you?',
+    // Same control, less room. A comment sits inside a post, so a full-width
+    // slider with worded ends would out-weigh the thing it belongs to; compact
+    // drops the words and shrinks the notches, and changes nothing about what the
+    // control MEANS. Deliberately the same function rather than a second one:
+    // two sliders would be two places for the -2..+2 scale to drift.
+    compact = false,
     onChange,
 } = {}) {
     const wrap = document.createElement('div');
-    wrap.className = 'pulsefeed-resonance';
+    wrap.className = compact ? 'pulsefeed-resonance compact' : 'pulsefeed-resonance';
 
     const left = document.createElement('span');
     left.className = 'pulsefeed-resonance-end';
-    left.textContent = 'Dissonant';
+    // The words go, the meaning does not: the radiogroup keeps its aria-label and
+    // each notch keeps its own, so a screen reader hears the same thing either way.
+    left.textContent = compact ? '' : 'Dissonant';
+    left.setAttribute('aria-hidden', 'true');
 
     const right = document.createElement('span');
     right.className = 'pulsefeed-resonance-end';
-    right.textContent = 'Resonant';
+    right.textContent = compact ? '' : 'Resonant';
+    right.setAttribute('aria-hidden', 'true');
 
     const track = document.createElement('div');
     track.className = 'pulsefeed-notches';

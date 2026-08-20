@@ -85,7 +85,13 @@ def client(monkeypatch, settings):
         state["list_calls"].append(
             {"pulse": pulse_id, "viewer": viewer_subject, "skip": skip, "limit": limit}
         )
-        return state["comments"]
+        # Mirrors _row_to_comment: own-ness is decided from the viewer's subject,
+        # not left at its default. A fake that always said False would make the
+        # ownership test pass on a stub rather than on the rule.
+        return [
+            c.model_copy(update={"own": viewer_subject == AUTHOR})
+            for c in state["comments"]
+        ]
 
     async def fake_create_comment(_s, subject, pulse_id, text):
         if pulse_id != PULSE_ID:
@@ -325,6 +331,26 @@ def test_another_reader_does_not_see_your_rating(client):
     client.state["principal"] = AUTHOR
     body = client.get(f"/pulses/{PULSE_ID}/comments").json()[0]
     assert body["my_rating"] == 0
+
+
+def test_the_server_says_whose_comment_it_is(client):
+    """`own` is decided from the verified subject, not by the client.
+
+    A comment carries its author's API user id; a browser knows the auth
+    provider's id. Those are different namespaces, so a client comparing them
+    would answer "no" for everybody — offering Report on your own writing and
+    never Edit. Which is why the flag exists at all.
+    """
+    client.state["principal"] = AUTHOR
+    assert client.get(f"/pulses/{PULSE_ID}/comments").json()[0]["own"] is True
+
+    client.state["principal"] = READER
+    assert client.get(f"/pulses/{PULSE_ID}/comments").json()[0]["own"] is False
+
+
+def test_an_anonymous_reader_owns_nothing(client):
+    client.state["principal"] = None
+    assert client.get(f"/pulses/{PULSE_ID}/comments").json()[0]["own"] is False
 
 
 # --- moderation ------------------------------------------------------------

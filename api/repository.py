@@ -1020,6 +1020,8 @@ def _row_to_comment(row: Dict[str, Any], viewer_subject: Optional[str]) -> Comme
         timestamp=row["created_at"],
         edited_at=row.get("edited_at"),
         my_rating=row.get("my_rating") or 0,
+        # Decided here, from the verified subject, exactly as a pulse decides it.
+        own=bool(viewer_subject) and row.get("author_subject") == viewer_subject,
         author=PulseAuthor(
             id=row["author_id"],
             name=_author_name(row),

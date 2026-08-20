@@ -651,7 +651,315 @@ export class FeedPanel {
         }
 
         card.appendChild(this._renderActions(pulse));
+        card.appendChild(this._renderCommentToggle(pulse));
         return card;
+    }
+
+    /**
+     * The way into a conversation, closed until asked for.
+     *
+     * Collapsed by default so a feed stays a feed: opening every thread inline
+     * would turn scrolling past a post into scrolling past an argument, and the
+     * whole point of this feed is that it does not do that to you.
+     *
+     * Deliberately no count on the button. "12 comments" is a tally, and a tally
+     * is what everything else here refuses to show — it would also rank posts by
+     * how much argument they attracted, in a reader's head if nowhere else.
+     */
+    _renderCommentToggle(pulse) {
+        const wrap = document.createElement('div');
+        wrap.className = 'pulsefeed-comments';
+
+        const toggle = document.createElement('button');
+        toggle.className = 'pulsefeed-action pulsefeed-comment-toggle';
+        toggle.type = 'button';
+        toggle.textContent = 'Discuss';
+        toggle.setAttribute('aria-expanded', 'false');
+
+        const thread = document.createElement('div');
+        thread.className = 'pulsefeed-thread';
+        thread.hidden = true;
+
+        toggle.addEventListener('click', async () => {
+            const opening = thread.hidden;
+            thread.hidden = !opening;
+            toggle.setAttribute('aria-expanded', String(opening));
+            toggle.textContent = opening ? 'Hide discussion' : 'Discuss';
+
+            // Loaded on first open, not with the feed: fetching every thread up
+            // front would multiply the feed's cost by the number of posts on
+            // screen, to show something most readers will not open.
+            if (opening && !thread.dataset.loaded) {
+                thread.dataset.loaded = 'true';
+                await this._loadThread(pulse, thread);
+            }
+        });
+
+        wrap.append(toggle, thread);
+        return wrap;
+    }
+
+    async _loadThread(pulse, thread) {
+        thread.textContent = '';
+
+        const list = document.createElement('div');
+        list.className = 'pulsefeed-comment-list';
+        list.textContent = 'Loading…';
+        thread.appendChild(list);
+        thread.appendChild(this._renderCommentCompose(pulse, list));
+
+        try {
+            const comments = await this.client.listComments(pulse.id);
+            this._paintComments(list, comments ?? []);
+        } catch (error) {
+            list.textContent = `Could not load the discussion: ${error.message}`;
+        }
+    }
+
+    _paintComments(list, comments) {
+        list.textContent = '';
+        if (comments.length === 0) {
+            const empty = document.createElement('p');
+            empty.className = 'pulsefeed-comment-empty';
+            empty.textContent = 'No replies yet.';
+            list.appendChild(empty);
+            return;
+        }
+        for (const comment of comments) {
+            list.appendChild(this._renderComment(comment, list));
+        }
+    }
+
+    _renderComment(comment, list) {
+        const item = document.createElement('article');
+        item.className = 'pulsefeed-comment';
+        item.dataset.commentId = comment.id;
+
+        const head = document.createElement('div');
+        head.className = 'pulsefeed-comment-head';
+
+        const who = document.createElement('span');
+        who.className = 'pulsefeed-comment-author';
+        who.textContent = comment.author?.name || 'Anonymous';
+
+        const when = document.createElement('span');
+        when.className = 'pulsefeed-comment-when';
+        when.textContent = this._timeAgo(comment.timestamp)
+            + (comment.edited_at ? ' · edited' : '');
+
+        head.append(who, when);
+
+        // textContent, never innerHTML: this is a stranger's writing.
+        const body = document.createElement('p');
+        body.className = 'pulsefeed-comment-body';
+        body.textContent = comment.text || '';
+
+        item.append(head, body);
+
+        const signedIn = !hasAuth() || getAuthState().signedIn;
+
+        // The same slider as a post, compact. Same scale, same privacy: what you
+        // see is your own answer, and nobody — including the person who wrote it —
+        // sees a total.
+        item.appendChild(createResonanceSlider({
+            value: comment.my_rating ?? 0,
+            enabled: signedIn,
+            compact: true,
+            label: 'How much does this reply resonate with you?',
+            onChange: (value) => this._rateComment(comment, item, value)
+        }));
+
+        const gauge = createResonanceGauge({
+            predicted: comment.predicted,
+            confidence: comment.prediction_confidence ?? 0
+        });
+        if (gauge) item.appendChild(gauge);
+
+        item.appendChild(this._renderCommentActions(comment, item, list));
+        return item;
+    }
+
+    /**
+     * Write a reply.
+     *
+     * A plain textarea, no formatting bar. A comment is a contribution to a
+     * conversation; the markdown page behind a NODE is where writing happens.
+     */
+    _renderCommentCompose(pulse, list) {
+        const box = document.createElement('div');
+        box.className = 'pulsefeed-comment-compose';
+
+        const signedIn = !hasAuth() || getAuthState().signedIn;
+        if (!signedIn) {
+            const note = document.createElement('p');
+            note.className = 'pulsefeed-comment-empty';
+            note.textContent = 'Sign in from Account to join the discussion.';
+            box.appendChild(note);
+            return box;
+        }
+
+        const input = document.createElement('textarea');
+        input.className = 'pulsefeed-input pulsefeed-comment-input';
+        input.rows = 2;
+        // Matches MAX_COMMENT_TEXT in api/models.py.
+        input.maxLength = 2000;
+        input.placeholder = 'Reply…';
+
+        const send = document.createElement('button');
+        send.className = 'pulsefeed-action pulsefeed-comment-send';
+        send.type = 'button';
+        send.textContent = 'Reply';
+
+        const submit = async () => {
+            const text = input.value.trim();
+            if (!text) return;
+
+            send.disabled = true;
+            input.disabled = true;
+            try {
+                const created = await this.client.createComment(pulse.id, text);
+                // Appended rather than refetching the thread: a refetch would
+                // discard anything else the reader had part-written, and this is
+                // the one comment we know the server accepted.
+                const empty = list.querySelector('.pulsefeed-comment-empty');
+                if (empty) empty.remove();
+                list.appendChild(this._renderComment(created, list));
+                input.value = '';
+                this.notify('Replied');
+            } catch (error) {
+                this.notify(this._describe(error), 'error');
+            } finally {
+                send.disabled = false;
+                input.disabled = false;
+                input.focus();
+            }
+        };
+
+        send.addEventListener('click', submit);
+        // Ctrl/Cmd+Enter, not bare Enter: a comment has paragraphs, and a plain
+        // Enter that posted would make writing two of them impossible.
+        input.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) submit();
+        });
+
+        box.append(input, send);
+        return box;
+    }
+
+    _renderCommentActions(comment, item, list) {
+        const row = document.createElement('div');
+        row.className = 'pulsefeed-comment-actions';
+
+        // The SERVER says whose it is. See Comment.own in api/models.py for why the
+        // client must not work this out by comparing ids.
+        if (comment.own) {
+            const edit = document.createElement('button');
+            edit.className = 'pulsefeed-action';
+            edit.type = 'button';
+            edit.textContent = 'Edit';
+            edit.addEventListener('click', () => this._editComment(comment, item, list));
+
+            const remove = document.createElement('button');
+            remove.className = 'pulsefeed-action pulsefeed-danger';
+            remove.type = 'button';
+            remove.textContent = 'Delete';
+            remove.addEventListener('click', async () => {
+                if (!confirm('Delete this reply?')) return;
+                try {
+                    await this.client.deleteComment(comment.id);
+                    item.remove();
+                    if (!list.querySelector('.pulsefeed-comment')) {
+                        this._paintComments(list, []);
+                    }
+                    this.notify('Reply deleted');
+                } catch (error) {
+                    this.notify(this._describe(error), 'error');
+                }
+            });
+
+            row.append(edit, remove);
+        } else {
+            const report = document.createElement('button');
+            report.className = 'pulsefeed-action';
+            report.type = 'button';
+            report.textContent = 'Report';
+            report.addEventListener('click', async () => {
+                try {
+                    await this.client.reportComment(comment.id);
+                    // "Reported", not "removed": what happens next is a human
+                    // decision that has not happened yet.
+                    this.notify('Reported. Thank you.');
+                    report.disabled = true;
+                } catch (error) {
+                    this.notify(this._describe(error), 'error');
+                }
+            });
+            row.appendChild(report);
+        }
+
+        return row;
+    }
+
+    _editComment(comment, item, list) {
+        const body = item.querySelector('.pulsefeed-comment-body');
+        if (!body) return;
+
+        const input = document.createElement('textarea');
+        input.className = 'pulsefeed-input pulsefeed-comment-input';
+        input.rows = 3;
+        input.maxLength = 2000;
+        input.value = comment.text ?? '';
+
+        const save = document.createElement('button');
+        save.className = 'pulsefeed-action';
+        save.type = 'button';
+        save.textContent = 'Save';
+
+        const cancel = document.createElement('button');
+        cancel.className = 'pulsefeed-action';
+        cancel.type = 'button';
+        cancel.textContent = 'Cancel';
+
+        const row = document.createElement('div');
+        row.className = 'pulsefeed-comment-actions';
+        row.append(save, cancel);
+
+        const editor = document.createElement('div');
+        editor.append(input, row);
+        body.replaceWith(editor);
+
+        const restore = (updated) => {
+            const next = this._renderComment(updated ?? comment, list);
+            item.replaceWith(next);
+        };
+
+        cancel.addEventListener('click', () => restore(null));
+        save.addEventListener('click', async () => {
+            const text = input.value.trim();
+            if (!text) return;
+            save.disabled = true;
+            try {
+                const updated = await this.client.updateComment(comment.id, text);
+                restore(updated);
+                this.notify('Reply updated');
+            } catch (error) {
+                this.notify(this._describe(error), 'error');
+                save.disabled = false;
+            }
+        });
+
+        input.focus();
+    }
+
+    async _rateComment(comment, item, value) {
+        try {
+            const updated = await this.client.setCommentResonance(comment.id, value);
+            // Keep the local copy in step so a re-render does not show the old
+            // rating, and so the gauge reflects the history this just joined.
+            Object.assign(comment, updated);
+        } catch (error) {
+            this.notify(this._describe(error), 'error');
+        }
     }
 
     _renderActions(pulse) {
@@ -1201,6 +1509,57 @@ export class FeedPanel {
                 gap: 6px;
                 min-width: 0;
             }
+            /* The compact variant: the same control with the worded ends dropped
+               and the notches shrunk, so a reply's slider does not out-weigh the
+               post it sits under. */
+            .pulsefeed-resonance.compact { gap: 3px; }
+            .pulsefeed-resonance.compact .pulsefeed-notch {
+                min-width: 22px;
+                min-height: 22px;
+                font-size: 10px;
+            }
+
+            /* --- discussion --- */
+            .pulsefeed-comments { margin-top: 10px; }
+            .pulsefeed-comment-toggle { font-size: 11px; }
+            .pulsefeed-thread {
+                margin-top: 10px;
+                padding-left: 10px;
+                /* A rule rather than a box: replies belong to the post above them,
+                   and boxing each one would make a thread look like a list of
+                   separate posts. */
+                border-left: 2px solid #23303a;
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+            }
+            .pulsefeed-comment-list { display: flex; flex-direction: column; gap: 10px; }
+            .pulsefeed-comment { display: flex; flex-direction: column; gap: 5px; }
+            .pulsefeed-comment-head {
+                display: flex;
+                gap: 8px;
+                align-items: baseline;
+                flex-wrap: wrap;
+                font-size: 11px;
+            }
+            .pulsefeed-comment-author { color: #9fe8d0; font-weight: 600; }
+            .pulsefeed-comment-when { color: #63767f; }
+            .pulsefeed-comment-body {
+                margin: 0;
+                color: #dfe8ec;
+                font-size: 13px;
+                line-height: 1.45;
+                /* A stranger's writing: a long unbroken string must not widen the
+                   panel and start the whole feed scrolling sideways. */
+                overflow-wrap: anywhere;
+                white-space: pre-wrap;
+            }
+            .pulsefeed-comment-empty { margin: 0; color: #63767f; font-size: 12px; }
+            .pulsefeed-comment-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+            .pulsefeed-comment-compose { display: flex; flex-direction: column; gap: 6px; }
+            .pulsefeed-comment-input { font-family: inherit; line-height: 1.45; }
+            .pulsefeed-comment-send { align-self: flex-start; }
+            .pulsefeed-danger { color: #ff9b9b; }
             .pulsefeed-resonance-end {
                 color: #555;
                 font-size: 9px;

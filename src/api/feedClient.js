@@ -89,6 +89,63 @@ export class FeedClient extends MindMapClient {
         }
     }
 
+    // --- comments ----------------------------------------------------------
+
+    /**
+     * The conversation on a post, oldest first.
+     *
+     * Readable signed out, like the feed. Signed in, three things change: comments
+     * from blocked authors disappear, my_rating carries what you said, and a
+     * prediction appears once your history can support one.
+     */
+    listComments(pulseId, { skip = 0, limit = 100, onRetry } = {}) {
+        return this._request(
+            `/pulses/${encodeURIComponent(pulseId)}/comments?skip=${skip}&limit=${limit}`,
+            { onRetry }
+        );
+    }
+
+    createComment(pulseId, text) {
+        return this._request(`/pulses/${encodeURIComponent(pulseId)}/comments`, {
+            method: 'POST',
+            body: { text }
+        });
+    }
+
+    updateComment(commentId, text) {
+        return this._request(`/pulses/comments/${encodeURIComponent(commentId)}`, {
+            method: 'PATCH',
+            body: { text }
+        });
+    }
+
+    deleteComment(commentId) {
+        return this._request(`/pulses/comments/${encodeURIComponent(commentId)}`, {
+            method: 'DELETE'
+        });
+    }
+
+    /**
+     * Rate a comment, -2..+2, 0 to clear.
+     *
+     * The same act as rating a post, and the same privacy: what comes back is your
+     * own rating and your own prediction. Nobody's tally, including the comment
+     * author's — there is nothing to increment locally and hope about.
+     */
+    setCommentResonance(commentId, value = 0) {
+        const clamped = Math.max(-2, Math.min(2, Math.round(Number(value) || 0)));
+        return this._request(
+            `/pulses/comments/${encodeURIComponent(commentId)}/resonance?value=${clamped}`,
+            { method: 'PUT' }
+        );
+    }
+
+    reportComment(commentId) {
+        return this._request(`/pulses/comments/${encodeURIComponent(commentId)}/report`, {
+            method: 'POST'
+        });
+    }
+
     /** Report a pulse. `reason` must be one the API recognises. */
     reportPulse(pulseId, reason = 'other') {
         return this._request(`/pulses/${encodeURIComponent(pulseId)}/report`, {
