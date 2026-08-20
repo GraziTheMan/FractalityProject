@@ -14,6 +14,7 @@ import { AnimationSystem } from './visualization/AnimationSystem.js';
 import { MapsPanel } from './ui/MapsPanel.js';
 import { NodeManagerPanel } from './ui/NodeManagerPanel.js';
 import { ConeView } from './ui/ConeView.js';
+import { BubbleView } from './ui/BubbleView.js';
 import { FeedPanel } from './ui/FeedPanel.js';
 import { feedClient } from './api/feedClient.js';
 import { AccountPanel } from './ui/AccountPanel.js';
@@ -216,6 +217,29 @@ const coneView = new ConeView({
   }
 });
 
+const bubbleView = new BubbleView({
+  getGraph: () => fractalityEngine?.nodeGraph ?? null,
+  getFocusedNode: () => fractalityEngine?.state?.focusNode ?? null,
+  onFocusNode: (nodeId) => fractalityEngine?.setFocus(nodeId),
+  notify: (message, type) => showNotification(message, type),
+  onVisibilityChange: (open) => {
+    if (!fractalityEngine) return;
+    open ? fractalityEngine.pause() : fractalityEngine.resume();
+  }
+});
+
+// Two views, and only ever one of them open. They both cover the screen, so
+// opening the second on top of the first would leave the first running behind it
+// and its dock entry lit.
+coneView.onVisibilityChange = ((original) => (open) => {
+  if (open && bubbleView.isOpen) bubbleView.hide();
+  original(open);
+})(coneView.onVisibilityChange);
+bubbleView.onVisibilityChange = ((original) => (open) => {
+  if (open && coneView.isOpen) coneView.hide();
+  original(open);
+})(bubbleView.onVisibilityChange);
+
 /**
  * The dock's contents.
  *
@@ -232,45 +256,34 @@ const coneView = new ConeView({
 function buildDockItems() {
   const needsEngine = () => (fractalityEngine ? false : 'Open the 3D view first');
 
-  /** One sheet row per layout the LayoutEngine can actually render. */
-  const layoutItem = (id, icon, label, description) => ({
-    id: `layout-${id}`,
-    icon,
-    label,
-    description,
-    isActive: () => fractalityEngine?.getLayout() === id,
-    disabledReason: needsEngine,
-    onSelect: () => {
-      if (fractalityEngine.setLayout(id)) {
-        showNotification(`Layout: ${label}`);
-      }
-    }
-  });
-
   return [
     // --- how the map is arranged and drawn ---------------------------------
-    // This is the consolidation of the old Bubble / Cone / NodeMgr buttons:
-    // they were all about how the graph is displayed, and only one of them
-    // ('bubble') was wired to anything.
+    //
+    // Two views, and that is the whole set.
+    //
+    // There were five here — family, goldenSpiral, fibonacciSphere, fractalTree,
+    // cosmicWeb — and they were five arrangements of the same shaded spheres,
+    // answering "how should the whole graph be scattered in space?". Nobody was
+    // asking that. They are gone, replaced by ONE view built around the question
+    // people do have, which is "what is inside this?".
+    //
+    // The LayoutEngine still implements them and setLayout()/getLayout() still
+    // work; what is removed is the claim that choosing between them is a thing a
+    // reader wants to do.
     {
       id: 'view',
       icon: '\u{1f300}',
       label: 'View',
-      // Layouts are a radio set: one is always current, so "has an active
-      // child" would light this button up permanently and mean nothing.
-      exclusive: true,
       items: [
-        layoutItem('family', '\u{1f46a}', 'Family',
-          'Parent above, siblings in an arc, children spiralling out'),
-        layoutItem('goldenSpiral', '\u{1f300}', 'Golden Spiral',
-          'One expanding spiral by golden ratio'),
-        layoutItem('fibonacciSphere', '\u{1f310}', 'Fibonacci Sphere',
-          'Evenly distributed over a sphere'),
-        layoutItem('fractalTree', '\u{1f333}', 'Fractal Tree',
-          'Branching, each level smaller'),
-        layoutItem('cosmicWeb', '\u{1f30c}', 'Cosmic Web',
-          'Loose clusters linked by strands'),
-        { separator: true },
+        {
+          id: 'bubble',
+          icon: '\u{2b55}',
+          label: 'Bubble view',
+          description: "One level at a time; tap a bubble to go inside it",
+          isActive: () => bubbleView.isOpen,
+          disabledReason: needsEngine,
+          onSelect: () => bubbleView.toggle()
+        },
         {
           id: 'cone',
           icon: '\u{1f53a}',
@@ -280,6 +293,7 @@ function buildDockItems() {
           disabledReason: needsEngine,
           onSelect: () => coneView.toggle()
         },
+        { separator: true },
         {
           id: 'reset-view',
           icon: '\u{1f3af}',
@@ -1206,5 +1220,6 @@ window.nodeDebugPanel = () => nodeDebugPanel;
 window.mapsPanel = mapsPanel;
 window.nodeManagerPanel = nodeManagerPanel;
 window.coneView = coneView;
+window.bubbleView = bubbleView;
 window.feedPanel = feedPanel;
 window.accountPanel = accountPanel;

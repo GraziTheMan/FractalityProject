@@ -37,11 +37,16 @@ export class PerformanceDashboard {
             chartWidth: 180,
             chartHeight: 40,
             chartSamples: 60,
-            // Off by default on a phone. This panel is ~220x260 of opaque
-            // overlay with two charts; on a 390px-wide screen it covered a
-            // third of the viewport, and until the dock gained a Perf button
-            // there was no way to dismiss it without a keyboard.
-            visible: !PerformanceDashboard._isNarrowScreen()
+            // OFF by default, everywhere.
+            //
+            // It was on by default on a wide screen, which made it the first thing
+            // a visitor saw and the thing occupying the corner where two other
+            // views keep their controls. It is a developer instrument: useful when
+            // you are asking about frame cost, noise the rest of the time, and
+            // actively misleading while a full-screen view has the 3D engine paused
+            // — it then reports 0 FPS for something that is deliberately not
+            // rendering. Turn it on from More when there is a question to answer.
+            visible: false
         };
         
         // Update state

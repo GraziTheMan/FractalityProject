@@ -3626,6 +3626,239 @@ if (run_cone_labels) {
     await ctx.close();
 }
 
+// --- bubble view -----------------------------------------------------------
+//
+// The view that replaced five 3D layouts. Its claims: one level at a time, the
+// name written INSIDE the circle, and entering a bubble as the only navigation.
+// Each of those is checked as geometry rather than as state, because "the label
+// is inside the circle" is the entire reason this view draws flat circles and a
+// boolean saying so would not notice text hanging over the edge.
+
+const run_bubble = section('bubble view');
+
+if (run_bubble) {
+    for (const vp of VIEWPORTS) {
+        const { ctx, page } = await openApp(vp);
+
+        // Capture what the labels actually are and where they land.
+        await page.evaluate(() => {
+            const bv = window.bubbleView;
+            bv.show();
+            const c = bv.ctx;
+            let collecting = null;
+            const originalFill = c.fillText.bind(c);
+            c.fillText = (text, x, y) => {
+                if (collecting) collecting.push({ text, x, y, w: c.measureText(text).width });
+                return originalFill(text, x, y);
+            };
+            const originalRender = bv._render.bind(bv);
+            bv._render = () => { collecting = []; const r = originalRender(); window.__paint = collecting; collecting = null; return r; };
+        });
+
+        const state = async () => page.evaluate(async () => {
+            await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+            const bv = window.bubbleView;
+            return {
+                hits: bv._hits.map((h) => ({ id: h.id, x: h.x, y: h.y, r: h.r })),
+                paint: window.__paint ?? [],
+                where: document.querySelector('.bubble-where')?.textContent ?? '',
+                crumbs: [...document.querySelectorAll('.bubble-crumb')].map((c) => c.textContent),
+                outHidden: document.querySelector('.bubble-up')?.hidden,
+            };
+        });
+
+        // Start at the top rather than wherever the selection happens to be, so
+        // the first assertion is about a known state.
+        await page.evaluate(async () => {
+            window.bubbleView.path = [];
+            window.bubbleView._renderChrome();
+            await new Promise((r) => setTimeout(r, 200));
+        });
+
+        const top = await state();
+        const roots = await page.evaluate(
+            () => window.fractalityEngine().nodeGraph.getRootNodes().length);
+
+        if (top.hits.length !== roots) {
+            fail(`[${vp.name}] the top level shows ${top.hits.length} bubble(s) for ${roots} root(s)`);
+        } else if (top.outHidden !== true) {
+            fail(`[${vp.name}] "Out" is offered at the top level, where there is nowhere to go`);
+        } else {
+            pass(`[${vp.name}] opens on the map's root as a single bubble`);
+        }
+
+        // THE design claim: every label sits inside its own circle. Checked against
+        // the circle it belongs to, using the widest line — a name that wraps to
+        // three lines can fit vertically and still poke out sideways.
+        const outside = [];
+        for (const hit of top.hits) {
+            const lines = top.paint.filter((l) =>
+                Math.abs(l.x - hit.x) < hit.r && Math.abs(l.y - hit.y) < hit.r * 1.2);
+            for (const line of lines) {
+                // Half-width plus the vertical offset must stay inside the circle:
+                // that is the chord test, not just "narrower than the diameter".
+                const dy = Math.abs(line.y - hit.y);
+                const halfChord = Math.sqrt(Math.max(0, hit.r * hit.r - dy * dy));
+                if (line.w / 2 > halfChord) {
+                    outside.push(`"${line.text}" (${Math.round(line.w / 2)}px past ${Math.round(halfChord)}px)`);
+                }
+            }
+        }
+        if (top.paint.length === 0) {
+            fail(`[${vp.name}] nothing was written inside the bubbles at all`);
+        } else if (outside.length > 0) {
+            fail(`[${vp.name}] text spills outside its circle: ${outside.slice(0, 3).join('; ')}`);
+        } else {
+            pass(`[${vp.name}] every name is written inside its own circle (${top.paint.length} lines)`);
+        }
+
+        // Entering shows the children of that bubble and NOTHING else — the whole
+        // difference between this view and the cone's "every node on a tier".
+        const entered = await page.evaluate(async () => {
+            const bv = window.bubbleView;
+            const g = window.fractalityEngine().nodeGraph;
+            const rootId = bv._hits[0].id;
+            const expected = g.getChildren(rootId).map((n) => n.id).sort();
+            const rect = bv.canvas.getBoundingClientRect();
+            const h = bv._hits[0];
+            bv.canvas.dispatchEvent(new PointerEvent('pointerdown', {
+                clientX: rect.left + h.x, clientY: rect.top + h.y, bubbles: true }));
+            const midway = { transitioning: Boolean(bv._transition) };
+            await new Promise((r) => setTimeout(r, 800));
+            return { rootId, expected, midway, got: bv._hits.map((x) => x.id).sort() };
+        });
+
+        if (!entered.midway.transitioning) {
+            fail(`[${vp.name}] entering a bubble did not start a transition`);
+        } else if (JSON.stringify(entered.got) !== JSON.stringify(entered.expected)) {
+            fail(`[${vp.name}] entering showed ${JSON.stringify(entered.got)}, `
+                + `expected exactly the children ${JSON.stringify(entered.expected)}`);
+        } else {
+            pass(`[${vp.name}] going inside shows that bubble's children and nothing else `
+                + `(${entered.expected.length})`);
+        }
+
+        const inside = await state();
+        if (inside.crumbs.length !== 2 || inside.crumbs[0] !== 'Top') {
+            fail(`[${vp.name}] the trail does not name the way back: ${JSON.stringify(inside.crumbs)}`);
+        } else if (inside.outHidden !== false) {
+            fail(`[${vp.name}] "Out" is hidden one level down`);
+        } else {
+            pass(`[${vp.name}] the trail names the way back (${JSON.stringify(inside.crumbs)})`);
+        }
+
+        // Coming back out returns to what was there before, not to the top.
+        const back = await page.evaluate(async () => {
+            document.querySelector('.bubble-up').click();
+            await new Promise((r) => setTimeout(r, 800));
+            return { ids: window.bubbleView._hits.map((h) => h.id).sort(),
+                     depth: window.bubbleView.path.length };
+        });
+        if (back.depth !== 0 || JSON.stringify(back.ids) !== JSON.stringify(top.hits.map((h) => h.id).sort())) {
+            fail(`[${vp.name}] coming out landed on ${JSON.stringify(back.ids)} at depth ${back.depth}`);
+        } else {
+            pass(`[${vp.name}] coming back out returns to where you were`);
+        }
+
+        // A bubble containing nothing says so instead of playing the animation and
+        // arriving at an empty screen — those two look identical otherwise.
+        const leaf = await page.evaluate(async () => {
+            const bv = window.bubbleView;
+            const g = window.fractalityEngine().nodeGraph;
+            const childless = [...g.nodes.values()].find((n) => g.getChildren(n.id).length === 0);
+            const accepted = bv.enterBubble(childless.id);
+            await new Promise((r) => setTimeout(r, 300));
+            const said = [...document.querySelectorAll('.fractality-toast')].map((t) => t.textContent).join(' | ');
+            return { accepted, said, depth: bv.path.length };
+        });
+        if (leaf.accepted !== false || leaf.depth !== 0) {
+            fail(`[${vp.name}] entered a bubble with nothing in it`);
+        } else if (!/contains nothing/i.test(leaf.said)) {
+            fail(`[${vp.name}] refusing an empty bubble said: "${leaf.said}"`);
+        } else {
+            pass(`[${vp.name}] an empty bubble is refused, and says why`);
+        }
+
+        // Reachability, the lesson from the cone view's × being buried under the
+        // performance HUD for its whole existence.
+        const reach = await page.evaluate(() => {
+            const describe = (el) => {
+                if (!el) return 'nothing';
+                const cls = typeof el.className === 'string' && el.className.trim()
+                    ? '.' + el.className.trim().split(/\s+/).join('.') : '';
+                return `${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''}${cls}`;
+            };
+            window.bubbleView.path = [window.fractalityEngine().nodeGraph.getRootNodes()[0].id];
+            window.bubbleView._renderChrome();
+            return ['.bubble-close', '.bubble-up', '.bubble-crumb'].map((sel) => {
+                const el = document.querySelector(sel);
+                if (!el) return { sel, missing: true };
+                const r = el.getBoundingClientRect();
+                const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+                return { sel, covered: !(hit === el || el.contains(hit)), by: describe(hit) };
+            });
+        });
+        const buried = reach.filter((r) => r.missing || r.covered);
+        if (buried.length > 0) {
+            fail(`[${vp.name}] bubble controls that cannot be pressed: ` + buried
+                .map((r) => r.missing ? `${r.sel} missing` : `${r.sel} covered by ${r.by}`).join('; '));
+        } else {
+            pass(`[${vp.name}] every bubble control can actually be pressed`);
+        }
+
+        await ctx.close();
+    }
+
+    // Two full-screen views, one at a time. Opening the second on top of the first
+    // would leave the first running behind it with its dock entry lit.
+    const { ctx, page } = await openApp(VIEWPORTS[2]);
+    const exclusive = await page.evaluate(async () => {
+        window.coneView.show();
+        await new Promise((r) => setTimeout(r, 200));
+        const coneFirst = { cone: window.coneView.isOpen, bubble: window.bubbleView.isOpen };
+        window.bubbleView.show();
+        await new Promise((r) => setTimeout(r, 200));
+        const afterBubble = { cone: window.coneView.isOpen, bubble: window.bubbleView.isOpen };
+        window.coneView.show();
+        await new Promise((r) => setTimeout(r, 200));
+        const afterCone = { cone: window.coneView.isOpen, bubble: window.bubbleView.isOpen };
+        return { coneFirst, afterBubble, afterCone };
+    });
+    if (exclusive.afterBubble.cone || exclusive.afterCone.bubble) {
+        fail('both full-screen views can be open at once: '
+            + JSON.stringify(exclusive));
+    } else {
+        pass('opening one full-screen view closes the other');
+    }
+
+    // The five layouts are gone from the dock; the two views are what is offered.
+    const offered = await page.evaluate(async () => {
+        const more = [...document.querySelectorAll('.dock-button')].find((b) => /View/i.test(b.textContent));
+        more?.click();
+        await new Promise((r) => setTimeout(r, 400));
+        return [...document.querySelectorAll('.dock-sheet-row')].map((r) => r.textContent.trim());
+    });
+    const stale = offered.filter((row) => /Golden Spiral|Fibonacci|Fractal Tree|Cosmic Web|Family/i.test(row));
+    if (stale.length > 0) {
+        fail(`the View sheet still offers retired layouts: ${JSON.stringify(stale)}`);
+    } else if (!offered.some((r) => /Bubble/i.test(r)) || !offered.some((r) => /Cone/i.test(r))) {
+        fail(`the View sheet does not offer both views: ${JSON.stringify(offered)}`);
+    } else {
+        pass(`the View sheet offers exactly the two views (${offered.length} rows)`);
+    }
+
+    // And the performance HUD is no longer in anybody's face by default.
+    const hud = await page.evaluate(
+        () => Boolean(window.fractalityEngine()?.dashboard?.config?.visible));
+    if (hud) {
+        fail('the performance dashboard is still visible by default');
+    } else {
+        pass('the performance dashboard starts hidden, and is opt-in from More');
+    }
+
+    await ctx.close();
+}
+
 await browser.close();
 
 console.log('\n' + '='.repeat(62));
