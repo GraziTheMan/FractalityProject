@@ -49,6 +49,7 @@ from typing import Any, Dict, List, Optional
 
 from . import db
 from .models import (
+    Friend,
     Comment,
     MapNode,
     MindMap,
@@ -1329,11 +1330,23 @@ async def report_pulse(
     return int(rows[0].get("total") or 0)
 
 
+# Blocking ends the friendship and any pending request, in the same statement.
+#
+# Not left to the caller to do in the right order: blocking somebody and still
+# finding them in your friend list — or still owing them an answer to a request —
+# is the block failing at the one thing it is for. Doing it here means it cannot
+# be forgotten by a future call site.
 BLOCK_USER = """
 MATCH (me:User {subject: $subject})
 MATCH (them:User {id: $target_id})
 WHERE them.subject <> $subject
 MERGE (me)-[:BLOCKED]->(them)
+WITH me, them
+OPTIONAL MATCH (me)-[f:FRIENDS_WITH]-(them)
+DELETE f
+WITH me, them
+OPTIONAL MATCH (me)-[r:REQUESTED]-(them)
+DELETE r
 RETURN count(*) AS ok
 """
 
@@ -1351,6 +1364,11 @@ async def set_block(
 
     The `them.subject <> $subject` guard stops self-blocking, which would silently
     empty the blocker's own feed.
+
+    Blocking also ends any friendship and cancels any pending request in either
+    direction — see the Cypher. Unblocking deliberately does NOT restore them: a
+    friendship that comes back on its own is not something either person agreed to
+    twice.
     """
     rows = await db.run_write(
         settings,
@@ -1359,6 +1377,183 @@ async def set_block(
         target_id=target_id,
     )
     return bool(rows and rows[0].get("ok"))
+
+
+# --- friends -----------------------------------------------------------------
+#
+#   (:User)-[:REQUESTED {at}]->(:User)      one side has asked
+#   (:User)-[:FRIENDS_WITH {since}]->(:User)  agreed, stored ONE WAY
+#
+# Stored one way and matched both ways. The alternative — writing two
+# relationships — means every unfriend has to delete both, and the day one delete
+# succeeds and the other does not, the graph says two contradictory things about
+# the same pair. One row cannot disagree with itself.
+#
+# Blocking and friendship are the same question asked twice, so they are resolved
+# in the same place rather than left to whoever calls them in the right order.
+
+FRIEND_FIELDS = """
+    them.id AS id, them.username AS username,
+    coalesce(them.display_name, them.username, 'Someone') AS name,
+    them.avatar_url AS avatar
+"""
+
+
+SEND_FRIEND_REQUEST = """
+MATCH (me:User {subject: $subject}), (them:User {id: $target_id})
+WHERE me <> them
+  AND NOT EXISTS { MATCH (me)-[:BLOCKED]-(them) }
+  AND NOT EXISTS { MATCH (me)-[:FRIENDS_WITH]-(them) }
+MERGE (me)-[r:REQUESTED]->(them)
+ON CREATE SET r.at = $now
+RETURN them.id AS id
+"""
+
+# The other side had already asked, so asking back IS the answer.
+ACCEPT_IF_MUTUAL = """
+MATCH (me:User {subject: $subject})-[mine:REQUESTED]->(them:User {id: $target_id})
+MATCH (them)-[theirs:REQUESTED]->(me)
+DELETE mine, theirs
+MERGE (me)-[f:FRIENDS_WITH]->(them)
+ON CREATE SET f.since = $now
+RETURN them.id AS id
+"""
+
+
+async def send_friend_request(
+    settings: Settings, subject: str, target_id: str
+) -> str:
+    """Ask to be friends. Returns what happened: 'sent', 'friends', or 'refused'.
+
+    Asking somebody who has already asked you IS accepting them. Without that, two
+    people who both press the button reach a state where each is waiting for the
+    other, and neither has anything to accept.
+    """
+    now = now_ms()
+    rows = await db.run_write(
+        settings, SEND_FRIEND_REQUEST, subject=subject, target_id=target_id, now=now
+    )
+    if not rows:
+        # Blocked in either direction, already friends, or aimed at yourself. Not
+        # distinguished on purpose: telling someone "that person has blocked you"
+        # reveals the block, and a block should be quiet.
+        return "refused"
+
+    mutual = await db.run_write(
+        settings, ACCEPT_IF_MUTUAL, subject=subject, target_id=target_id, now=now
+    )
+    return "friends" if mutual else "sent"
+
+
+ACCEPT_FRIEND_REQUEST = """
+MATCH (them:User {id: $target_id})-[r:REQUESTED]->(me:User {subject: $subject})
+WHERE NOT EXISTS { MATCH (me)-[:BLOCKED]-(them) }
+DELETE r
+MERGE (me)-[f:FRIENDS_WITH]->(them)
+ON CREATE SET f.since = $now
+RETURN them.id AS id
+"""
+
+
+async def accept_friend_request(settings: Settings, subject: str, target_id: str) -> bool:
+    rows = await db.run_write(
+        settings, ACCEPT_FRIEND_REQUEST, subject=subject, target_id=target_id, now=now_ms()
+    )
+    return bool(rows)
+
+
+# Covers declining one aimed at you and withdrawing one you sent: both are
+# "this request should not exist", and the undirected match says so once.
+DROP_FRIEND_REQUEST = """
+MATCH (me:User {subject: $subject})-[r:REQUESTED]-(them:User {id: $target_id})
+DELETE r
+RETURN count(*) AS removed
+"""
+
+
+async def drop_friend_request(settings: Settings, subject: str, target_id: str) -> bool:
+    rows = await db.run_write(
+        settings, DROP_FRIEND_REQUEST, subject=subject, target_id=target_id
+    )
+    return bool(rows and rows[0]["removed"])
+
+
+# Undirected, because the relationship is stored one way and either party may end
+# it. A directed match would let one of them unfriend and the other not.
+UNFRIEND = """
+MATCH (me:User {subject: $subject})-[f:FRIENDS_WITH]-(them:User {id: $target_id})
+DELETE f
+RETURN count(*) AS removed
+"""
+
+
+async def unfriend(settings: Settings, subject: str, target_id: str) -> bool:
+    rows = await db.run_write(settings, UNFRIEND, subject=subject, target_id=target_id)
+    return bool(rows and rows[0]["removed"])
+
+
+LIST_FRIENDS = f"""
+MATCH (me:User {{subject: $subject}})-[f:FRIENDS_WITH]-(them:User)
+RETURN {FRIEND_FIELDS}, f.since AS since
+ORDER BY name
+"""
+
+LIST_INCOMING_REQUESTS = f"""
+MATCH (them:User)-[r:REQUESTED]->(me:User {{subject: $subject}})
+WHERE NOT EXISTS {{ MATCH (me)-[:BLOCKED]-(them) }}
+RETURN {FRIEND_FIELDS}, r.at AS since
+ORDER BY r.at DESC
+"""
+
+LIST_OUTGOING_REQUESTS = f"""
+MATCH (me:User {{subject: $subject}})-[r:REQUESTED]->(them:User)
+RETURN {FRIEND_FIELDS}, r.at AS since
+ORDER BY r.at DESC
+"""
+
+
+def _row_to_friend(row: Dict[str, Any]) -> Friend:
+    return Friend(
+        id=row["id"],
+        username=row.get("username"),
+        name=row.get("name") or "Someone",
+        avatar=row.get("avatar"),
+        since=int(row["since"]) if row.get("since") else None,
+    )
+
+
+async def list_friends(settings: Settings, subject: str) -> List[Friend]:
+    rows = await db.run_read(settings, LIST_FRIENDS, subject=subject)
+    return [_row_to_friend(row) for row in rows]
+
+
+async def list_friend_requests(settings: Settings, subject: str) -> Dict[str, List[Friend]]:
+    incoming = await db.run_read(settings, LIST_INCOMING_REQUESTS, subject=subject)
+    outgoing = await db.run_read(settings, LIST_OUTGOING_REQUESTS, subject=subject)
+    return {
+        "incoming": [_row_to_friend(row) for row in incoming],
+        "outgoing": [_row_to_friend(row) for row in outgoing],
+    }
+
+
+FIND_USER_BY_USERNAME = f"""
+MATCH (them:User)
+WHERE toLower(them.username) = toLower($username)
+RETURN {FRIEND_FIELDS}, null AS since
+LIMIT 1
+"""
+
+
+async def find_user_by_username(settings: Settings, username: str) -> Optional[Friend]:
+    """Look somebody up by handle, so there is a way to find them at all.
+
+    Case-insensitive, because a handle people type from memory is a handle people
+    mistype the case of. Exact match only: a prefix search over every user is a way
+    to enumerate the whole membership, which is not a thing a social app should
+    hand out for free.
+    """
+    rows = await db.run_read(settings, FIND_USER_BY_USERNAME, username=username)
+    return _row_to_friend(rows[0]) if rows else None
 
 
 LIST_BLOCKED = """

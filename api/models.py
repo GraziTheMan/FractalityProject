@@ -431,6 +431,35 @@ class CommentUpdate(BaseModel):
     )
 
 
+class Friend(BaseModel):
+    """Somebody you are connected to, or who has asked to be.
+
+    Deliberately thin: an id, a handle and a name. A friend list is a way to reach
+    people, not a place to render profiles, and carrying more here would mean every
+    list of fifty friends dragged fifty bios across the wire.
+    """
+
+    id: str
+    username: Optional[str] = None
+    name: str
+    avatar: Optional[str] = None
+
+    #: Epoch milliseconds. When the friendship began, or when the request was sent.
+    since: Optional[int] = None
+
+
+class FriendRequests(BaseModel):
+    """Both directions, because they mean different things.
+
+    Incoming is a decision waiting for you. Outgoing is a decision waiting for
+    someone else, and showing it stops people asking twice and wondering why
+    nothing happened.
+    """
+
+    incoming: List[Friend] = Field(default_factory=list)
+    outgoing: List[Friend] = Field(default_factory=list)
+
+
 class PulseMedia(BaseModel):
     kind: str = Field(default="link")
     url: str

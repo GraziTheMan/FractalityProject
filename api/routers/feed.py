@@ -35,6 +35,8 @@ from ..models import (
     Comment,
     CommentCreate,
     CommentUpdate,
+    Friend,
+    FriendRequests,
     ImpressionBatch,
     Pulse,
     PulseCreate,
@@ -148,6 +150,135 @@ async def create_pulse(
             detail="Could not create the pulse",
         )
     return pulse
+
+
+# Declared before the /{pulse_id} routes, and that ordering is load-bearing:
+# FastAPI matches in declaration order, so a /{pulse_id} route declared first
+# swallows GET /pulses/friends as a request for a pulse whose id is "friends".
+# It answered 404 or 503 rather than erroring, which is exactly why it went
+# unnoticed until a test asked a signed-out visitor for a friend list.
+# --- friends -----------------------------------------------------------------
+#
+# Free-tier work, all of it: request and answer are ordinary request/response.
+# Messaging is the part that eventually wants a socket, and nothing here presumes
+# one.
+
+
+@router.get("/friends", response_model=List[Friend])
+async def list_friends(
+    principal: Principal = Depends(current_user),
+    settings: Settings = Depends(get_settings),
+):
+    _require_db(settings)
+    return await repo.list_friends(settings, principal.subject)
+
+
+@router.get("/friends/requests", response_model=FriendRequests)
+async def list_friend_requests(
+    principal: Principal = Depends(current_user),
+    settings: Settings = Depends(get_settings),
+):
+    """Both directions.
+
+    Incoming is a decision waiting for you; outgoing is one waiting for somebody
+    else. Showing the second stops people asking twice and wondering why nothing
+    happened.
+    """
+    _require_db(settings)
+    both = await repo.list_friend_requests(settings, principal.subject)
+    return FriendRequests(**both)
+
+
+@router.get("/friends/lookup/{username}", response_model=Friend)
+async def lookup_user(
+    username: str,
+    principal: Principal = Depends(current_user),
+    settings: Settings = Depends(get_settings),
+):
+    """Find somebody by handle, so there is a way to reach them at all.
+
+    Exact match, case-insensitive. Deliberately not a prefix search: that is a way
+    to enumerate the whole membership, which is not something to hand out. Requires
+    signing in for the same reason.
+    """
+    _require_db(settings)
+    found = await repo.find_user_by_username(settings, username)
+    if found is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such username")
+    return found
+
+
+@router.post("/friends/{user_id}", status_code=status.HTTP_202_ACCEPTED)
+async def request_friend(
+    user_id: str,
+    principal: Principal = Depends(current_user),
+    settings: Settings = Depends(get_settings),
+):
+    """Ask to be friends.
+
+    Asking somebody who has already asked you IS accepting them — otherwise two
+    people who both press the button each end up waiting for the other, with
+    nothing to accept.
+
+    A refusal says only "refused". Whether the reason is a block in either
+    direction, an existing friendship, or aiming at yourself is not distinguished:
+    reporting "they have blocked you" would announce the block, and a block should
+    be quiet.
+    """
+    _require_db(settings)
+    await repo.upsert_user(settings, principal.subject, principal.username, principal.email)
+
+    outcome = await repo.send_friend_request(settings, principal.subject, user_id)
+    if outcome == "refused":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="That request could not be sent",
+        )
+    return {"status": outcome}
+
+
+@router.post("/friends/{user_id}/accept", status_code=status.HTTP_200_OK)
+async def accept_friend(
+    user_id: str,
+    principal: Principal = Depends(current_user),
+    settings: Settings = Depends(get_settings),
+):
+    _require_db(settings)
+    if not await repo.accept_friend_request(settings, principal.subject, user_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No request from that person",
+        )
+    return {"status": "friends"}
+
+
+@router.delete("/friends/requests/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def drop_request(
+    user_id: str,
+    principal: Principal = Depends(current_user),
+    settings: Settings = Depends(get_settings),
+):
+    """Decline one aimed at you, or withdraw one you sent.
+
+    One endpoint, because both mean "this request should not exist" and the
+    underlying match is undirected. Two endpoints would be two names for one act.
+    """
+    _require_db(settings)
+    if not await repo.drop_friend_request(settings, principal.subject, user_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such request")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete("/friends/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_friend(
+    user_id: str,
+    principal: Principal = Depends(current_user),
+    settings: Settings = Depends(get_settings),
+):
+    _require_db(settings)
+    if not await repo.unfriend(settings, principal.subject, user_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not friends")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/{pulse_id}", response_model=Pulse)
