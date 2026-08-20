@@ -223,6 +223,58 @@ def test_edits_are_validated_like_creations(client):
     assert client.state["pulse_updates"] == []
 
 
+def test_editing_a_post_that_has_a_link(client):
+    """The edit that 500ed in production.
+
+    model_dump() RECURSES, so `media` arrived as a plain dict and calling
+    model_dump_json() on it raised AttributeError. media=None took the other
+    branch and worked fine, so the failure only appeared on posts that actually
+    had a link — which made it look intermittent rather than broken.
+
+    None of the edit tests above sent one. Every existing case here changes a
+    title, a body or tags; nothing carried nested media, so the whole branch was
+    unexercised.
+
+    It also reached the user as a CORS error rather than a 500, because an
+    unhandled exception bypasses the CORS middleware. Two faults stacked: one that
+    broke editing, and one that misdescribed it.
+    """
+    client.state["principal"] = ME
+    response = client.patch(
+        f"/pulses/{PULSE_ID}",
+        json={
+            "title": "Edited",
+            "media": {"kind": "link", "url": "https://www.fractiverse.com/?map=abc"},
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    changes = client.state["pulse_updates"][-1]
+    # Serialised on the way to the database, not handed over as a model.
+    assert isinstance(changes["media_json"], str)
+    assert "fractiverse.com" in changes["media_json"]
+
+
+def test_clearing_a_link_by_editing(client):
+    """null means remove it, and must stay distinct from omitting the field."""
+    client.state["principal"] = ME
+    response = client.patch(f"/pulses/{PULSE_ID}", json={"title": "No link", "media": None})
+    assert response.status_code == 200, response.text
+
+    changes = client.state["pulse_updates"][-1]
+    assert "media" in changes
+    assert changes["media_json"] is None
+
+
+def test_editing_without_mentioning_media_leaves_it_alone(client):
+    client.state["principal"] = ME
+    response = client.patch(f"/pulses/{PULSE_ID}", json={"title": "Just the title"})
+    assert response.status_code == 200, response.text
+
+    changes = client.state["pulse_updates"][-1]
+    assert "media_json" not in changes
+
+
 def test_editing_normalises_tags(client):
     client.state["principal"] = ME
     client.patch(f"/pulses/{PULSE_ID}", json={"tags": ["#Fractal", "fractal", "Math"]})

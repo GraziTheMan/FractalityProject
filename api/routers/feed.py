@@ -214,9 +214,19 @@ async def update_pulse(
 
     changes = dict(fields)
     if "media" in changes:
-        media = changes.pop("media")
-        changes["media"] = media
-        changes["media_json"] = media.model_dump_json() if media else None
+        # payload.media, not fields["media"].
+        #
+        # model_dump() RECURSES: a nested model comes back as a plain dict, so
+        # calling model_dump_json() on it raised AttributeError and the whole edit
+        # became a 500. It only happened when the post actually had a link —
+        # media=None took the `else None` branch and worked — which made it look
+        # intermittent rather than broken.
+        #
+        # payload keeps the parsed model, so this serialises the thing that knows
+        # how, and the None case is unchanged.
+        changes["media_json"] = (
+            payload.media.model_dump_json() if payload.media else None
+        )
 
     if not await repo.update_pulse(settings, principal.subject, pulse_id, changes):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pulse not found")
