@@ -27,7 +27,7 @@ import { ECS } from './ecs/ECS.js';
 import { PositionComponent, RenderableComponent, KnowledgeComponent, InputComponent } from './ecs/components.js';
 import { RenderSystem } from './ecs/systems/RenderSystem.js';
 import { InputSystem } from './ecs/systems/InputSystem.js';
-import { registerServiceWorker, isInstalled } from './pwa.js';
+import { registerServiceWorker, isInstalled, refreshApp, isUpdateWaiting } from './pwa.js';
 
 // Initialize state indicator
 document.getElementById('state-indicator').innerText = 'State: Balanced';
@@ -456,6 +456,25 @@ function buildDockItems() {
               : 'Open the 3D view first',
           isActive: () => Boolean(nodeDebugPanel?.isVisible),
           onSelect: () => nodeDebugPanel.toggle()
+        },
+        {
+          id: 'refresh',
+          icon: '\u{1f504}',
+          label: 'Refresh',
+          // The description changes, because "Refresh" and "there is a new version
+          // sitting there waiting for you" are different pieces of news.
+          description: isUpdateWaiting()
+            ? 'A new version is ready — load it now'
+            : 'Reload the app, and pick up a new version if there is one',
+          // Never unavailable. An installed app has no address bar and no
+          // pull-to-refresh, so this is the ONLY way back to a working state if
+          // anything is wedged — which is exactly when a greyed-out button is
+          // least forgivable.
+          onSelect: () => {
+            showNotification(
+              isUpdateWaiting() ? 'Loading the new version…' : 'Refreshing…');
+            refreshApp();
+          }
         },
         {
           id: 'nodeinfo',

@@ -43,7 +43,11 @@
  *     BROWSER_CHECK_ONLY=cone,dock npm run browser-check
  */
 
-const URL = process.env.BROWSER_CHECK_URL || 'http://localhost:4173/';
+// APP_URL, not URL. A module-level `const URL` shadows the global URL constructor
+// for the whole file, so `new URL(...)` anywhere below dies with "URL is not a
+// constructor" — which is what happened the first time a section needed to resolve
+// a path. Shadowing a global builtin costs nothing until it costs an hour.
+const APP_URL = process.env.BROWSER_CHECK_URL || 'http://localhost:4173/';
 
 let chromium;
 try {
@@ -102,7 +106,7 @@ async function openApp(viewport) {
     const page = await ctx.newPage();
     const errors = [];
     page.on('pageerror', (e) => errors.push(String(e)));
-    await page.goto(URL, { waitUntil: 'networkidle' });
+    await page.goto(APP_URL, { waitUntil: 'networkidle' });
     // main.js opens the 'bubble' view on DOMContentLoaded, which is what boots
     // the engine. Wait for it rather than clicking anything.
     await page.waitForFunction(() => Boolean(window.fractalityEngine?.()), { timeout: 15000 })
@@ -1559,7 +1563,7 @@ if (run_feed) {
     });
 
     const second = await ctx.newPage();
-    await second.goto(URL, { waitUntil: 'networkidle' });
+    await second.goto(APP_URL, { waitUntil: 'networkidle' });
     await second.waitForTimeout(1500);
     const remembered = await second.evaluate(async () => {
         window.feedPanel.show();
@@ -1752,7 +1756,7 @@ if (run_export_import) {
     page.on('request', (r) => {
         if (r.url().endsWith('.js')) jsRequests.push(r.url().split('/').pop());
     });
-    await page.goto(URL, { waitUntil: 'networkidle' });
+    await page.goto(APP_URL, { waitUntil: 'networkidle' });
     await page.waitForFunction(() => Boolean(window.fractalityEngine?.()), { timeout: 15000 })
         .catch(() => {});
     await page.waitForTimeout(2000);
@@ -1921,7 +1925,7 @@ const run_identity = section('identity and overlays');
 if (run_identity) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const page = await ctx.newPage();
-    await page.goto(URL, { waitUntil: 'networkidle' });
+    await page.goto(APP_URL, { waitUntil: 'networkidle' });
     await page.waitForFunction(() => Boolean(window.fractalityEngine?.()), { timeout: 15000 })
         .catch(() => {});
     await page.waitForTimeout(2000);
@@ -3388,6 +3392,109 @@ if (run_installable) {
     }
 
     await ctx.close();
+}
+
+// --- applying an update ----------------------------------------------------
+//
+// The only way to refresh an installed app, and the mechanism behind it was dead:
+// public/sw.js waits for a 'skip-waiting' message and NOTHING sent one. A new
+// build would install, sit in `waiting` forever, and the notification advising a
+// reload was wrong — a reload comes back under the same worker.
+//
+// The trap this section exists to avoid: the broken version STILL RELOADS. An
+// assertion that Refresh reloads the page passes it. The only thing that separates
+// working from broken is whether the waiting worker took over afterwards.
+
+const run_update = section('applying an update');
+
+if (run_update) {
+    const fs = await import('node:fs');
+    const SW_PATH = `${import.meta.dirname}/../dist/sw.js`;
+
+    let original = null;
+    try {
+        original = fs.readFileSync(SW_PATH, 'utf8');
+    } catch {
+        fail('dist/sw.js is missing — run `npm run build` before the browser checks');
+    }
+
+    if (original) {
+        const { ctx, page } = await openApp(VIEWPORTS[0]);   // phone: no address bar there
+        try {
+            const controlling = await page.evaluate(async () => {
+                if (!('serviceWorker' in navigator)) return { unsupported: true };
+                await navigator.serviceWorker.ready;
+                for (let i = 0; i < 40 && !navigator.serviceWorker.controller; i++) {
+                    await new Promise((r) => setTimeout(r, 200));
+                }
+                return { controlled: Boolean(navigator.serviceWorker.controller) };
+            });
+
+            if (controlling.unsupported) {
+                fail('this browser has no service worker support, so nothing here was checked');
+            } else if (!controlling.controlled) {
+                fail('the service worker never took control, so no update can be staged');
+            } else {
+                pass('the service worker is installed and controlling the page');
+
+                // Ship a "new version" by changing the file the browser will re-fetch.
+                fs.writeFileSync(SW_PATH,
+                    original.replace("const VERSION = 'v1'", "const VERSION = 'v-check'"));
+
+                const staged = await page.evaluate(async () => {
+                    const registration = await navigator.serviceWorker.getRegistration();
+                    await registration.update();
+                    for (let i = 0; i < 40 && !registration.waiting; i++) {
+                        await new Promise((r) => setTimeout(r, 200));
+                    }
+                    return Boolean(registration.waiting);
+                });
+
+                if (!staged) {
+                    fail('a changed sw.js did not produce a waiting worker, so the update '
+                        + 'path could not be exercised');
+                } else {
+                    pass('a new build installs and waits rather than swapping under the page');
+
+                    const navigated = page.waitForNavigation({ timeout: 10000 })
+                        .then(() => true).catch(() => false);
+                    await page.evaluate(async () => {
+                        const open = [...document.querySelectorAll('.dock-sheet-row')];
+                        const row = open.find((r) => /Refresh/i.test(r.textContent));
+                        if (row) { row.click(); return; }
+                        [...document.querySelectorAll('.dock-button')]
+                            .find((b) => /More/i.test(b.textContent))?.click();
+                        await new Promise((r) => setTimeout(r, 400));
+                        [...document.querySelectorAll('.dock-sheet-row')]
+                            .find((r) => /Refresh/i.test(r.textContent))?.click();
+                    });
+                    const reloaded = await navigated;
+
+                    const after = await page.evaluate(async () => {
+                        await new Promise((r) => setTimeout(r, 900));
+                        const registration = await navigator.serviceWorker.getRegistration();
+                        return { stillWaiting: Boolean(registration?.waiting) };
+                    });
+
+                    if (!reloaded) {
+                        fail('pressing Refresh did not reload the app');
+                    } else if (after.stillWaiting) {
+                        // THE assertion. Removing the postMessage leaves this true while
+                        // the reload above still succeeds, which is the original bug
+                        // exactly: refreshed, and still running the old build.
+                        fail('Refresh reloaded but the new build is STILL waiting — the '
+                            + 'update was not applied');
+                    } else {
+                        pass('Refresh applies a waiting update, not just a reload');
+                    }
+                }
+            }
+        } finally {
+            // Restore before anything else can read it, including a later section.
+            fs.writeFileSync(SW_PATH, original);
+            await ctx.close();
+        }
+    }
 }
 
 // --- cone labels -----------------------------------------------------------
