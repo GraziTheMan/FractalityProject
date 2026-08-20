@@ -730,42 +730,67 @@ if (run_dock_entries) {
         pass('no entry is unavailable once the engine has booted');
     }
 
-    // Each layout row must actually change the engine's layout — the specific
-    // failure being guarded against is a menu entry that only narrates itself.
-    const layoutIds = inventory.filter((e) => e.id?.startsWith('layout-')).map((e) => e.id);
-    if (layoutIds.length < 2) fail(`expected several layout options, found ${layoutIds.length}`);
-    else {
-        const results = [];
-        for (const rowId of layoutIds) {
-            const wanted = rowId.replace('layout-', '');
-            await page.click('#app-dock [data-dock-id="view"]');
-            await page.waitForTimeout(200);
-            await page.click(`.dock-sheet-row[data-dock-id="${rowId}"]`);
-            await page.waitForTimeout(300);
-            const actual = await page.evaluate(() => window.fractalityEngine().getLayout());
-            results.push({ wanted, actual });
-        }
-        const wrong = results.filter((r) => r.wanted !== r.actual);
-        if (wrong.length) {
-            fail(`layout rows that did not take effect: ${wrong.map((r) => `${r.wanted} -> ${r.actual}`).join(', ')}`);
-        } else {
-            pass(`all ${results.length} layout options change the engine's layout`);
-        }
+    // Each view row must actually open its view — the failure being guarded
+    // against is a menu entry that only narrates itself.
+    //
+    // This used to walk the five layout rows (family, goldenSpiral,
+    // fibonacciSphere, fractalTree, cosmicWeb) and assert each changed
+    // engine.getLayout(). Those rows are deliberately gone, so the check follows
+    // the guard rather than the subject: two views now, and pressing a row has to
+    // open the view it names. Deleting the check instead would have retired a
+    // guard because its target moved.
+    const viewRows = [
+        { row: 'bubble', open: () => window.bubbleView.isOpen },
+        { row: 'cone', open: () => window.coneView.isOpen },
+    ];
+    const opened = [];
+    for (const { row } of viewRows) {
+        await page.click('#app-dock [data-dock-id="view"]');
+        await page.waitForTimeout(200);
+        await page.click(`.dock-sheet-row[data-dock-id="${row}"]`);
+        await page.waitForTimeout(350);
+        const state = await page.evaluate(() => ({
+            bubble: window.bubbleView.isOpen,
+            cone: window.coneView.isOpen,
+        }));
+        opened.push({ row, state });
+        // Close it again so the next row starts from nothing open.
+        await page.evaluate(() => { window.bubbleView.hide(); window.coneView.hide(); });
+        await page.waitForTimeout(200);
     }
 
-    // The active row has to reflect the current layout, or the menu is lying
+    const inert = opened.filter(({ row, state }) =>
+        (row === 'bubble' && !state.bubble) || (row === 'cone' && !state.cone));
+    const bled = opened.filter(({ row, state }) =>
+        (row === 'bubble' && state.cone) || (row === 'cone' && state.bubble));
+
+    if (inert.length > 0) {
+        fail(`view rows that did not open their view: ${inert.map((o) => o.row).join(', ')}`);
+    } else if (bled.length > 0) {
+        fail(`view rows that opened the wrong view too: ${bled.map((o) => o.row).join(', ')}`);
+    } else {
+        pass(`both view rows open exactly the view they name`);
+    }
+
+    // The active row has to reflect what is actually open, or the menu is lying
     // about state even while the action works.
+    await page.evaluate(() => { window.coneView.hide(); window.bubbleView.show(); });
+    await page.waitForTimeout(250);
     await page.click('#app-dock [data-dock-id="view"]');
     await page.waitForTimeout(250);
     const activeRows = await page.evaluate(() => ({
         active: [...document.querySelectorAll('.dock-sheet-row.active')].map((r) => r.dataset.dockId),
-        engine: window.fractalityEngine().getLayout(),
+        bubble: window.bubbleView.isOpen,
+        cone: window.coneView.isOpen,
     }));
-    if (activeRows.active.length !== 1 || activeRows.active[0] !== `layout-${activeRows.engine}`) {
-        fail(`the active row (${activeRows.active.join(',') || 'none'}) does not match the engine (${activeRows.engine})`);
+    if (activeRows.active.length !== 1 || activeRows.active[0] !== 'bubble') {
+        fail(`with the bubble view open the active row is (${activeRows.active.join(',') || 'none'}) `
+            + `— bubble:${activeRows.bubble} cone:${activeRows.cone}`);
     } else {
-        pass('the active row matches the engine\'s current layout');
+        pass('the active row is the view that is actually open');
     }
+    await page.evaluate(() => window.bubbleView.hide());
+    await page.waitForTimeout(200);
 
     // A sheet must close on an outside tap, or it sits over the map absorbing
     // the taps meant for it.
