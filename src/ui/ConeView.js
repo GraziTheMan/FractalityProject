@@ -138,6 +138,15 @@ export class ConeView {
         this._frame = null;
         this._drag = null;
 
+        // Label every node, or only the tier being read.
+        //
+        // Off is the default and stays the default: 25 names at once is a wall of
+        // text over the geometry, and the geometry is the point. But "I want to see
+        // the whole shape at once" is a real thing to want, so it is a choice rather
+        // than a rule — and it survives a reload, because a view preference someone
+        // has to re-set every visit is not really a preference.
+        this.showAllLabels = ConeView._readLabelPreference();
+
         // Bound once so they can be removed in destroy(). An anonymous resize
         // handler per instance is a leak, and this component can outlive a view.
         this._onResize = () => this._resize();
@@ -157,6 +166,8 @@ export class ConeView {
                 <span class="cone-tier-label"></span>
                 <span class="cone-hint">drag sideways to spin · up and down to change tier</span>
             </div>
+            <button class="cone-labels" type="button" aria-pressed="false"
+                title="Show every node's name">Labels</button>
             <button class="cone-close" type="button" title="Close the cone view">×</button>
         `;
         document.body.appendChild(this.container);
@@ -165,6 +176,12 @@ export class ConeView {
         this.ctx = this.canvas.getContext('2d');
         this.tierLabel = this.container.querySelector('.cone-tier-label');
         this.breadcrumbEl = this.container.querySelector('.cone-breadcrumb');
+
+        this.labelsButton = this.container.querySelector('.cone-labels');
+        this.labelsButton.addEventListener('click', () => {
+            this.setShowAllLabels(!this.showAllLabels);
+        });
+        this._syncLabelsButton();
 
         this.container.querySelector('.cone-close')
             .addEventListener('click', () => {
@@ -747,8 +764,8 @@ export class ConeView {
             // Labels are collected, not painted yet: they have to be placed
             // against each other, and painting as we go means the last one wins
             // every overlap.
-            if (onTier || isFocused) {
-                labelCandidates.push({ point, radius, near, isFocused });
+            if (this.showAllLabels || onTier || isFocused) {
+                labelCandidates.push({ point, radius, near, isFocused, onTier });
             }
         }
 
@@ -797,6 +814,44 @@ export class ConeView {
         this.tierLabel.textContent = parts.join('  ·  ');
     }
 
+    // --- label visibility ---------------------------------------------------
+
+    static LABEL_PREF_KEY = 'fractality.cone.showAllLabels';
+
+    /**
+     * localStorage can throw — Safari's private mode, a storage quota, a blocked
+     * third-party context — and a preference is never worth failing a render for.
+     */
+    static _readLabelPreference() {
+        try {
+            return globalThis.localStorage?.getItem(ConeView.LABEL_PREF_KEY) === 'true';
+        } catch {
+            return false;
+        }
+    }
+
+    /** Show every node's name, or only the read tier's and the selection's. */
+    setShowAllLabels(on) {
+        this.showAllLabels = Boolean(on);
+        try {
+            globalThis.localStorage?.setItem(
+                ConeView.LABEL_PREF_KEY, String(this.showAllLabels));
+        } catch {
+            /* preference not persisted; the session still honours it */
+        }
+        this._syncLabelsButton();
+        // No explicit redraw: the cone repaints from the graph every frame.
+    }
+
+    _syncLabelsButton() {
+        if (!this.labelsButton) return;
+        this.labelsButton.setAttribute('aria-pressed', String(this.showAllLabels));
+        this.labelsButton.classList.toggle('active', this.showAllLabels);
+        this.labelsButton.title = this.showAllLabels
+            ? 'Show only the read tier and the selection'
+            : "Show every node's name";
+    }
+
     /**
      * Paint labels, skipping any that would collide with one already placed.
      *
@@ -810,18 +865,29 @@ export class ConeView {
      * neighbour.
      */
     _paintLabels(ctx, candidates) {
-        ctx.font = '11px system-ui, sans-serif';
+        const TIER_FONT = 'bold 11px system-ui, sans-serif';
+        const OFF_TIER_FONT = '11px system-ui, sans-serif';
         ctx.textAlign = 'center';
 
         const ordered = [...candidates].sort((a, b) => {
             if (a.isFocused !== b.isFocused) return a.isFocused ? -1 : 1;
+            // The read tier outranks everything else. With every label showing,
+            // an off-tier name in front could otherwise win a collision against
+            // the tier the user is actually reading, which is backwards: the
+            // labels that get dropped should be the ones they did not ask for.
+            if (a.onTier !== b.onTier) return a.onTier ? -1 : 1;
             // Then nearest-first: a node at the front of the cone is the one the
             // user is looking at.
             return b.near - a.near;
         });
 
         const placed = [];
-        for (const { point, radius, near, isFocused } of ordered) {
+        for (const { point, radius, near, isFocused, onTier } of ordered) {
+            // Set the font BEFORE measuring. Bold text is wider, so measuring in
+            // one face and painting in another under-reports the box and lets the
+            // read tier's names overlap exactly where they matter most.
+            ctx.font = onTier ? TIER_FONT : OFF_TIER_FONT;
+
             const text = this._truncate(point.node.metadata.label || point.node.id, 20);
             const width = ctx.measureText(text).width;
             const x = point.x;
@@ -833,9 +899,14 @@ export class ConeView {
                 && box.top < other.bottom && other.top < box.bottom);
             if (collides && !isFocused) continue;
 
+            // Off-tier names are dimmer than they were, and only exist at all when
+            // every label is on. They are context for the tier being read, so they
+            // should not compete with it.
             ctx.fillStyle = isFocused
                 ? 'rgba(0,255,255,0.95)'
-                : `rgba(255,255,255,${0.4 + near * 0.55})`;
+                : onTier
+                    ? `rgba(255,255,255,${0.55 + near * 0.45})`
+                    : `rgba(190,205,215,${0.2 + near * 0.35})`;
             ctx.fillText(text, x, y);
             placed.push(box);
         }
@@ -1086,9 +1157,35 @@ export class ConeView {
             }
             .cone-close:hover { border-color: #0ff; }
 
+            /* Left of the close button, so the destructive-feeling one stays in
+               the corner where it has always been. */
+            .cone-labels {
+                position: absolute;
+                top: 10px;
+                right: 58px;
+                min-height: 40px;
+                padding: 0 12px;
+                background: rgba(0,0,0,0.7);
+                border: 1px solid #333;
+                border-radius: 8px;
+                color: #9fb;
+                font-size: 12px;
+                line-height: 1;
+                cursor: pointer;
+            }
+            .cone-labels:hover { border-color: #0ff; }
+            .cone-labels.active {
+                border-color: #0ff;
+                color: #0ff;
+                background: rgba(0,60,60,0.7);
+            }
+
             @media (max-width: 720px), (max-height: 500px) {
                 .cone-readout { top: 10px; left: 10px; }
                 .cone-hint { font-size: 10px; }
+                /* Under the close button rather than beside it: at 320px wide the
+                   two side by side crowd out the tier readout. */
+                .cone-labels { top: 58px; right: 10px; }
             }
         `;
         document.head.appendChild(style);

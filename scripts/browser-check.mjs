@@ -3339,6 +3339,203 @@ if (run_installable) {
     await ctx.close();
 }
 
+// --- cone labels -----------------------------------------------------------
+//
+// The default is "the read tier plus the selection", which is what shipped. The
+// toggle adds "every node", and the read tier is emphasised so it still stands
+// out once everything is named.
+//
+// Measured from the canvas rather than from the flag: the flag being true says
+// nothing about whether a name was actually painted, and the interesting bugs
+// here are all about paint order and collision.
+
+const run_cone_labels = section('cone labels');
+
+if (run_cone_labels) {
+    const { ctx, page } = await openApp(VIEWPORTS[2]);   // desktop
+
+    // Count painted labels by instrumenting fillText on the cone's own context.
+    // Reading pixels would tell us something was drawn but not what, and the
+    // collision rule means the count is the whole question.
+    const install = async () => page.evaluate(() => {
+        const cone = window.coneView;
+        const c = cone.ctx;
+        window.__labels = [];
+        if (!c.__patched) {
+            const original = c.fillText.bind(c);
+            c.fillText = (text, x, y) => {
+                window.__labels.push({ text, x, y, font: c.font, fill: c.fillStyle });
+                return original(text, x, y);
+            };
+            c.__patched = true;
+        }
+    });
+
+    // Deduplicated BY NAME, not counted raw. The cone repaints continuously, so a
+    // sample spanning two frames sees every label twice — which first reported "12
+    // of 36 nodes named" for six names. Every node is painted at most once per
+    // frame, so collapsing on the name gives the count the assertions actually mean.
+    const sample = async () => page.evaluate(async () => {
+        window.__labels = [];
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+        const byName = new Map();
+        for (const label of window.__labels) byName.set(label.text, label);
+
+        // getFocusedNode(), not a .focusedId property — there isn't one, and reading
+        // a missing field would quietly make `focused` null and turn the assertion
+        // below into "no strays" for every input.
+        const focusedId = window.coneView.getFocusedNode();
+        const focused = focusedId
+            ? (window.fractalityEngine().nodeGraph.getNode(focusedId)?.metadata?.label ?? null)
+            : null;
+
+        const all = [...byName.values()];
+        return {
+            focused,
+            names: all.map((l) => l.text),
+            bold: all.filter((l) => /bold/.test(l.font)).map((l) => l.text),
+            plain: all.filter((l) => !/bold/.test(l.font)).map((l) => l.text),
+        };
+    });
+
+    await page.evaluate(async () => {
+        window.coneView.show();
+        // Tier 3, not tier 2, and the difference is the whole check.
+        //
+        // Measured across every tier and viewport: tier 2 on a desktop is the one
+        // row that never loses a label at any rotation, so a check placed there
+        // cannot see the collision rules work and passed a mutation that deleted
+        // one. Tier 3 is where removing the read tier's collision priority is
+        // observable — it drops from 5 surviving names to 4.
+        //
+        // tierFocus is the field the drag gesture writes, so setting it directly is
+        // the same path the user takes. An optional-call helper that does not exist
+        // would no-op silently and leave this measuring the apex — one node — while
+        // still reporting a pass.
+        window.coneView.setShowAllLabels(false);
+        window.coneView.tierFocus = 3;
+        await new Promise((r) => setTimeout(r, 400));
+    });
+
+    const onTierCount = await page.evaluate(() => {
+        const g = window.fractalityEngine().nodeGraph;
+        return [...g.nodes.values()].filter((n) => n.depth === 3).length;
+    });
+    if (onTierCount < 6) {
+        fail(`tier 3 holds only ${onTierCount} node(s); this section needs a CROWDED `
+            + 'tier, or the collision rules never fire and nothing here is tested');
+    } else {
+        pass(`measuring against a crowded tier (${onTierCount} nodes on tier 3)`);
+    }
+    await install();
+
+    const off = await sample();
+    const total = await page.evaluate(() => window.fractalityEngine().nodeGraph.nodes.size);
+
+    if (off.names.length === 0) {
+        fail('no labels were painted at all, so this section is measuring nothing');
+    } else if (off.names.length >= total) {
+        fail(`labels off still named ${off.names.length} of ${total} nodes`);
+    } else {
+        pass(`by default only some nodes are named (${off.names.length} of ${total})`);
+    }
+
+    // Everything painted by default is either ON the read tier or IS the selection.
+    // The selection is legitimately not bold — it is marked by colour, and it can
+    // sit on any tier — so it is excluded rather than counted as a failure. The
+    // first version of this check asserted "all bold" and failed on the selected
+    // root, which was the check being wrong about the design, not a bug.
+    const strayPlain = off.plain.filter((name) => name !== off.focused);
+    if (!off.focused) {
+        fail('nothing is selected, so this cannot distinguish the selection from a stray');
+    } else if (strayPlain.length > 0) {
+        fail(`labels off painted ${strayPlain.length} name(s) that are neither the read `
+            + `tier nor the selection: ${JSON.stringify(strayPlain.slice(0, 4))}`);
+    } else {
+        pass(`the read tier is drawn bold, the selection apart from it ("${off.focused}")`);
+    }
+
+    await page.evaluate(() => window.coneView.setShowAllLabels(true));
+    const on = await sample();
+
+    if (on.names.length <= off.names.length) {
+        fail(`turning labels on did not add any (${off.names.length} -> ${on.names.length})`);
+    } else {
+        pass(`turning labels on names more nodes (${off.names.length} -> ${on.names.length})`);
+    }
+
+    // The point of the emphasis: with everything named, the read tier is still
+    // separable from its context.
+    if (on.bold.length === 0) {
+        fail('with every label on, nothing is emphasised as the read tier');
+    } else if (on.plain.length === 0) {
+        fail('with every label on, everything is emphasised, so nothing is');
+    } else {
+        pass(`the read tier stays distinct (${on.bold.length} bold, ${on.plain.length} plain)`);
+    }
+
+    // The invariant: adding off-tier names must never REDUCE how many read-tier
+    // names survive. That is what the sort's onTier rank buys.
+    //
+    // Measured over a rotation sweep, not at one angle. At a single angle the five
+    // tier-2 names happen not to collide with anything, so removing the priority
+    // rule entirely changed nothing and the first version of this check passed a
+    // mutation. Contention is a function of rotation: sweeping finds the angles
+    // where names actually compete, and summing over them makes the number stable
+    // instead of depending on where the cone happened to stop.
+    // The WORST angle over a sweep, not the sum. Contention depends on rotation, so
+    // a single angle proves nothing — but a sum hides a loss at one angle, and the
+    // loss is exactly what this is looking for.
+    const sweep = async (showAll) => {
+        await page.evaluate((on) => window.coneView.setShowAllLabels(on), showAll);
+        const perAngle = [];
+        for (let i = 0; i < 24; i++) {
+            await page.evaluate((spin) => { window.coneView.spin = spin; },
+                (i * Math.PI * 2) / 24);
+            perAngle.push((await sample()).bold.length);
+        }
+        return { worst: Math.min(...perAngle), perAngle };
+    };
+
+    const tierAlone = await sweep(false);
+    const tierWithContext = await sweep(true);
+
+    if (tierAlone.worst === 0) {
+        fail('no read-tier names survived at some angle even with nothing else drawn');
+    } else if (tierWithContext.worst < tierAlone.worst) {
+        fail(`adding off-tier names cost the read tier its own: worst angle went `
+            + `${tierAlone.worst} -> ${tierWithContext.worst} of ${onTierCount}; `
+            + `per angle ${JSON.stringify(tierWithContext.perAngle)}`);
+    } else {
+        pass(`off-tier names never evict a read-tier one (worst angle keeps `
+            + `${tierWithContext.worst} of ${onTierCount}, either way)`);
+    }
+
+    // The button reflects it, and the preference survives a reload.
+    const button = await page.evaluate(() => {
+        const b = document.querySelector('.cone-labels');
+        return b ? { pressed: b.getAttribute('aria-pressed'), active: b.classList.contains('active') } : null;
+    });
+    if (!button) {
+        fail('there is no labels button in the cone view');
+    } else if (button.pressed !== 'true' || !button.active) {
+        fail(`the labels button does not show its state: ${JSON.stringify(button)}`);
+    } else {
+        pass('the button shows that every label is on');
+    }
+
+    const persisted = await page.evaluate(
+        () => localStorage.getItem('fractality.cone.showAllLabels'));
+    if (persisted !== 'true') {
+        fail(`the preference was not stored (got ${JSON.stringify(persisted)})`);
+    } else {
+        pass('the choice is remembered for the next visit');
+    }
+
+    await ctx.close();
+}
+
 await browser.close();
 
 console.log('\n' + '='.repeat(62));

@@ -93,8 +93,49 @@ export async function loadAuth() {
     return loading;
 }
 
+/**
+ * A signature of everything a listener can observe through getAuthState().
+ *
+ * Deliberately built from the returned shape rather than from Clerk's objects, so
+ * it cannot drift from what getAuthState() actually exposes: if a field is added
+ * there and not here, the change is invisible to subscribers anyway.
+ */
+export function stateSignature(state) {
+    return JSON.stringify([
+        state.configured,
+        state.signedIn,
+        state.user?.id ?? null,
+        state.user?.name ?? null,
+        state.user?.email ?? null,
+        state.user?.imageUrl ?? null
+    ]);
+}
+
+let lastSignature = null;
+
+/**
+ * Broadcast, but only when something a listener can SEE has changed.
+ *
+ * Clerk's addListener fires on any resource change, and the session token is
+ * refreshed on a timer — roughly once a minute. Every one of those was a full
+ * notification carrying a state identical to the previous one, and subscribers
+ * respond to a notification by re-rendering. The visible result was a menu or a
+ * panel rebuilding itself about once a minute for no reason, and in the feed's
+ * compose area that meant text the user was part-way through typing was thrown
+ * away. A silent, periodic loss of someone's writing is the worst kind of bug
+ * this class produces, which is why the guard belongs here at the source rather
+ * than in each of the four subscribers.
+ *
+ * onAuthChange still fires immediately on subscribe, which is a different thing:
+ * that one is "tell me where we are", not "something changed".
+ */
 function notify() {
     const state = getAuthState();
+
+    const signature = stateSignature(state);
+    if (signature === lastSignature) return;
+    lastSignature = signature;
+
     for (const listener of [...listeners]) {
         try {
             listener(state);
