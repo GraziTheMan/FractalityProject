@@ -252,12 +252,26 @@ services:
       # refused at boot in production, because browsers reject wildcard +
       # credentials and every request here carries an Authorization header.
       #
-      # On the planned move to a subdomain: add the new origin BEFORE changing any
-      # DNS, and keep the old ones until the move is done. This variable is a list
-      # precisely so that two origins can work at once; a migration with one entry
-      # in it has a window where the app cannot reach its own API.
+      # On the move to a subdomain: add the new origin BEFORE changing any DNS, and
+      # keep the old ones until the move is done. This variable is a list precisely
+      # so that two origins can work at once; a migration with one entry in it has a
+      # window where the app cannot reach its own API.
+      #
+      # All three are listed because all three can currently reach the app, and this
+      # value is NOT sync:false — a blueprint sync overwrites whatever is in the
+      # dashboard. A list here that is narrower than reality takes the live app down
+      # at the next sync, with no deploy of the app itself to blame it on.
+      #
+      # Once fractiverse.com and www serve the LANDING PAGE and nothing else, delete
+      # those two lines. The landing page links to the app; it does not call this
+      # API, and an origin that never sends a request does not belong in an
+      # allowlist. Do that as its own change, after the DNS has actually moved —
+      # narrowing it early is the one mistake here that cannot be undone by waiting.
+      #
+      # Changes take effect on RESTART, not on save: the middleware reads this list
+      # once at import. /health reports the list currently in force.
       - key: CORS_ORIGIN
-        value: https://fractiverse.com,https://www.fractiverse.com
+        value: https://fp.fractiverse.com,https://fractiverse.com,https://www.fractiverse.com
 
       # Neo4j is NOT hosted on Render. These come from the AuraDB credentials
       # file, pasted verbatim.
