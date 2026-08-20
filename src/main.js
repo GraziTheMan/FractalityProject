@@ -102,6 +102,11 @@ const mapsPanel = new MapsPanel({
   client: mindMapClient,
   getGraph: () => fractalityEngine?.nodeGraph ?? null,
   notify: (message, type) => showNotification(message, type),
+  // Signing in moved out of this panel; it points here instead.
+  onOpenAccount: () => {
+    mapsPanel.hide();
+    accountPanel.show();
+  },
   onLoadMap: async (graph) => {
     if (!fractalityEngine) {
       // The engine boots lazily on the first 'bubble' view; make sure it exists

@@ -1960,6 +1960,116 @@ if (run_identity) {
 
     await page.evaluate(() => window.accountPanel.hide());
 
+    // --- the signed-in account screen
+    //
+    // Built with a stubbed auth reader, because this deployment has no Clerk key
+    // and so this half of the panel — the username, the claim box, the bio, the
+    // map list — had never been rendered by a check at all. The stub replaces only
+    // "who is signed in"; every element below is built by the real code.
+    // The panel is already constructed by main.js, so re-point its seam instead of
+    // building a second one: that exercises the instance the app actually uses.
+    const asUser = async (user) => page.evaluate(async (u) => {
+        const panel = window.accountPanel;
+        panel.hasAuth = () => true;
+        panel.getAuth = () => ({ configured: true, signedIn: true, user: u });
+        panel.profile = {
+            id: 'u1', display_name: 'Nick', username: u.username,
+            email: 'nick@example.com', bio: 'I make maps of ideas.', avatar_url: null,
+        };
+        // The profile form only renders when the API is reachable — without this
+        // the bio field is legitimately absent and the check was asserting against
+        // the "no API" branch. A mixed list, so the filtering is actually tested:
+        // only the public one belongs on a profile.
+        panel.client = {
+            available: true,
+            listMyMaps: async () => ([
+                { id: 'm1', title: 'Shared Ontology', visibility: 'public', node_count: 25 },
+                { id: 'm2', title: 'Private Draft', visibility: 'private', node_count: 4 },
+                { id: 'm3', title: 'Link Only', visibility: 'unlisted', node_count: 9 },
+            ]),
+        };
+        panel.show();
+        await new Promise((r) => setTimeout(r, 500));
+        const root = panel.container;
+        const text = root.textContent.replace(/\s+/g, ' ');
+        return {
+            text,
+            handle: root.querySelector('.account-handle')?.textContent ?? null,
+            handleMissing: Boolean(root.querySelector('.account-handle-missing')),
+            hasClaim: Boolean(root.querySelector('.account-claim')),
+            hasSettings: [...root.querySelectorAll('button')]
+                .some((b) => /settings/i.test(b.textContent)),
+            hasSignOut: [...root.querySelectorAll('button')]
+                .some((b) => /sign out/i.test(b.textContent)),
+            bio: root.querySelector('.account-bio')?.value ?? null,
+            hasMaps: Boolean(root.querySelector('.account-maps')),
+            mapTitles: [...root.querySelectorAll('.account-map-title')]
+                .map((n) => n.textContent),
+        };
+    }, user);
+
+    const withName = await asUser({ id: 'u1', name: 'Nick', username: 'grazitheman' });
+
+    if (withName.handle !== '@grazitheman') {
+        fail(`the account screen does not show the handle (got ${JSON.stringify(withName.handle)})`);
+    } else if (withName.handleMissing) {
+        fail('a set username is styled as missing');
+    } else if (withName.hasClaim) {
+        fail('the claim-a-username box is offered to someone who already has one — '
+            + 'usernames are meant to be permanent');
+    } else {
+        pass(`the account screen shows the handle (${withName.handle}) and offers no rename`);
+    }
+
+    if (!withName.hasSettings || !withName.hasSignOut) {
+        fail(`the account screen is missing controls: settings=${withName.hasSettings} `
+            + `signOut=${withName.hasSignOut}`);
+    } else if (withName.bio !== 'I make maps of ideas.') {
+        fail(`the bio field did not load the saved bio (got ${JSON.stringify(withName.bio)})`);
+    } else if (!withName.hasMaps) {
+        fail('the account screen does not list public maps');
+    } else if (JSON.stringify(withName.mapTitles) !== JSON.stringify(['Shared Ontology'])) {
+        // Unlisted is NOT public: a link-only map is shared with whoever holds the
+        // link, not published on a profile for anyone to find.
+        fail(`the public map list is wrong: ${JSON.stringify(withName.mapTitles)} — `
+            + 'expected only the public one');
+    } else {
+        pass('it carries settings, sign out, an editable bio, and lists only public maps');
+    }
+
+    // The one-time claim, for an account made before usernames were required.
+    const noName = await asUser({ id: 'u1', name: 'Nick', username: null });
+    if (!noName.hasClaim) {
+        fail('an account with no username is offered no way to choose one');
+    } else if (!noName.handleMissing) {
+        fail('a missing username is not marked as missing');
+    } else if (!/cannot be changed later/i.test(noName.text)) {
+        fail('the claim box does not say the choice is permanent');
+    } else {
+        pass('an account with no username is offered a one-time claim, and told it is final');
+    }
+
+    await page.evaluate(() => window.accountPanel.hide());
+
+    // Identity is managed in ONE place now.
+    const mapsIdentity = await page.evaluate(async () => {
+        window.mapsPanel.show();
+        await new Promise((r) => setTimeout(r, 400));
+        const root = window.mapsPanel.container;
+        const out = {
+            offersAuth: Boolean(root.querySelector('.maps-auth-button')),
+            buttons: [...root.querySelectorAll('button')].map((b) => b.textContent.trim()),
+        };
+        window.mapsPanel.hide();
+        return out;
+    });
+    const authish = mapsIdentity.buttons.filter((t) => /sign in|sign out/i.test(t));
+    if (mapsIdentity.offersAuth || authish.length > 0) {
+        fail(`the Maps panel still changes identity: ${JSON.stringify(authish)}`);
+    } else {
+        pass('the Maps panel no longer signs anyone in or out');
+    }
+
     // --- the dock must outrank every overlay
     await page.evaluate(() => window.coneView.show());
     await page.waitForTimeout(600);

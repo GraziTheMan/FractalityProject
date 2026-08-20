@@ -80,9 +80,11 @@ async def update_me(
         display_name=fields.get("display_name"),
         avatar_url=fields.get("avatar_url"),
         default_map_id=fields.get("default_map_id"),
+        bio=fields.get("bio"),
         set_name="display_name" in fields,
         set_avatar="avatar_url" in fields,
         set_default="default_map_id" in fields,
+        set_bio="bio" in fields,
     )
     if profile is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")

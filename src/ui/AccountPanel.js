@@ -14,7 +14,8 @@
 // `sub`, `iss` and `exp` and no name at all, which is why every feed post was
 // attributed to "Anonymous".
 
-import { hasAuth, getAuthState, onAuthChange, signIn, signOut } from '../auth/clerkClient.js';
+import { hasAuth, getAuthState, onAuthChange, signIn, signOut,
+         openAccountSettings, claimUsername } from '../auth/clerkClient.js';
 import { safeUrl } from '../utils/sanitize.js';
 
 export class AccountPanel {
@@ -28,6 +29,20 @@ export class AccountPanel {
         this.client = options.client;
         this.notify = options.notify ?? ((m) => console.log(m));
         this.onProfileChanged = options.onProfileChanged ?? (() => {});
+
+        /**
+         * How this panel learns who is signed in.
+         *
+         * Injected rather than imported directly, matching every other component
+         * here — ConeView takes getGraph, BubbleView takes getFocusedNode. The
+         * reason is not symmetry: reading the module binding meant the signed-in
+         * half of this panel could not be exercised at all without a live Clerk
+         * key, so the username, the bio, the claim box and the map list had no
+         * check on them. A seam is the difference between "probably fine" and
+         * tested.
+         */
+        this.getAuth = options.getAuth ?? getAuthState;
+        this.hasAuth = options.hasAuth ?? hasAuth;
 
         this.container = null;
         this.isOpen = false;
@@ -59,7 +74,7 @@ export class AccountPanel {
 
         this._injectStyles();
 
-        if (hasAuth()) {
+        if (this.hasAuth()) {
             this._unsubscribe = onAuthChange(() => {
                 if (this.isOpen) this.refresh();
             });
@@ -92,7 +107,7 @@ export class AccountPanel {
 
     /** True when the user is signed in, or when auth is not configured at all. */
     get signedIn() {
-        return !hasAuth() || getAuthState().signedIn;
+        return !this.hasAuth() || this.getAuth().signedIn;
     }
 
     async refresh() {
@@ -117,7 +132,7 @@ export class AccountPanel {
         if (!this.bodyEl) return;
         this.bodyEl.innerHTML = '';
 
-        if (!hasAuth()) {
+        if (!this.hasAuth()) {
             this._note(
                 'Accounts are not configured for this deployment. '
                 + 'Set VITE_CLERK_PUBLISHABLE_KEY to enable signing in.'
@@ -125,7 +140,7 @@ export class AccountPanel {
             return;
         }
 
-        if (!getAuthState().signedIn) {
+        if (!this.getAuth().signedIn) {
             this._note(
                 'Sign in to save maps to the cloud, post to the feed, and appear '
                 + 'under your own name.'
@@ -145,7 +160,7 @@ export class AccountPanel {
             return;
         }
 
-        const state = getAuthState();
+        const state = this.getAuth();
 
         // --- who you are
         const identity = document.createElement('div');
@@ -174,10 +189,19 @@ export class AccountPanel {
         name.textContent = this.profile?.display_name
             || state.user?.name
             || 'No display name set';
+        // The handle. Shown from the provider rather than from our profile: it is
+        // written into the User node from the verified token, so the token is the
+        // fresher of the two and the one that cannot be wrong.
+        const handle = document.createElement('div');
+        handle.className = 'account-handle';
+        const username = state.user?.username || this.profile?.username || null;
+        handle.textContent = username ? `@${username}` : 'No username yet';
+        if (!username) handle.classList.add('account-handle-missing');
+
         const email = document.createElement('div');
         email.className = 'account-email';
         email.textContent = this.profile?.email || state.user?.email || '';
-        who.append(name, email);
+        who.append(name, handle, email);
 
         identity.append(avatar, who);
         this.bodyEl.appendChild(identity);
@@ -187,6 +211,25 @@ export class AccountPanel {
         } else {
             this.bodyEl.appendChild(this._renderProfileForm(state));
         }
+
+        // --- claiming a username, for accounts that predate it being required
+        if (!username) this.bodyEl.appendChild(this._renderUsernameClaim());
+
+        // --- the provider's own settings
+        const settings = document.createElement('button');
+        settings.className = 'account-secondary';
+        settings.type = 'button';
+        settings.textContent = 'Settings — email, password, security';
+        settings.addEventListener('click', async () => {
+            const opened = await openAccountSettings();
+            if (!opened) {
+                this._setStatus('Account settings are not available here', 'error');
+            }
+        });
+        this.bodyEl.appendChild(settings);
+
+        // --- what you have made
+        this.bodyEl.appendChild(this._renderPublicMaps());
 
         // --- sign out
         const signOutButton = document.createElement('button');
@@ -204,6 +247,135 @@ export class AccountPanel {
             }
         });
         this.bodyEl.appendChild(signOutButton);
+    }
+
+    /**
+     * Claim a username. Only appears when there is none to claim.
+     *
+     * A permanent handle is worth a moment's friction, so this says plainly that it
+     * cannot be changed afterwards rather than letting someone discover that later.
+     */
+    _renderUsernameClaim() {
+        const box = document.createElement('div');
+        box.className = 'account-claim';
+
+        const why = document.createElement('p');
+        why.className = 'account-claim-why';
+        why.textContent = 'Your account was made before usernames were required. '
+            + 'Choose one now — it is how other people will find you, and it cannot '
+            + 'be changed later.';
+
+        const row = document.createElement('div');
+        row.className = 'account-claim-row';
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'account-input';
+        input.placeholder = 'username';
+        input.maxLength = 64;
+        input.autocapitalize = 'none';
+        input.autocomplete = 'off';
+        input.spellcheck = false;
+
+        const button = document.createElement('button');
+        button.className = 'account-primary';
+        button.type = 'button';
+        button.textContent = 'Claim';
+
+        const submit = async () => {
+            button.disabled = true;
+            input.disabled = true;
+            this._setStatus('Claiming…');
+
+            const result = await claimUsername(input.value);
+            if (result.ok) {
+                // No re-enable: the field is gone on the next render, because the
+                // whole point is that this happens once.
+                this._setStatus(`You are @${result.username}`, 'success');
+                this.refresh();
+                return;
+            }
+
+            // The provider's own words. "That username is taken" and "usernames
+            // must be at least 4 characters" are different problems and a single
+            // invented message would hide which one this is.
+            this._setStatus(result.reason, 'error');
+            button.disabled = false;
+            input.disabled = false;
+            input.focus();
+        };
+
+        button.addEventListener('click', submit);
+        input.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') submit();
+        });
+
+        row.append(input, button);
+        box.append(why, row);
+        return box;
+    }
+
+    /**
+     * The maps this person has made public.
+     *
+     * Filtered from their own list rather than fetched from a new endpoint: the
+     * summaries already carry visibility, and for your OWN account the answer is
+     * already in hand. Reading somebody else's profile will need an endpoint, and
+     * that is a different feature.
+     */
+    _renderPublicMaps() {
+        const box = document.createElement('div');
+        box.className = 'account-maps';
+
+        const heading = document.createElement('div');
+        heading.className = 'account-section-title';
+        heading.textContent = 'Public maps';
+        box.appendChild(heading);
+
+        const list = document.createElement('div');
+        list.className = 'account-maps-list';
+        list.textContent = 'Loading…';
+        box.appendChild(list);
+
+        (async () => {
+            if (!this.client?.available) {
+                list.textContent = 'The API is not configured.';
+                return;
+            }
+            try {
+                const maps = await this.client.listMyMaps({ limit: 50 });
+                const shared = (maps ?? []).filter((m) => m.visibility === 'public');
+
+                list.textContent = '';
+                if (shared.length === 0) {
+                    const empty = document.createElement('p');
+                    empty.className = 'account-empty';
+                    // Says how to change it, because "none" on its own reads as a
+                    // missing feature rather than as a setting nobody has used.
+                    empty.textContent = 'None yet. Set a map to Public in Maps to '
+                        + 'have it listed here.';
+                    list.appendChild(empty);
+                    return;
+                }
+
+                for (const map of shared) {
+                    const row = document.createElement('div');
+                    row.className = 'account-map';
+                    const title = document.createElement('span');
+                    title.className = 'account-map-title';
+                    title.textContent = map.title || 'Untitled';
+                    const meta = document.createElement('span');
+                    meta.className = 'account-map-meta';
+                    meta.textContent = `${map.node_count ?? 0} nodes`;
+                    row.append(title, meta);
+                    list.appendChild(row);
+                }
+            } catch (error) {
+                list.textContent = `Could not load your maps: ${error.message}`;
+            }
+        })();
+
+        return box;
     }
 
     _renderProfileForm(state) {
@@ -237,6 +409,28 @@ export class AccountPanel {
         hint.textContent = 'A link to an image. Uploads need object storage, '
             + 'which this deployment does not have yet.';
 
+        const bioLabel = document.createElement('label');
+        bioLabel.className = 'account-label';
+        bioLabel.textContent = 'Bio';
+        const bioInput = document.createElement('textarea');
+        bioInput.className = 'account-input account-bio';
+        bioInput.rows = 4;
+        // Matches MAX_BIO in api/models.py. The server enforces it; this stops
+        // someone writing 900 characters and only then being told.
+        bioInput.maxLength = 600;
+        bioInput.placeholder = 'A few lines about you and what you map.';
+        bioInput.value = this.profile?.bio ?? '';
+        bioLabel.appendChild(bioInput);
+
+        const remaining = document.createElement('div');
+        remaining.className = 'account-hint';
+        const countdown = () => {
+            const left = 600 - bioInput.value.length;
+            remaining.textContent = `${left} character${left === 1 ? '' : 's'} left`;
+        };
+        bioInput.addEventListener('input', countdown);
+        countdown();
+
         const save = document.createElement('button');
         save.className = 'account-primary';
         save.type = 'button';
@@ -257,6 +451,9 @@ export class AccountPanel {
                 this.profile = await this.client.updateProfile({
                     display_name: nameInput.value.trim() || null,
                     avatar_url: avatarText || null,
+                    // trim() only at the ends: a bio has paragraphs, and the
+                    // server's validator makes the same distinction.
+                    bio: bioInput.value.trim() || null,
                 });
                 this._setStatus('Saved.');
                 this.notify('Profile updated');
@@ -270,7 +467,7 @@ export class AccountPanel {
             }
         });
 
-        form.append(nameLabel, avatarLabel, hint, save);
+        form.append(nameLabel, avatarLabel, hint, bioLabel, remaining, save);
         return form;
     }
 
@@ -402,6 +599,60 @@ export class AccountPanel {
             }
             .account-input:focus { outline: none; border-color: #0ff; }
             .account-hint { color: #666; font-size: 11px; line-height: 1.4; }
+
+            .account-handle {
+                color: #0ff;
+                font-size: 12px;
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            }
+            /* Not an error colour: having no handle yet is a state, not a fault. */
+            .account-handle-missing { color: #8a7f5a; font-style: italic; }
+
+            .account-bio {
+                min-height: 84px;
+                resize: vertical;
+                font-family: inherit;
+                line-height: 1.45;
+            }
+
+            .account-claim {
+                border: 1px solid #3a4a2a;
+                background: rgba(30,40,20,0.5);
+                border-radius: 8px;
+                padding: 12px;
+                margin: 12px 0;
+            }
+            .account-claim-why {
+                margin: 0 0 10px;
+                color: #b9c7a8;
+                font-size: 12px;
+                line-height: 1.45;
+            }
+            .account-claim-row { display: flex; gap: 8px; align-items: stretch; }
+            .account-claim-row .account-input { flex: 1; min-width: 0; }
+            .account-claim-row .account-primary { flex: 0 0 auto; }
+
+            .account-section-title {
+                color: #0ff;
+                font-size: 11px;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+                margin: 18px 0 8px;
+            }
+            .account-maps-list { display: flex; flex-direction: column; gap: 6px; }
+            .account-map {
+                display: flex;
+                justify-content: space-between;
+                gap: 10px;
+                padding: 8px 10px;
+                background: rgba(255,255,255,0.03);
+                border: 1px solid #262b30;
+                border-radius: 6px;
+                font-size: 12px;
+            }
+            .account-map-title { color: #dfe8ec; overflow-wrap: anywhere; }
+            .account-map-meta { color: #6a7f88; flex: 0 0 auto; }
+            .account-empty { margin: 0; color: #6a7f88; font-size: 12px; line-height: 1.45; }
             .account-note { margin: 0; color: #aaa; font-size: 12px; line-height: 1.5; }
 
             .account-primary, .account-secondary {

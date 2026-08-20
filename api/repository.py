@@ -1143,7 +1143,7 @@ GET_PROFILE = """
 MATCH (u:User {subject: $subject})
 OPTIONAL MATCH (u)-[:OWNS]->(d:MindMap {id: u.default_map_id})
 RETURN u.id AS id, u.display_name AS display_name, u.avatar_url AS avatar_url,
-       u.username AS username, u.email AS email,
+       u.username AS username, u.email AS email, u.bio AS bio,
        d.id AS default_map_id
 """
 
@@ -1157,11 +1157,12 @@ UPDATE_PROFILE = """
 MATCH (u:User {subject: $subject})
 SET u.display_name    = CASE WHEN $set_name    THEN $display_name  ELSE u.display_name END,
     u.avatar_url      = CASE WHEN $set_avatar  THEN $avatar_url    ELSE u.avatar_url   END,
-    u.default_map_id  = CASE WHEN $set_default THEN $default_map_id ELSE u.default_map_id END
+    u.default_map_id  = CASE WHEN $set_default THEN $default_map_id ELSE u.default_map_id END,
+    u.bio             = CASE WHEN $set_bio     THEN $bio            ELSE u.bio            END
 WITH u
 OPTIONAL MATCH (u)-[:OWNS]->(d:MindMap {id: u.default_map_id})
 RETURN u.id AS id, u.display_name AS display_name, u.avatar_url AS avatar_url,
-       u.username AS username, u.email AS email,
+       u.username AS username, u.email AS email, u.bio AS bio,
        d.id AS default_map_id
 """
 
@@ -1172,9 +1173,11 @@ async def update_profile(
     display_name: Optional[str] = None,
     avatar_url: Optional[str] = None,
     default_map_id: Optional[str] = None,
+    bio: Optional[str] = None,
     set_name: bool = False,
     set_avatar: bool = False,
     set_default: bool = False,
+    set_bio: bool = False,
 ) -> Optional[Profile]:
     """Partial profile update.
 
@@ -1190,9 +1193,11 @@ async def update_profile(
         display_name=display_name,
         avatar_url=avatar_url,
         default_map_id=default_map_id,
+        bio=bio,
         set_name=set_name,
         set_avatar=set_avatar,
         set_default=set_default,
+        set_bio=set_bio,
     )
     return Profile(**rows[0]) if rows else None
 

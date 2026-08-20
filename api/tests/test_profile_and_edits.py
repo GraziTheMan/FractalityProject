@@ -50,13 +50,13 @@ def client(monkeypatch, settings):
         return state["profile"]
 
     async def fake_update_profile(_s, subject, display_name=None, avatar_url=None,
-                                  default_map_id=None, set_name=False, set_avatar=False,
-                                  set_default=False):
+                                  default_map_id=None, bio=None, set_name=False,
+                                  set_avatar=False, set_default=False, set_bio=False):
         state["profile_calls"].append({
             "display_name": display_name, "avatar_url": avatar_url,
-            "default_map_id": default_map_id,
+            "default_map_id": default_map_id, "bio": bio,
             "set_name": set_name, "set_avatar": set_avatar,
-            "set_default": set_default,
+            "set_default": set_default, "set_bio": set_bio,
         })
         current = state["profile"]
         state["profile"] = Profile(
@@ -64,6 +64,7 @@ def client(monkeypatch, settings):
             display_name=display_name if set_name else current.display_name,
             avatar_url=avatar_url if set_avatar else current.avatar_url,
             default_map_id=default_map_id if set_default else current.default_map_id,
+            bio=bio if set_bio else current.bio,
             username=current.username, email=current.email,
         )
         return state["profile"]
@@ -245,11 +246,93 @@ def test_setting_a_default_map(client):
     client.state["principal"] = ME
     response = client.patch("/me", json={"default_map_id": "map-abc"})
     assert response.status_code == 200
+    # The whole call, not just the field under test: the point is that choosing a
+    # default map touches NOTHING else. Every set_* flag but one is False, which is
+    # what makes a PATCH a patch.
     assert client.state["profile_calls"][-1] == {
         "display_name": None, "avatar_url": None, "default_map_id": "map-abc",
-        "set_name": False, "set_avatar": False, "set_default": True,
+        "bio": None,
+        "set_name": False, "set_avatar": False, "set_default": True, "set_bio": False,
     }
     assert response.json()["default_map_id"] == "map-abc"
+
+
+def test_setting_a_bio(client):
+    client.state["principal"] = ME
+    response = client.patch("/me", json={"bio": "  I make maps of ideas.  "})
+    assert response.status_code == 200
+    # Trimmed at the ends, and nothing else disturbed.
+    assert client.state["profile_calls"][-1] == {
+        "display_name": None, "avatar_url": None, "default_map_id": None,
+        "bio": "I make maps of ideas.",
+        "set_name": False, "set_avatar": False, "set_default": False, "set_bio": True,
+    }
+    assert response.json()["bio"] == "I make maps of ideas."
+
+
+def test_a_bio_keeps_its_paragraphs(client):
+    """Unlike a display name, a bio has shape.
+
+    The name validator collapses to a single trimmed line, and applying that here
+    would silently reformat what someone wrote about themselves. Only the ends go.
+    """
+    client.state["principal"] = ME
+    written = "\n  First line.\n\n  Second paragraph.\n  \n"
+    response = client.patch("/me", json={"bio": written})
+    assert response.status_code == 200
+    assert response.json()["bio"] == "First line.\n\n  Second paragraph."
+
+
+def test_a_blank_bio_clears_it(client):
+    client.state["principal"] = ME
+    client.patch("/me", json={"bio": "something"})
+    response = client.patch("/me", json={"bio": "   \n  "})
+    assert response.status_code == 200
+    assert client.state["profile_calls"][-1]["set_bio"] is True
+    assert client.state["profile_calls"][-1]["bio"] is None
+    assert response.json()["bio"] is None
+
+
+def test_an_omitted_bio_is_left_alone(client):
+    client.state["principal"] = ME
+    client.patch("/me", json={"bio": "kept"})
+    response = client.patch("/me", json={"display_name": "Nick"})
+    assert response.status_code == 200
+    assert client.state["profile_calls"][-1]["set_bio"] is False
+    assert response.json()["bio"] == "kept"
+
+
+def test_an_overlong_bio_is_refused(client):
+    client.state["principal"] = ME
+    from api.models import MAX_BIO
+    response = client.patch("/me", json={"bio": "x" * (MAX_BIO + 1)})
+    assert response.status_code == 422
+
+
+def test_a_bio_of_exactly_the_limit_is_accepted(client):
+    client.state["principal"] = ME
+    # The boundary itself, because a cap tested only from outside says nothing
+    # about which side of it is allowed.
+    from api.models import MAX_BIO
+    response = client.patch("/me", json={"bio": "x" * MAX_BIO})
+    assert response.status_code == 200
+    assert len(response.json()["bio"]) == MAX_BIO
+
+
+def test_a_username_cannot_be_set_over_the_api(client):
+    """Identity comes from the token, not from the request body.
+
+    Usernames are unique and permanent now that the app is becoming social, so a
+    caller must not be able to claim one by asking. ProfileUpdate has no username
+    field; pydantic ignores the extra key, and the stored username is whatever
+    upsert_user wrote from the verified token.
+    """
+    client.state["principal"] = ME
+    before = client.get("/me").json()["username"]
+    response = client.patch("/me", json={"username": "someone-else"})
+    assert response.status_code == 200
+    assert response.json()["username"] == before
+    assert "username" not in client.state["profile_calls"][-1]
 
 
 def test_clearing_the_default_map(client):

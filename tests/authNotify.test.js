@@ -25,6 +25,7 @@ const signedIn = {
     user: {
         id: 'user_1',
         name: 'Nick',
+        username: 'grazitheman',
         email: 'nick@example.com',
         imageUrl: 'https://img.example.com/a.png'
     }
@@ -48,6 +49,7 @@ test('a fresh object with the same values still matches', () => {
         user: {
             id: 'user_1',
             name: 'Nick',
+            username: 'grazitheman',
             email: 'nick@example.com',
             imageUrl: 'https://img.example.com/a.png'
         }
@@ -81,13 +83,19 @@ test('auth becoming configured changes the signature', () => {
     assert.notEqual(stateSignature(unconfigured), stateSignature(configured));
 });
 
-test('every observable user field is covered', () => {
-    // Written as a loop over the fields getAuthState() actually returns, so
-    // adding a field there and forgetting it here fails rather than silently
-    // becoming un-notifiable. The values are chosen to differ from the baseline.
+test('every user field in the fixture is covered', () => {
+    // A loop over every field, so a change to any one of them must be broadcast.
+    //
+    // Note what this canNOT do, because the comment here used to claim otherwise:
+    // it compares two fixtures in this file, so a field added to the real
+    // getAuthState() does not fail it. `username` was added to that shape and this
+    // passed unchanged. The guard against that drift is the SIGNATURE building
+    // itself from the returned object rather than from Clerk's — a field the app
+    // cannot observe cannot need a notification — plus the named test below.
     const changes = {
         id: 'user_999',
         name: 'Someone Else',
+        username: 'someone-else',
         email: 'other@example.com',
         imageUrl: 'https://img.example.com/b.png'
     };
@@ -95,7 +103,7 @@ test('every observable user field is covered', () => {
     assert.deepEqual(
         Object.keys(changes).sort(),
         Object.keys(signedIn.user).sort(),
-        'this test no longer covers every field getAuthState() returns'
+        'the fixture and the change list have drifted apart'
     );
 
     for (const [field, value] of Object.entries(changes)) {
@@ -107,6 +115,15 @@ test('every observable user field is covered', () => {
             `a change to user.${field} would not be broadcast`
         );
     }
+});
+
+test('claiming a username is broadcast', () => {
+    // The reason username had to reach the signature at all: someone with no
+    // handle sets one, and every surface showing "no username yet" has to stop
+    // saying so. Before it was included, that change was invisible to subscribers.
+    const before = clone(signedIn);
+    before.user.username = null;
+    assert.notEqual(stateSignature(before), stateSignature(signedIn));
 });
 
 test('a signed-out state is stable across calls', () => {

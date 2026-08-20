@@ -107,7 +107,8 @@ export function stateSignature(state) {
         state.user?.id ?? null,
         state.user?.name ?? null,
         state.user?.email ?? null,
-        state.user?.imageUrl ?? null
+        state.user?.imageUrl ?? null,
+        state.user?.username ?? null
     ]);
 }
 
@@ -171,10 +172,70 @@ export function getAuthState() {
                       user.primaryEmailAddress?.emailAddress ||
                       'Signed in',
                   email: user.primaryEmailAddress?.emailAddress ?? null,
-                  imageUrl: user.imageUrl ?? null
+                  imageUrl: user.imageUrl ?? null,
+                  // Separate from `name`, which falls back through several things
+                  // and can therefore be an email address. This is the handle —
+                  // unique, permanent, and null when the account predates the
+                  // provider requiring one.
+                  username: user.username ?? null
               }
             : null
     };
+}
+
+/**
+ * Open the provider's own account settings.
+ *
+ * Deliberately not reimplemented. Changing an email or a password runs through
+ * verification mails, re-authentication and whatever second factor is configured;
+ * a hand-built form here would either duplicate that badly or bypass it. Clerk's
+ * modal is the same one they maintain for those flows.
+ */
+export async function openAccountSettings() {
+    const instance = clerk ?? (await loadAuth());
+    if (!instance?.openUserProfile) return false;
+    instance.openUserProfile();
+    return true;
+}
+
+/**
+ * Claim a username, once.
+ *
+ * Only ever fills a blank. Usernames are meant to be permanent here — the app is
+ * becoming social, and a handle that changes is a handle that misidentifies
+ * people in every conversation it already appears in — so this refuses to
+ * overwrite one that exists rather than offering a rename that the rest of the
+ * app would have to chase.
+ *
+ * It exists at all because accounts created before the provider required a
+ * username have none, and there is otherwise no way to give them one.
+ *
+ * @returns {Promise<{ok: true, username: string} | {ok: false, reason: string}>}
+ */
+export async function claimUsername(candidate) {
+    const wanted = String(candidate ?? '').trim();
+    if (!wanted) return { ok: false, reason: 'Choose a username first' };
+
+    const instance = clerk ?? (await loadAuth());
+    if (!instance?.user) return { ok: false, reason: 'Sign in first' };
+
+    if (instance.user.username) {
+        return { ok: false, reason: 'Your username is already set and cannot be changed' };
+    }
+
+    try {
+        await instance.user.update({ username: wanted });
+        notify();
+        return { ok: true, username: instance.user.username ?? wanted };
+    } catch (error) {
+        // Clerk reports "already taken" and "not allowed" through the same shape;
+        // its own message is more specific than anything invented here.
+        const detail = error?.errors?.[0]?.longMessage
+            || error?.errors?.[0]?.message
+            || error?.message
+            || 'That username could not be set';
+        return { ok: false, reason: detail };
+    }
 }
 
 export function isSignedIn() {

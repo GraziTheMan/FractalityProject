@@ -13,7 +13,8 @@
 
 import { mindMapClient, MindMapClient, ApiError } from '../api/mindMapClient.js';
 import { apiMapToNodeGraph, graphToCreatePayload, nodeGraphToApiNodes, findRootId } from '../api/graphAdapter.js';
-import { hasAuth, getAuthState, onAuthChange, signIn, signOut } from '../auth/clerkClient.js';
+// signIn/signOut deliberately not imported: this panel no longer changes identity.
+import { hasAuth, getAuthState, onAuthChange } from '../auth/clerkClient.js';
 
 /**
  * The three visibility states, in order from closed to open.
@@ -47,6 +48,8 @@ export class MapsPanel {
         this.getGraph = options.getGraph ?? (() => null);
         this.onLoadMap = options.onLoadMap ?? (async () => {});
         this.notify = options.notify ?? ((m) => console.log(m));
+        /** Take the reader to the one place identity is managed. */
+        this.onOpenAccount = options.onOpenAccount ?? (() => {});
 
         this.client = options.client ?? mindMapClient;
         this.container = null;
@@ -140,6 +143,17 @@ export class MapsPanel {
 
     // --- account -----------------------------------------------------------
 
+    /**
+     * Say who you are, or that you are not signed in. No longer offer to change it.
+     *
+     * Signing in and out used to happen here, and it was the wrong room: this panel
+     * manages files, and identity is not a file. Someone looking for "how do I sign
+     * out" had to guess that the answer lived inside a map browser, and the button
+     * was the second thing they saw when they came here to open a map.
+     *
+     * Identity now lives in one place — the Account panel — and this only reports
+     * enough state to explain why the list might be empty, with a way to get there.
+     */
     _renderAccount() {
         if (!this.accountEl) return;
         this.accountEl.innerHTML = '';
@@ -153,27 +167,26 @@ export class MapsPanel {
         }
 
         const state = getAuthState();
-        const button = document.createElement('button');
-        button.className = 'maps-auth-button';
+        const note = document.createElement('span');
+        note.className = 'maps-note';
 
         if (state.signedIn) {
-            button.textContent = `Sign out (${state.user.name})`;
-            button.addEventListener('click', async () => {
-                await signOut();
-                this.refresh();
-            });
-        } else {
-            button.textContent = 'Sign in';
-            button.addEventListener('click', async () => {
-                try {
-                    await signIn();
-                } catch (error) {
-                    this.notify(error.message, 'error');
-                }
-            });
+            const handle = state.user?.username ? `@${state.user.username}` : state.user?.name;
+            note.textContent = handle ?? 'signed in';
+            this.accountEl.appendChild(note);
+            return;
         }
 
-        this.accountEl.appendChild(button);
+        // Not signed in: say what that costs here, and point at the one place that
+        // can fix it rather than fixing it here.
+        note.textContent = 'not signed in — ';
+        const link = document.createElement('button');
+        link.className = 'maps-account-link';
+        link.type = 'button';
+        link.textContent = 'Account';
+        link.title = 'Sign in from the Account panel';
+        link.addEventListener('click', () => this.onOpenAccount());
+        this.accountEl.append(note, link);
     }
 
     _setStatus(text, type = 'info') {
@@ -727,7 +740,7 @@ export class MapsPanel {
                 letter-spacing: 1px;
                 flex: 1;
             }
-            .maps-close, .maps-refresh, .maps-save, .maps-auth-button,
+            .maps-close, .maps-refresh, .maps-save, .maps-account-link,
             .maps-item-actions button {
                 background: rgba(255,255,255,0.06);
                 color: #fff;
@@ -739,7 +752,7 @@ export class MapsPanel {
                 cursor: pointer;
             }
             .maps-close:hover, .maps-refresh:hover, .maps-save:hover,
-            .maps-auth-button:hover, .maps-item-actions button:hover {
+            .maps-account-link:hover, .maps-item-actions button:hover {
                 border-color: #0ff;
             }
             .maps-item-actions button.danger:hover { border-color: #ef4444; }
@@ -807,7 +820,7 @@ export class MapsPanel {
                     max-height: calc(100vh - 64px - var(--dock-height, 0px) - 16px);
                 }
                 .maps-item-actions button,
-                .maps-close, .maps-refresh, .maps-save, .maps-auth-button {
+                .maps-close, .maps-refresh, .maps-save, .maps-account-link {
                     padding: 8px 12px;
                     font-size: 12px;
                 }

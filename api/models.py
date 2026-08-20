@@ -264,16 +264,47 @@ class Profile(BaseModel):
     #: machine they sign in from, which was the whole point of asking for it.
     default_map_id: Optional[str] = None
 
+    #: A few lines the person writes about themselves.
+    #:
+    #: Ours rather than Clerk's user metadata, because other people have to be able to
+    #: read it. Clerk knows who someone is; this is what they say about themselves, and
+    #: it belongs with the maps and pulses it will appear beside.
+    bio: Optional[str] = None
+
+
+#: Long enough to say something, short enough not to be an essay in a side panel.
+MAX_BIO = 600
+
 
 class ProfileUpdate(BaseModel):
     display_name: Optional[str] = Field(default=None, max_length=60)
     avatar_url: Optional[str] = Field(default=None, max_length=2_000)
     default_map_id: Optional[str] = Field(default=None, max_length=64)
+    bio: Optional[str] = Field(default=None, max_length=MAX_BIO)
+
+    #: username is deliberately NOT here. It comes from the auth provider's token and
+    #: is written by upsert_user, so accepting one over the API would let a caller
+    #: claim an identity the token does not support — and identities are meant to be
+    #: unique and stable now that the app is becoming social.
 
     @field_validator("display_name", mode="before")
     @classmethod
     def _clean_name(cls, value: Any) -> Any:
         """Trim before the length check, and treat blank as 'clear it'."""
+        if not isinstance(value, str):
+            return value
+        cleaned = value.strip()
+        return cleaned or None
+
+    @field_validator("bio", mode="before")
+    @classmethod
+    def _clean_bio(cls, value: Any) -> Any:
+        """Trim the ends but keep the shape.
+
+        Not the same treatment as display_name: a bio has paragraphs, so internal
+        newlines are content. Only the leading and trailing whitespace goes, and an
+        entirely blank bio means 'clear it'.
+        """
         if not isinstance(value, str):
             return value
         cleaned = value.strip()
