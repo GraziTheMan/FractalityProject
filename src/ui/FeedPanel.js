@@ -76,6 +76,15 @@ export class FeedPanel {
         this.pulses = [];
         /** Active #tag filter, or null. */
         this.tag = null;
+
+        /**
+         * Whose posts are shown: 'world' or 'me'.
+         *
+         * Not persisted, unlike the lean. A lean is a standing statement about how
+         * you want your feed weighted; a scope is where you happen to be looking
+         * right now, and a feed should open on everybody.
+         */
+        this.scope = 'world';
         /** True while a request is in flight, to stop double-submits. */
         this.busy = false;
         /** False once a page comes back short — there is nothing more to load. */
@@ -105,15 +114,21 @@ export class FeedPanel {
         this.container.className = 'pulsefeed-panel hidden';
         this.container.innerHTML = `
             <div class="pulsefeed-header">
-                <h3>Feed</h3>
+                <span class="pulsefeed-scope"></span>
                 <span class="pulsefeed-filter"></span>
-                <button class="pulsefeed-refresh" type="button" title="Reload">🔄</button>
-                <button class="pulsefeed-close" type="button" title="Close">×</button>
+                <button class="pulsefeed-top" type="button" title="Reload">🔄</button>
             </div>
-            <div class="pulsefeed-lean"></div>
-            <div class="pulsefeed-compose"></div>
-            <div class="pulsefeed-list"></div>
-            <div class="pulsefeed-more"></div>
+            <!-- ONE scroller. The lean and the compose box are inside it so they
+                 scroll away with everything else — on a phone they were a third of
+                 the screen permanently spent on controls you use once. The header
+                 stays, because the way back up has to be reachable from the
+                 bottom of a long feed. -->
+            <div class="pulsefeed-scroll">
+                <div class="pulsefeed-lean"></div>
+                <div class="pulsefeed-compose"></div>
+                <div class="pulsefeed-list"></div>
+                <div class="pulsefeed-more"></div>
+            </div>
             <div class="pulsefeed-status"></div>
         `;
         document.body.appendChild(this.container);
@@ -124,11 +139,26 @@ export class FeedPanel {
         this.filterEl = this.container.querySelector('.pulsefeed-filter');
         this.moreEl = this.container.querySelector('.pulsefeed-more');
         this.leanEl = this.container.querySelector('.pulsefeed-lean');
+        this.scopeEl = this.container.querySelector('.pulsefeed-scope');
+        this.scrollEl = this.container.querySelector('.pulsefeed-scroll');
+        this.topButton = this.container.querySelector('.pulsefeed-top');
 
-        this.container.querySelector('.pulsefeed-close')
-            .addEventListener('click', () => this.hide());
-        this.container.querySelector('.pulsefeed-refresh')
-            .addEventListener('click', () => this.refresh());
+        // No close button: the dock's Feed entry already toggles this panel, and a
+        // second way to do the same thing was costing the header room that the
+        // scope control now uses.
+        //
+        // One button, two jobs, decided by where you are. At the top there is
+        // nothing to scroll back to, so it reloads; scrolled down, "take me back"
+        // is what you want and reloading would throw away your place.
+        this.topButton.addEventListener('click', () => {
+            if (this._scrolledAway()) {
+                this.scrollEl.scrollTo({ top: 0, behavior: 'smooth' });
+            } else {
+                this.refresh();
+            }
+        });
+        this.scrollEl.addEventListener('scroll', () => this._syncTopButton(), { passive: true });
+        this._syncTopButton();
 
         this._renderLean();
         this._injectStyles();
@@ -174,6 +204,7 @@ export class FeedPanel {
     async refresh() {
         this.init();
         this._renderCompose();
+        this._renderScope();
         this._renderFilter();
 
         if (!this.client?.available) {
@@ -200,12 +231,13 @@ export class FeedPanel {
             const onRetry = ({ attempt, of }) =>
                 this._setStatus(`Server did not respond — retrying (${attempt}/${of})…`, 'warning');
 
-            const page = await this.client.listFeed({
-                skip: replace ? 0 : this.pulses.length,
-                limit: PAGE_SIZE,
-                tag: this.tag,
-                onRetry,
-            });
+            const skip = replace ? 0 : this.pulses.length;
+            // "Me" is a different endpoint, not a filter over the public feed:
+            // /pulses/mine returns private posts too, which is the point of
+            // looking at your own.
+            const page = this.scope === 'me'
+                ? await this.client.listMyPulses({ skip, limit: PAGE_SIZE, onRetry })
+                : await this.client.listFeed({ skip, limit: PAGE_SIZE, tag: this.tag, onRetry });
 
             this.pulses = replace ? page : [...this.pulses, ...page];
             // A short page means the end. Asking again would return nothing and
@@ -369,6 +401,65 @@ export class FeedPanel {
     }
 
     // --- rendering ---------------------------------------------------------
+
+    /** Far enough down that the header is the only way back. */
+    _scrolledAway() {
+        return (this.scrollEl?.scrollTop ?? 0) > 240;
+    }
+
+    _syncTopButton() {
+        if (!this.topButton) return;
+        const away = this._scrolledAway();
+        this.topButton.textContent = away ? '↑' : '🔄';
+        this.topButton.title = away ? 'Back to the top' : 'Reload';
+    }
+
+    /**
+     * Whose posts to show.
+     *
+     * Two options, not three. "Friends" belongs here and is deliberately absent
+     * until friends exist — a filter with a dead option teaches people the control
+     * is unreliable, and this app's rule is that nothing offered is a placeholder.
+     */
+    _renderScope() {
+        if (!this.scopeEl) return;
+        this.scopeEl.innerHTML = '';
+
+        const signedIn = !hasAuth() || getAuthState().signedIn;
+        const options = [
+            { id: 'world', label: 'World', title: 'Everything public' },
+            { id: 'me', label: 'Me', title: 'Your own posts, private ones included' },
+        ];
+
+        for (const option of options) {
+            const button = document.createElement('button');
+            button.className = 'pulsefeed-scope-option';
+            button.type = 'button';
+            button.textContent = option.label;
+            button.title = option.title;
+            button.setAttribute('aria-pressed', String(this.scope === option.id));
+            if (this.scope === option.id) button.classList.add('active');
+
+            // "Me" needs an identity to mean anything. Said rather than hidden:
+            // a control that vanishes is a control nobody knows exists.
+            if (option.id === 'me' && !signedIn) {
+                button.classList.add('unavailable');
+                button.title = 'Sign in to see your own posts';
+            }
+
+            button.addEventListener('click', () => {
+                if (option.id === 'me' && !signedIn) {
+                    this._setStatus('Sign in from Account to see your own posts.', 'warning');
+                    return;
+                }
+                if (this.scope === option.id) return;
+                this.scope = option.id;
+                this._renderScope();
+                this.refresh();
+            });
+            this.scopeEl.appendChild(button);
+        }
+    }
 
     _renderFilter() {
         if (!this.filterEl) return;
@@ -1340,7 +1431,44 @@ export class FeedPanel {
                 letter-spacing: 1px;
             }
             .pulsefeed-filter { flex: 1; }
-            .pulsefeed-refresh, .pulsefeed-close {
+
+            .pulsefeed-scope { display: flex; gap: 0; }
+            .pulsefeed-scope-option {
+                background: transparent;
+                border: 1px solid #2a3a40;
+                color: #7f949c;
+                padding: 5px 12px;
+                font-size: 12px;
+                cursor: pointer;
+            }
+            /* Joined, so the pair reads as one choice rather than two buttons. */
+            .pulsefeed-scope-option:first-child { border-radius: 6px 0 0 6px; }
+            .pulsefeed-scope-option:last-child {
+                border-radius: 0 6px 6px 0;
+                border-left-width: 0;
+            }
+            .pulsefeed-scope-option:hover { color: #cfe; border-color: #0ff; }
+            .pulsefeed-scope-option.active {
+                background: rgba(0,255,255,0.12);
+                border-color: #0ff;
+                color: #0ff;
+            }
+            /* Dimmed, never hidden: a control that vanishes is one nobody knows
+               exists, and pressing it says what is missing. */
+            .pulsefeed-scope-option.unavailable { opacity: 0.45; }
+
+            /* The single scroller. Everything above the list travels with it. */
+            .pulsefeed-scroll {
+                flex: 1;
+                overflow-y: auto;
+                min-height: 0;
+                overscroll-behavior: contain;
+            }
+            /* .pulsefeed-refresh and .pulsefeed-close are gone: one is now
+               .pulsefeed-top, the other was removed because the dock's Feed entry
+               already closes this panel. Rules for markup that does not exist are
+               how a stylesheet becomes impossible to reason about. */
+            .pulsefeed-top {
                 min-width: 34px;
                 min-height: 34px;
                 background: rgba(255,255,255,0.06);
@@ -1348,10 +1476,11 @@ export class FeedPanel {
                 border-radius: 6px;
                 color: #fff;
                 font-size: 14px;
+                line-height: 1;
                 cursor: pointer;
+                flex: 0 0 auto;
             }
-            .pulsefeed-close { font-size: 19px; line-height: 1; }
-            .pulsefeed-refresh:hover, .pulsefeed-close:hover { border-color: #0ff; }
+            .pulsefeed-top:hover { border-color: #0ff; }
 
             .pulsefeed-tag-clear {
                 background: rgba(0,255,255,0.12);
@@ -1425,7 +1554,10 @@ export class FeedPanel {
             .pulsefeed-signin { width: 100%; }
 
             /* --- the feed --- */
-            .pulsefeed-list { flex: 1; overflow-y: auto; min-height: 80px; }
+            /* Not the scroller any more — .pulsefeed-scroll is. Leaving overflow
+               here would nest two scrolling regions, and the inner one traps the
+               gesture at exactly the moment you are trying to reach the header. */
+            .pulsefeed-list { min-height: 80px; }
 
             .pulsefeed-pulse {
                 padding: 12px;
