@@ -373,7 +373,7 @@ function buildDockItems() {
           icon: '\u{1f464}',
           label: () => (accountPanel.signedIn ? 'Account' : 'Sign in'),
           description: () => (accountPanel.signedIn
-            ? 'Display name, avatar, sign out'
+            ? 'Display name, avatar, friends, sign out'
             : 'Sign in to save maps and post'),
           isActive: () => accountPanel.isOpen,
           onSelect: () => accountPanel.toggle()

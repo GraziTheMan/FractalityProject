@@ -4413,6 +4413,370 @@ if (run_bubble) {
     await ctx.close();
 }
 
+// ---------------------------------------------------------------------------
+// Comments, the feed's scope control, and friends.
+//
+// The comment UI had been verified by hand only, which is exactly the gap this
+// file exists to close: everything checked by hand once is checked by nobody
+// afterwards. The friends UI is new and has never been driven in a browser at all.
+//
+// The API is stubbed at fetch, as in the feed section above — what is under test
+// is the UI's behaviour, not the server's, and the server's rules have their own
+// suite in api/tests/test_friends.py.
+// ---------------------------------------------------------------------------
+
+const run_social = section('comments, scope and friends');
+
+if (run_social) {
+    const { ctx, page, errors } = await openApp(VIEWPORTS[0]);
+
+    await page.evaluate(() => {
+        const client = window.feedPanel.client;
+        client.baseUrl = 'https://api.test.invalid';
+        client.getToken = async () => 'tok';
+
+        window.__feedRequests = [];
+        window.__commentsPosted = [];
+        window.__commentRatings = [];
+        window.__friendCalls = [];
+        window.__pwned = null;
+
+        const pulses = [{
+            id: 'p1', title: 'Worth arguing about',
+            preview: 'A claim.', author: { id: 'u2', name: 'Ada' }, tags: [],
+            media: null, visibility: 'public', timestamp: Date.now() - 3600e3,
+            my_rating: 0, predicted: null, prediction_confidence: 0, own: false,
+        }];
+
+        let comments = [{
+            id: 'c1', pulse_id: 'p1',
+            author: { id: 'u3', name: '<b>Bo</b>' },
+            // Hostile on the field that reaches the DOM.
+            text: 'I disagree <img src=x onerror="window.__pwned=1">',
+            timestamp: Date.now() - 600e3, my_rating: 0,
+            predicted: null, prediction_confidence: 0, own: false,
+        }];
+
+        let friends = [{ id: 'u9', name: 'Ada', username: 'ada', since: Date.now() }];
+        let incoming = [{ id: 'u8', name: 'Bo', username: 'bo', since: Date.now() }];
+        let outgoing = [{ id: 'u7', name: 'Cy', username: 'cy', since: Date.now() }];
+
+        globalThis.fetch = async (url, opts = {}) => {
+            const raw = String(url).replace('https://api.test.invalid', '');
+            const [u, query] = raw.split('?');
+            const method = opts.method || 'GET';
+            const json = (body, status = 200) => ({
+                ok: status < 400, status, statusText: 'OK',
+                text: async () => JSON.stringify(body),
+            });
+
+            // --- friends
+            if (u === '/pulses/friends' && method === 'GET') return json(friends);
+            if (u === '/pulses/friends/requests' && method === 'GET') {
+                return json({ incoming, outgoing });
+            }
+            if (u.startsWith('/pulses/friends/lookup/')) {
+                const handle = decodeURIComponent(u.split('/').pop());
+                window.__friendCalls.push(['lookup', handle]);
+                if (handle.toLowerCase() === 'refuser') {
+                    return json({ id: 'u-r', name: 'Refuser', username: 'refuser' });
+                }
+                if (handle.toLowerCase() !== 'dee') return json({ detail: 'No such username' }, 404);
+                return json({ id: 'u6', name: 'Dee', username: 'dee' });
+            }
+            if (method === 'POST' && /^\/pulses\/friends\/[^/]+$/.test(u)) {
+                const id = u.split('/').pop();
+                window.__friendCalls.push(['request', id]);
+                // The server's refusal: one status, one message, no reason.
+                if (id === 'u-r') return json({ detail: 'That request could not be sent' }, 409);
+                return json({ status: 'sent' }, 202);
+            }
+            if (method === 'POST' && u.endsWith('/accept')) {
+                const id = u.split('/')[3];
+                window.__friendCalls.push(['accept', id]);
+                incoming = incoming.filter((f) => f.id !== id);
+                friends = [...friends, { id, name: 'Bo', username: 'bo', since: Date.now() }];
+                return json({ status: 'friends' });
+            }
+            if (method === 'DELETE' && u.startsWith('/pulses/friends/requests/')) {
+                const id = u.split('/').pop();
+                window.__friendCalls.push(['drop', id]);
+                incoming = incoming.filter((f) => f.id !== id);
+                outgoing = outgoing.filter((f) => f.id !== id);
+                return json(null, 204);
+            }
+            if (method === 'DELETE' && /^\/pulses\/friends\/[^/]+$/.test(u)) {
+                const id = u.split('/').pop();
+                window.__friendCalls.push(['unfriend', id]);
+                friends = friends.filter((f) => f.id !== id);
+                return json(null, 204);
+            }
+
+            // --- comments
+            if (u === '/pulses/p1/comments' && method === 'GET') return json(comments);
+            if (u === '/pulses/p1/comments' && method === 'POST') {
+                const body = JSON.parse(opts.body);
+                window.__commentsPosted.push(body.text);
+                const made = {
+                    id: `c${comments.length + 1}`, pulse_id: 'p1',
+                    author: { id: 'u1', name: 'Nick' }, text: body.text,
+                    timestamp: Date.now(), my_rating: 0,
+                    predicted: null, prediction_confidence: 0, own: true,
+                };
+                comments = [...comments, made];
+                return json(made, 201);
+            }
+            if (method === 'PUT' && u.includes('/comments/') && u.endsWith('/resonance')) {
+                const id = u.split('/')[3];
+                const value = Number(new URLSearchParams(query || '').get('value') || 0);
+                window.__commentRatings.push({ id, value });
+                const target = comments.find((c) => c.id === id);
+                target.my_rating = value;
+                return json(target);
+            }
+
+            // --- the feed itself
+            if (u === '/pulses') {
+                window.__feedRequests.push(query || '');
+                return json(pulses);
+            }
+            if (u === '/pulses/mine') {
+                window.__feedRequests.push('MINE');
+                return json([]);
+            }
+            if (u === '/me') return json({ username: 'nick', display_name: 'Nick', bio: '' });
+            if (u === '/maps') return json([]);
+            if (method === 'POST' && u === '/pulses/impressions') return json(null, 204);
+            return json({});
+        };
+
+        window.confirm = () => true;
+    });
+
+    // --- the scope control ---------------------------------------------------
+
+    await page.click('#app-dock [data-dock-id="social"]');
+    await page.waitForTimeout(700);
+
+    const scope = await page.evaluate(() => ({
+        labels: [...document.querySelectorAll('.pulsefeed-scope-option')].map((b) => b.textContent),
+        active: [...document.querySelectorAll('.pulsefeed-scope-option.active')].map((b) => b.textContent),
+    }));
+
+    if (scope.labels.join('/') !== 'World/Friends/Me') {
+        fail(`the scope control offers ${scope.labels.join('/') || 'nothing'}, not World/Friends/Me`);
+    } else {
+        pass('the feed offers World, Friends and Me, in that order');
+    }
+
+    if (scope.active.join(',') !== 'World') {
+        fail(`the feed opens on "${scope.active.join(',')}", not World`);
+    } else {
+        pass('the feed opens on World');
+    }
+
+    const scoped = await page.evaluate(async () => {
+        window.__feedRequests = [];
+        const press = async (label) => {
+            [...document.querySelectorAll('.pulsefeed-scope-option')]
+                .find((b) => b.textContent === label)?.click();
+            await new Promise((r) => setTimeout(r, 500));
+        };
+        await press('Friends');
+        await press('Me');
+        await press('World');
+        return window.__feedRequests;
+    });
+
+    if (!scoped[0]?.includes('scope=friends')) {
+        fail(`pressing Friends asked for "${scoped[0]}" — no scope=friends`);
+    } else if (scoped[1] !== 'MINE') {
+        fail('pressing Me did not use /pulses/mine, which is the only source of your private posts');
+    } else if (scoped[2]?.includes('scope=')) {
+        fail(`returning to World kept a scope: "${scoped[2]}"`);
+    } else {
+        pass('each scope asks the server the question it names');
+    }
+
+    // --- the discussion ------------------------------------------------------
+
+    const thread = await page.evaluate(async () => {
+        document.querySelector('.pulsefeed-comment-toggle').click();
+        await new Promise((r) => setTimeout(r, 600));
+        const item = document.querySelector('.pulsefeed-comment');
+        return {
+            shown: document.querySelectorAll('.pulsefeed-comment').length,
+            body: item?.querySelector('.pulsefeed-comment-body')?.textContent ?? '',
+            author: item?.querySelector('.pulsefeed-comment-author')?.textContent ?? '',
+            injected: document.querySelectorAll('.pulsefeed-comment img, .pulsefeed-comment b').length,
+            pwned: window.__pwned,
+            notches: item?.querySelectorAll('.pulsefeed-notch').length ?? 0,
+            compact: Boolean(item?.querySelector('.pulsefeed-resonance.compact')),
+            // The whole point of this feed: no tally, anywhere, for anyone.
+            tally: /\b\d+\s*(likes?|points?|votes?|ratings?)\b/i.test(item?.textContent ?? ''),
+        };
+    });
+
+    if (thread.shown !== 1) fail(`the thread rendered ${thread.shown} of 1 comments`);
+    else pass('opening a discussion loads its comments');
+
+    if (thread.pwned !== null) fail(`hostile comment text executed (window.__pwned = ${thread.pwned})`);
+    else if (thread.injected !== 0) fail(`${thread.injected} element(s) were created from comment markup`);
+    else if (!thread.body.includes('<img')) fail('the hostile comment vanished instead of being shown as text');
+    else pass('comment text and author names are rendered as text, not parsed');
+
+    if (thread.notches !== 5) fail(`a comment's slider has ${thread.notches} notches, not 5`);
+    else if (!thread.compact) fail("a comment's slider is not the compact variant");
+    else pass('a comment carries the same five-notch slider, compact');
+
+    if (thread.tally) fail('a comment is showing a tally');
+    else pass('a comment shows no tally');
+
+    const posted = await page.evaluate(async () => {
+        const input = document.querySelector('.pulsefeed-comment-input');
+        input.value = 'Here is why.';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        document.querySelector('.pulsefeed-comment-send').click();
+        await new Promise((r) => setTimeout(r, 600));
+        return {
+            sent: window.__commentsPosted,
+            shown: document.querySelectorAll('.pulsefeed-comment').length,
+            cleared: document.querySelector('.pulsefeed-comment-input').value,
+        };
+    });
+
+    if (posted.sent.join('|') !== 'Here is why.') {
+        fail(`the comment reached the server as ${JSON.stringify(posted.sent)}`);
+    } else if (posted.shown !== 2) {
+        fail(`after posting, ${posted.shown} comments are on screen instead of 2`);
+    } else if (posted.cleared !== '') {
+        fail('the box still holds the comment that was just sent');
+    } else {
+        pass('posting a comment sends it, shows it, and clears the box');
+    }
+
+    const rated = await page.evaluate(async () => {
+        window.__commentRatings = [];
+        for (const value of ['-2', '2']) {
+            document.querySelector(
+                `.pulsefeed-comment .pulsefeed-notch[data-value="${value}"]`).click();
+            await new Promise((r) => setTimeout(r, 300));
+        }
+        return window.__commentRatings;
+    });
+
+    if (rated.map((r) => r.value).join(',') !== '-2,2') {
+        fail(`rating a comment sent ${JSON.stringify(rated)}`);
+    } else {
+        pass('a comment notch reaches the server as the value it shows');
+    }
+
+    // --- friends -------------------------------------------------------------
+
+    await page.evaluate(async () => {
+        window.feedPanel.hide();
+        // The preview build has no Clerk key, so the panel would show only "accounts
+        // are not configured" and stop. These two seams exist on the panel for this
+        // reason — the signed-in half is otherwise unreachable without a live key,
+        // which is how it came to have no browser check at all.
+        window.accountPanel.hasAuth = () => true;
+        window.accountPanel.getAuth = () => ({
+            signedIn: true,
+            user: { name: 'Nick', username: 'nick', email: 'nick@example.com' },
+        });
+        window.accountPanel.show();
+        await new Promise((r) => setTimeout(r, 900));
+    });
+
+    const friends = await page.evaluate(() => ({
+        groups: [...document.querySelectorAll('.account-friends-group')].map((g) => g.textContent),
+        rows: [...document.querySelectorAll('.account-friend-name')].map((n) => n.textContent),
+        actions: [...document.querySelectorAll('.account-friend-action')].map((b) => b.textContent),
+        overflows: document.documentElement.scrollWidth > innerWidth,
+    }));
+
+    if (friends.groups.length !== 3) {
+        fail(`the friends section shows ${friends.groups.length} groups: ${JSON.stringify(friends.groups)}`);
+    } else if (!/Wants to be friends/.test(friends.groups[0])) {
+        fail(`the group waiting on an answer is not first: ${JSON.stringify(friends.groups)}`);
+    } else {
+        pass('friends, incoming and outgoing each get their own group, incoming first');
+    }
+
+    const wanted = ['Accept', 'Decline', 'Withdraw', 'Remove'];
+    const missing = wanted.filter((label) => !friends.actions.includes(label));
+    if (missing.length > 0) fail(`no ${missing.join(', ')} button in the friends list`);
+    else pass('every friend row offers the action its group needs');
+
+    if (friends.overflows) fail('the friends list pushed the page wider than the viewport');
+    else pass('the friends list fits the viewport');
+
+    const accepted = await page.evaluate(async () => {
+        window.__friendCalls = [];
+        [...document.querySelectorAll('.account-friend-action')]
+            .find((b) => b.textContent === 'Accept')?.click();
+        await new Promise((r) => setTimeout(r, 700));
+        return {
+            calls: window.__friendCalls.map((c) => c.join(':')),
+            groups: [...document.querySelectorAll('.account-friends-group')].map((g) => g.textContent),
+        };
+    });
+
+    if (!accepted.calls.includes('accept:u8')) {
+        fail(`Accept called ${JSON.stringify(accepted.calls)}`);
+    } else if (accepted.groups.some((g) => /Wants to be friends/.test(g))) {
+        fail('the accepted request is still listed as waiting');
+    } else {
+        pass('accepting moves the person out of the waiting list');
+    }
+
+    const added = await page.evaluate(async () => {
+        const type = async (handle) => {
+            const input = document.querySelector('.account-friends .account-input');
+            input.value = handle;
+            [...document.querySelectorAll('.account-friends button')]
+                .find((b) => b.textContent === 'Add')?.click();
+            await new Promise((r) => setTimeout(r, 700));
+            return document.querySelector('.account-status').textContent;
+        };
+        window.__friendCalls = [];
+        const ok = await type('dee');
+        const unknown = await type('nobody');
+        const refused = await type('refuser');
+        return { ok, unknown, refused, calls: window.__friendCalls.map((c) => c.join(':')) };
+    });
+
+    if (!added.calls.includes('lookup:dee') || !added.calls.includes('request:u6')) {
+        fail(`adding by handle called ${JSON.stringify(added.calls)}`);
+    } else {
+        pass('adding by username looks the handle up, then asks that id');
+    }
+
+    if (!added.unknown.includes('nobody')) {
+        fail(`an unknown handle reported "${added.unknown}" without naming it`);
+    } else if (added.unknown === added.refused) {
+        fail('an unknown handle and a refused request say the same thing');
+    } else {
+        pass('an unknown handle and a refused request are told apart');
+    }
+
+    // The rule the API bends over backwards for: a refusal names no reason,
+    // because naming one would announce a block.
+    if (/block|already|yourself/i.test(added.refused)) {
+        fail(`the UI guessed why the request was refused: "${added.refused}"`);
+    } else {
+        pass('a refused request is reported without a reason the server withheld');
+    }
+
+    if (errors.length > 0) {
+        fail(`${errors.length} page error(s) during the social checks: ${errors[0]}`);
+    } else {
+        pass('no page errors while using comments, scopes and friends');
+    }
+
+    await ctx.close();
+}
+
 await browser.close();
 
 console.log('\n' + '='.repeat(62));
