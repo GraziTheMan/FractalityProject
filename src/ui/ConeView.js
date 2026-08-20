@@ -1101,7 +1101,19 @@ export class ConeView {
                    bottom-anchored, and vice versa. */
                 top: var(--dock-top-height, 0px);
                 bottom: var(--dock-height, 0px);
-                z-index: 900;
+                /* Above the performance dashboard, below the dock.
+                   #perf-dashboard is position:fixed at z-index 1000, top-right —
+                   the same corner as this view's own × and Labels buttons. At 900
+                   it painted OVER them, so on a wide screen both were rendered,
+                   visible and completely unreachable: elementFromPoint at the
+                   centre of × returned span#perf-drawCalls. Nobody had coordinated
+                   the two numbers; 900 was chosen against the dock alone.
+                   The dock stays at 1200 for the reason below — navigation must
+                   outrank what it navigates to — so this sits between them.
+                   A full-screen overlay covering a HUD is also correct on its own
+                   terms: this view pauses the 3D engine, so that readout is
+                   reporting on something that has stopped rendering. */
+                z-index: 1100;
                 background: #000;
             }
             .cone-view.hidden { display: none; }

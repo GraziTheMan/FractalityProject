@@ -3545,6 +3545,51 @@ if (run_cone_labels) {
             + `(apex keeps ${atApex.worst} of ${apex} at every angle)`);
     }
 
+    // --- can the controls actually be pressed? ------------------------------
+    //
+    // Not "is it in the DOM" and not "does it have the right attributes" — this
+    // section asserted both of those and still shipped two buttons that were
+    // completely unreachable on a wide screen. #perf-dashboard is position:fixed
+    // at z-index 1000 in the same top-right corner, and the cone view was at 900,
+    // so × and Labels rendered at full opacity underneath it.
+    //
+    // elementFromPoint at the centre of each control is the question that matters:
+    // if the answer is not the control itself, a user cannot press it, whatever the
+    // computed styles say. Checked at every viewport, because the failure was
+    // desktop-only — the same buttons worked on a phone.
+    const reachable = await page.evaluate(() => {
+        const describe = (el) => {
+            if (!el) return 'nothing';
+            const cls = typeof el.className === 'string' && el.className.trim()
+                ? '.' + el.className.trim().split(/\s+/).join('.') : '';
+            return `${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''}${cls}`;
+        };
+        return ['.cone-labels', '.cone-close'].map((sel) => {
+            const el = document.querySelector(sel);
+            if (!el) return { sel, missing: true };
+            const r = el.getBoundingClientRect();
+            const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+            return {
+                sel,
+                covered: !(hit === el || el.contains(hit)),
+                by: describe(hit),
+                offscreen: r.right <= 0 || r.bottom <= 0
+                    || r.left >= innerWidth || r.top >= innerHeight,
+            };
+        });
+    });
+
+    const unreachable = reachable.filter((r) => r.missing || r.covered || r.offscreen);
+    if (unreachable.length > 0) {
+        fail('cone controls that cannot be pressed: ' + unreachable
+            .map((r) => r.missing ? `${r.sel} is not in the DOM`
+                : r.offscreen ? `${r.sel} is off screen`
+                : `${r.sel} is covered by ${r.by}`)
+            .join('; '));
+    } else {
+        pass(`every cone control can actually be pressed (${reachable.length} checked)`);
+    }
+
     // The button reflects it, and the preference survives a reload.
     const button = await page.evaluate(() => {
         const b = document.querySelector('.cone-labels');
