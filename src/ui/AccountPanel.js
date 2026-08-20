@@ -131,6 +131,10 @@ export class AccountPanel {
     _render() {
         if (!this.bodyEl) return;
         this.bodyEl.innerHTML = '';
+        // Every element in here is about to be discarded, and an in-flight
+        // _loadFriends() checks this to see whether its list still belongs to the
+        // page. Left set, it would write results into a detached node.
+        this._friendsListEl = null;
 
         if (!this.hasAuth()) {
             this._note(
@@ -228,6 +232,11 @@ export class AccountPanel {
         });
         this.bodyEl.appendChild(settings);
 
+        // --- who you are connected to
+        if (this.client?.available) {
+            this.bodyEl.appendChild(this._renderFriends());
+        }
+
         // --- what you have made
         this.bodyEl.appendChild(this._renderPublicMaps());
 
@@ -313,6 +322,215 @@ export class AccountPanel {
         row.append(input, button);
         box.append(why, row);
         return box;
+    }
+
+    /**
+     * Friends: who you are connected to, and who is waiting on an answer.
+     *
+     * Lives here rather than in a screen of its own because a friend list is part
+     * of who you are in this app, and a separate screen would be a fifth dock entry
+     * that is empty for most people most of the time.
+     *
+     * Everything below re-fetches after a change instead of patching the list in
+     * place. It is one small request, and the alternative — moving a row from
+     * "requests" to "friends" locally — is a second copy of the server's rules that
+     * can drift from them silently.
+     */
+    _renderFriends() {
+        const box = document.createElement('div');
+        box.className = 'account-friends';
+
+        const heading = document.createElement('div');
+        heading.className = 'account-section-title';
+        heading.textContent = 'Friends';
+        box.appendChild(heading);
+
+        box.appendChild(this._renderFriendSearch());
+
+        const list = document.createElement('div');
+        list.className = 'account-friends-list';
+        list.textContent = 'Loading…';
+        box.appendChild(list);
+
+        this._friendsListEl = list;
+        this._loadFriends();
+        return box;
+    }
+
+    /** Find somebody by handle and ask them. */
+    _renderFriendSearch() {
+        const row = document.createElement('div');
+        row.className = 'account-claim-row';
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'account-input';
+        input.placeholder = 'Add by username';
+        input.maxLength = 64;
+        input.autocapitalize = 'none';
+        input.autocomplete = 'off';
+        input.spellcheck = false;
+
+        const button = document.createElement('button');
+        button.className = 'account-primary';
+        button.type = 'button';
+        button.textContent = 'Add';
+
+        const submit = async () => {
+            const handle = input.value.trim().replace(/^@/, '');
+            if (!handle) return;
+
+            button.disabled = true;
+            this._setStatus(`Looking for @${handle}…`);
+            try {
+                const found = await this.client.findUserByUsername(handle);
+                const result = await this.client.requestFriend(found.id);
+                input.value = '';
+                this._setStatus(
+                    result?.status === 'friends'
+                        ? `You and ${found.name} are now friends — they had already asked.`
+                        : `Asked ${found.name}.`,
+                    'success'
+                );
+                this._loadFriends();
+            } catch (error) {
+                // 404 and 409 are different answers and must not be merged: one
+                // means the handle does not exist, the other that the request was
+                // refused. The refusal deliberately does not say why — it covers
+                // blocks in either direction, and naming one would announce it.
+                if (error.status === 404) {
+                    this._setStatus(`No account with the username @${handle}`, 'error');
+                } else if (error.status === 409) {
+                    this._setStatus('That request could not be sent.', 'error');
+                } else {
+                    this._setStatus(this._describe(error), 'error');
+                }
+            } finally {
+                button.disabled = false;
+            }
+        };
+
+        button.addEventListener('click', submit);
+        input.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') submit();
+        });
+
+        row.append(input, button);
+        return row;
+    }
+
+    async _loadFriends() {
+        const list = this._friendsListEl;
+        if (!list) return;
+
+        try {
+            const [friends, requests] = await Promise.all([
+                this.client.listFriends(),
+                this.client.listFriendRequests(),
+            ]);
+            // The panel can be re-rendered while this is in flight; writing into a
+            // detached element would silently show nothing.
+            if (this._friendsListEl !== list) return;
+
+            list.textContent = '';
+
+            // Incoming first: it is the only part of this that is waiting on you.
+            this._appendFriendGroup(list, 'Wants to be friends', requests.incoming ?? [], (friend) => [
+                this._friendAction('Accept', 'account-primary', async () => {
+                    await this.client.acceptFriend(friend.id);
+                    this._setStatus(`You and ${friend.name} are friends.`, 'success');
+                }),
+                this._friendAction('Decline', 'account-secondary', async () => {
+                    await this.client.dropFriendRequest(friend.id);
+                    this._setStatus('Declined.', 'success');
+                }),
+            ]);
+
+            this._appendFriendGroup(list, 'Asked', requests.outgoing ?? [], (friend) => [
+                this._friendAction('Withdraw', 'account-secondary', async () => {
+                    await this.client.dropFriendRequest(friend.id);
+                    this._setStatus('Request withdrawn.', 'success');
+                }),
+            ]);
+
+            this._appendFriendGroup(list, 'Friends', friends ?? [], (friend) => [
+                this._friendAction('Remove', 'account-secondary', async () => {
+                    await this.client.unfriend(friend.id);
+                    this._setStatus(`Removed ${friend.name}.`, 'success');
+                }, `Remove ${friend.name} from your friends?`),
+            ]);
+
+            if (!list.hasChildNodes()) {
+                const empty = document.createElement('p');
+                empty.className = 'account-empty';
+                empty.textContent = 'Nobody yet. Add someone by their username above, '
+                    + 'then their posts appear under Friends in the feed.';
+                list.appendChild(empty);
+            }
+        } catch (error) {
+            if (this._friendsListEl !== list) return;
+            list.textContent = `Could not load your friends: ${error.message}`;
+        }
+    }
+
+    _appendFriendGroup(list, title, people, actionsFor) {
+        if (people.length === 0) return;
+
+        const heading = document.createElement('div');
+        heading.className = 'account-friends-group';
+        heading.textContent = `${title} (${people.length})`;
+        list.appendChild(heading);
+
+        for (const friend of people) {
+            const row = document.createElement('div');
+            row.className = 'account-friend';
+
+            const who = document.createElement('span');
+            who.className = 'account-friend-who';
+            const name = document.createElement('span');
+            name.className = 'account-friend-name';
+            name.textContent = friend.name || 'Someone';
+            who.appendChild(name);
+            if (friend.username) {
+                const handle = document.createElement('span');
+                handle.className = 'account-friend-handle';
+                handle.textContent = `@${friend.username}`;
+                who.appendChild(handle);
+            }
+
+            const actions = document.createElement('span');
+            actions.className = 'account-friend-actions';
+            for (const button of actionsFor(friend)) actions.appendChild(button);
+
+            row.append(who, actions);
+            list.appendChild(row);
+        }
+    }
+
+    /**
+     * One button in a friend row.
+     *
+     * Disables itself for the duration: these are one-shot acts, and a second tap
+     * on "Accept" while the first is in flight is a request the server answers 404,
+     * which would report a failure for something that worked.
+     */
+    _friendAction(label, className, run, confirmWith = null) {
+        const button = document.createElement('button');
+        button.className = `account-friend-action ${className}`;
+        button.type = 'button';
+        button.textContent = label;
+        button.addEventListener('click', async () => {
+            if (confirmWith && !confirm(confirmWith)) return;
+            button.disabled = true;
+            try {
+                await run();
+                this._loadFriends();
+            } catch (error) {
+                this._setStatus(this._describe(error), 'error');
+                button.disabled = false;
+            }
+        });
+        return button;
     }
 
     /**
@@ -653,6 +871,41 @@ export class AccountPanel {
             .account-map-title { color: #dfe8ec; overflow-wrap: anywhere; }
             .account-map-meta { color: #6a7f88; flex: 0 0 auto; }
             .account-empty { margin: 0; color: #6a7f88; font-size: 12px; line-height: 1.45; }
+
+            .account-friends-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+            .account-friends-group {
+                color: #6a7f88;
+                font-size: 11px;
+                letter-spacing: 0.06em;
+                text-transform: uppercase;
+                margin: 8px 0 2px;
+            }
+            .account-friend {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 10px;
+                padding: 7px 10px;
+                background: rgba(255,255,255,0.03);
+                border: 1px solid #262b30;
+                border-radius: 6px;
+                font-size: 12px;
+            }
+            .account-friend-who {
+                display: flex;
+                flex-direction: column;
+                min-width: 0;
+            }
+            .account-friend-name { color: #dfe8ec; overflow-wrap: anywhere; }
+            .account-friend-handle { color: #6a7f88; font-size: 11px; overflow-wrap: anywhere; }
+            .account-friend-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+            /* Smaller than the page's buttons, but not below the 32px a thumb needs:
+               these sit in a list where the row above is a different person. */
+            .account-friend-action {
+                min-height: 32px;
+                padding: 5px 10px;
+                font-size: 12px;
+            }
             .account-note { margin: 0; color: #aaa; font-size: 12px; line-height: 1.5; }
 
             .account-primary, .account-secondary {

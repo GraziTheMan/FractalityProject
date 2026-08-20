@@ -166,9 +166,26 @@ export class FeedPanel {
         if (hasAuth()) {
             this._unsubscribe = (async () => {
                 const { onAuthChange } = await import('../auth/clerkClient.js');
-                return onAuthChange(() => this._renderCompose());
+                return onAuthChange(() => this._onAuthChanged());
             })();
         }
+    }
+
+    /**
+     * Signing in or out changes what half these controls mean.
+     *
+     * Re-rendering compose alone left the scope control stale: someone who picked
+     * "Friends" and then signed out kept a highlighted segment whose every request
+     * came back 401, with a working control apparently returning errors.
+     */
+    _onAuthChanged() {
+        this._renderCompose();
+
+        const signedIn = !hasAuth() || getAuthState().signedIn;
+        const stranded = !signedIn && this.scope !== 'world';
+        if (stranded) this.scope = 'world';
+        this._renderScope();
+        if (stranded && this.isOpen) this.refresh();
     }
 
     show() {
@@ -237,7 +254,9 @@ export class FeedPanel {
             // looking at your own.
             const page = this.scope === 'me'
                 ? await this.client.listMyPulses({ skip, limit: PAGE_SIZE, onRetry })
-                : await this.client.listFeed({ skip, limit: PAGE_SIZE, tag: this.tag, onRetry });
+                : await this.client.listFeed({
+                    skip, limit: PAGE_SIZE, tag: this.tag, scope: this.scope, onRetry,
+                });
 
             this.pulses = replace ? page : [...this.pulses, ...page];
             // A short page means the end. Asking again would return nothing and
@@ -257,9 +276,15 @@ export class FeedPanel {
 
     _summarise() {
         if (this.pulses.length === 0) {
-            return this.tag
-                ? `Nothing tagged #${this.tag} yet.`
-                : 'No posts yet. Be the first.';
+            if (this.tag) return `Nothing tagged #${this.tag} yet.`;
+            // An empty friends feed is not an empty app. "Be the first" there reads
+            // as "nobody has ever posted", which sends people looking for a fault
+            // that is not there.
+            if (this.scope === 'friends') {
+                return 'Nothing from your friends yet. Add people from Account.';
+            }
+            if (this.scope === 'me') return 'You have not posted yet.';
+            return 'No posts yet. Be the first.';
         }
         const scope = this.tag ? ` tagged #${this.tag}` : '';
         return `${this.pulses.length} post${this.pulses.length === 1 ? '' : 's'}${scope}`
@@ -417,9 +442,10 @@ export class FeedPanel {
     /**
      * Whose posts to show.
      *
-     * Two options, not three. "Friends" belongs here and is deliberately absent
-     * until friends exist — a filter with a dead option teaches people the control
-     * is unreliable, and this app's rule is that nothing offered is a placeholder.
+     * "Me" and "Friends" both need an identity to mean anything. Both are shown
+     * signed out and both say why when pressed, rather than disappearing: a
+     * control that vanishes is a control nobody knows exists, and a reader who
+     * cannot see the option cannot tell it is the sign-in that is missing.
      */
     _renderScope() {
         if (!this.scopeEl) return;
@@ -428,7 +454,10 @@ export class FeedPanel {
         const signedIn = !hasAuth() || getAuthState().signedIn;
         const options = [
             { id: 'world', label: 'World', title: 'Everything public' },
-            { id: 'me', label: 'Me', title: 'Your own posts, private ones included' },
+            { id: 'friends', label: 'Friends', title: "Posts from people you are connected to",
+              needsAuth: 'Sign in to see your friends’ posts' },
+            { id: 'me', label: 'Me', title: 'Your own posts, private ones included',
+              needsAuth: 'Sign in to see your own posts' },
         ];
 
         for (const option of options) {
@@ -440,16 +469,15 @@ export class FeedPanel {
             button.setAttribute('aria-pressed', String(this.scope === option.id));
             if (this.scope === option.id) button.classList.add('active');
 
-            // "Me" needs an identity to mean anything. Said rather than hidden:
-            // a control that vanishes is a control nobody knows exists.
-            if (option.id === 'me' && !signedIn) {
+            const blocked = option.needsAuth && !signedIn;
+            if (blocked) {
                 button.classList.add('unavailable');
-                button.title = 'Sign in to see your own posts';
+                button.title = option.needsAuth;
             }
 
             button.addEventListener('click', () => {
-                if (option.id === 'me' && !signedIn) {
-                    this._setStatus('Sign in from Account to see your own posts.', 'warning');
+                if (blocked) {
+                    this._setStatus(`${option.needsAuth} from Account.`, 'warning');
                     return;
                 }
                 if (this.scope === option.id) return;

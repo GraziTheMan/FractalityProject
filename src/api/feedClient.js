@@ -18,9 +18,10 @@ export { ApiError };
 
 export class FeedClient extends MindMapClient {
     /** The public feed, newest first. Works without a signed-in user. */
-    listFeed({ skip = 0, limit = 30, tag = null, onRetry } = {}) {
+    listFeed({ skip = 0, limit = 30, tag = null, scope = 'world', onRetry } = {}) {
         const params = new URLSearchParams({ skip: String(skip), limit: String(limit) });
         if (tag) params.set('tag', tag);
+        if (scope && scope !== 'world') params.set('scope', scope);
         return this._request(`/pulses?${params}`, { onRetry });
     }
 
@@ -143,6 +144,69 @@ export class FeedClient extends MindMapClient {
     reportComment(commentId) {
         return this._request(`/pulses/comments/${encodeURIComponent(commentId)}/report`, {
             method: 'POST'
+        });
+    }
+
+    // --- friends -----------------------------------------------------------
+
+    /** Everyone you are connected to. */
+    listFriends() {
+        return this._request('/pulses/friends');
+    }
+
+    /**
+     * Pending requests, both directions.
+     *
+     * Returns `{incoming, outgoing}`. Incoming is a decision waiting for you;
+     * outgoing is one waiting for somebody else, and showing it is what stops
+     * people asking twice and wondering why nothing happened.
+     */
+    listFriendRequests() {
+        return this._request('/pulses/friends/requests');
+    }
+
+    /**
+     * Find somebody by handle. Exact match, case-insensitive.
+     *
+     * 404 means no such handle — the only answer this gives, deliberately. A
+     * prefix search here would be a way to enumerate the whole membership.
+     */
+    findUserByUsername(username) {
+        return this._request(`/pulses/friends/lookup/${encodeURIComponent(username)}`);
+    }
+
+    /**
+     * Ask to be friends.
+     *
+     * Resolves to `{status: 'sent'}` or `{status: 'friends'}` — the second when
+     * they had already asked you, because asking back IS accepting.
+     *
+     * A 409 means refused, and carries no reason on purpose: blocked in either
+     * direction, already friends and aiming at yourself all look the same from
+     * out here. Do not try to guess between them in the UI.
+     */
+    requestFriend(userId) {
+        return this._request(`/pulses/friends/${encodeURIComponent(userId)}`, {
+            method: 'POST'
+        });
+    }
+
+    acceptFriend(userId) {
+        return this._request(`/pulses/friends/${encodeURIComponent(userId)}/accept`, {
+            method: 'POST'
+        });
+    }
+
+    /** Decline one aimed at you, or withdraw one you sent — the same act. */
+    dropFriendRequest(userId) {
+        return this._request(`/pulses/friends/requests/${encodeURIComponent(userId)}`, {
+            method: 'DELETE'
+        });
+    }
+
+    unfriend(userId) {
+        return this._request(`/pulses/friends/${encodeURIComponent(userId)}`, {
+            method: 'DELETE'
         });
     }
 

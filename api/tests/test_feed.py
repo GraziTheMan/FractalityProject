@@ -86,9 +86,17 @@ def client(monkeypatch, settings):
     async def fake_upsert_user(_s, subject, username=None, email=None):
         return {"id": f"u-{subject}", "subject": subject, "username": username}
 
-    async def fake_list_feed(_s, viewer_subject=None, skip=0, limit=30, tag=None):
-        state["feed_call"] = {"viewer": viewer_subject, "skip": skip, "limit": limit, "tag": tag}
-        return state["feed"]
+    async def fake_list_feed(
+        _s, viewer_subject=None, skip=0, limit=30, tag=None, friends_only=False
+    ):
+        state["feed_call"] = {
+            "viewer": viewer_subject,
+            "skip": skip,
+            "limit": limit,
+            "tag": tag,
+            "friends_only": friends_only,
+        }
+        return [] if friends_only and not viewer_subject else state["feed"]
 
     async def fake_list_own(_s, subject, skip=0, limit=30):
         state["own_call"] = subject
@@ -204,6 +212,28 @@ def test_signing_in_scopes_the_feed_to_the_viewer(client):
 def test_tag_filter_is_passed_through(client):
     client.get("/pulses?tag=%23Fractal")
     assert client.state["feed_call"]["tag"] == "#Fractal"
+
+
+def test_the_world_scope_is_the_default(client):
+    client.get("/pulses")
+    assert client.state["feed_call"]["friends_only"] is False
+
+
+def test_the_friends_scope_narrows_the_query(client):
+    client.state["principal"] = READER
+    assert client.get("/pulses?scope=friends").status_code == 200
+    assert client.state["feed_call"]["friends_only"] is True
+
+
+def test_the_friends_scope_refuses_signed_out_rather_than_showing_the_world(client):
+    """A filter that silently does nothing is worse than one that refuses — the
+    reader would think they were seeing friends and be reading strangers."""
+    client.state["principal"] = None
+    assert client.get("/pulses?scope=friends").status_code == 401
+
+
+def test_an_unknown_scope_is_rejected(client):
+    assert client.get("/pulses?scope=everyone").status_code == 422
 
 
 def test_feed_paging_is_bounded(client):

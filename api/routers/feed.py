@@ -86,6 +86,7 @@ async def list_feed(
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=30, ge=1, le=100),
     tag: Optional[str] = Query(default=None, max_length=40),
+    scope: str = Query(default="world", pattern="^(world|friends)$"),
     principal: Optional[Principal] = Depends(optional_user),
     settings: Settings = Depends(get_settings),
 ):
@@ -100,15 +101,25 @@ async def list_feed(
     Strictly reverse-chronological, still. The predictions are shown to the reader,
     not used to order the feed: an order chosen by a model is a feed that decides
     what you see, which is the thing this is meant to be an alternative to.
+
+    `scope=friends` narrows it to people you are connected to. It needs a signed-in
+    caller for the obvious reason, and says so rather than quietly handing back the
+    world feed — a filter that silently does nothing is worse than one that refuses.
     """
     _require_db(settings)
     viewer = principal.subject if principal else None
+    if scope == "friends" and viewer is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sign in to see your friends' posts",
+        )
     pulses = await repo.list_feed(
         settings,
         viewer_subject=viewer,
         skip=skip,
         limit=limit,
         tag=tag,
+        friends_only=(scope == "friends"),
     )
     return repo.apply_predictions(pulses, await repo.load_reader_model(settings, viewer))
 

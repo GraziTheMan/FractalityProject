@@ -1056,16 +1056,49 @@ SKIP $skip LIMIT $limit
 """
 
 
+# The same feed narrowed to people you are actually connected to.
+#
+# A separate query rather than a flag inside LIST_FEED, because the friendship
+# match is what makes it work and burying that in an "$only IS NULL OR ..." clause
+# hides the one line worth reading. Undirected, matching how the relationship is
+# stored — one row, either party.
+#
+# Still public pulses only: being someone's friend does not open their private
+# posts, and the block clause stays because you can block someone you are not
+# friends with and still see them here otherwise.
+LIST_FRIENDS_FEED = """
+MATCH (v:User {subject: $viewer})-[:FRIENDS_WITH]-(author:User)-[:POSTED]->(p:Pulse)
+WHERE p.visibility = 'public'
+  AND NOT EXISTS { MATCH (v)-[:BLOCKED]->(author) }
+  AND ($tag IS NULL OR $tag IN p.tags)
+OPTIONAL MATCH (p)<-[mine:RESONATED_WITH]-(v)
+RETURN p.id AS id, p.title AS title, p.preview AS preview, p.tags AS tags,
+       p.media_json AS media_json, p.visibility AS visibility,
+       p.created_at AS created_at, p.edited_at AS edited_at,
+       coalesce(mine.value, 0) AS my_rating,
+       author.id AS author_id, author.username AS author_name,
+       author.subject AS author_subject,
+       author.display_name AS author_display_name, author.avatar_url AS author_avatar
+ORDER BY p.created_at DESC
+SKIP $skip LIMIT $limit
+"""
+
+
 async def list_feed(
     settings: Settings,
     viewer_subject: Optional[str] = None,
     skip: int = 0,
     limit: int = 30,
     tag: Optional[str] = None,
+    friends_only: bool = False,
 ) -> List[Pulse]:
+    if friends_only and not viewer_subject:
+        # No viewer, no friendships. Returning the world feed instead would quietly
+        # answer a different question than the one asked.
+        return []
     rows = await db.run_read(
         settings,
-        LIST_FEED,
+        LIST_FRIENDS_FEED if friends_only else LIST_FEED,
         viewer=viewer_subject,
         skip=skip,
         limit=limit,
