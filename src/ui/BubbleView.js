@@ -190,22 +190,43 @@ export class BubbleView {
     }
 
     /**
-     * The bubbles to draw: the current bubble's children, or the map's roots.
+     * What is inside a bubble: its children, AND anything that emerges from it.
      *
-     * Containment only. `emergesFrom` says a concept arises from several
-     * contributors, and following it here would put a node inside every one of
-     * them — so entering any of four parents of "consciousness" would show it, and
-     * "inside" would stop meaning one place. The cone view is where convergence is
-     * legible; this view answers "what does this contain".
+     * A node IS inside every one of its parents at once, and that is not a
+     * compromise — it is what the model means. Consciousness cannot exist without
+     * all four operators, so it does not live in one of them with references from
+     * the others; it occupies their overlap, and the overlap is inside each. Enter
+     * any operator and it is there.
+     *
+     * This reads as paradoxical only if a bubble is a box. It is a region, and
+     * regions intersect. The reason the same idea defeated an earlier attempt at
+     * drawing this is topological rather than conceptual: overlapping REGIONS stop
+     * being separable past three sets, and Consciousness has six contributors, so
+     * no arrangement of six shapes in a plane shows every intersection. Reaching
+     * the shared node through any parent sidesteps that entirely — the intersection
+     * never has to be drawn, only entered.
+     *
+     * Deliberately NOT `resetsTo`: recurrence may be circular, and following it
+     * here would make the last tier contain the first, so descending would never
+     * end.
      */
-    _visible() {
+    _contentsOf(nodeId) {
         const graph = this.getGraph();
         if (!graph) return [];
 
-        if (this.currentId === null) {
-            return graph.getRootNodes?.() ?? [];
-        }
-        return graph.getChildren?.(this.currentId) ?? [];
+        if (nodeId === null) return graph.getRootNodes?.() ?? [];
+
+        const contained = graph.getChildren?.(nodeId) ?? [];
+        const emergent = graph.getEmergentChildren?.(nodeId) ?? [];
+
+        // A node can be both — contained by this one AND listing it as a stream —
+        // so the set is deduplicated by id rather than concatenated.
+        const seen = new Set(contained.map((n) => n.id));
+        return [...contained, ...emergent.filter((n) => !seen.has(n.id))];
+    }
+
+    _visible() {
+        return this._contentsOf(this.currentId);
     }
 
     /** Where to start when opening, so the reader's selection is on screen. */
@@ -246,7 +267,7 @@ export class BubbleView {
         const node = graph.getNode?.(nodeId);
         if (!node) return false;
 
-        const children = graph.getChildren?.(nodeId) ?? [];
+        const children = this._contentsOf(nodeId);
         if (children.length === 0) {
             const name = node.metadata?.label || node.id;
             this.notify(`"${name}" contains nothing yet`, 'info');
@@ -456,7 +477,12 @@ export class BubbleView {
         if (r <= 0 || alpha <= 0) return;
 
         const graph = this.getGraph();
-        const childCount = graph?.getChildren?.(node.id)?.length ?? 0;
+        // Counted the same way entering counts, or the face says "2 inside" and
+        // then shows five.
+        const childCount = this._contentsOf(node.id).length;
+        // How many places this same bubble can be reached from. More than one is
+        // worth showing: it is the visible trace of a node occupying an overlap.
+        const homes = graph?.getAllParentIds?.(node.id)?.length ?? 0;
 
         ctx.save();
         ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
@@ -473,6 +499,19 @@ export class BubbleView {
             ? 'rgba(0,255,255,0.9)'
             : childCount > 0 ? 'rgba(90,220,180,0.65)' : 'rgba(120,140,150,0.45)';
         ctx.stroke();
+
+        // A second, offset ring for a bubble that is inside more than one thing.
+        // Offset rather than merely thicker, because the doubling is the point:
+        // this circle is also somewhere else, and you can get here from there.
+        if (homes > 1) {
+            ctx.beginPath();
+            ctx.arc(x, y, r + 5, 0, Math.PI * 2);
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = placed.selected
+                ? 'rgba(0,255,255,0.45)'
+                : 'rgba(90,220,180,0.32)';
+            ctx.stroke();
+        }
 
         // Whether the count will be drawn has to be decided BEFORE the label,
         // because the label needs to know not to grow into that space. Drawing
@@ -496,6 +535,15 @@ export class BubbleView {
             ctx.fillStyle = 'rgba(150,190,200,0.75)';
             ctx.textAlign = 'center';
             ctx.fillText(`${childCount} inside`, x, y + r * 0.62);
+        }
+
+        // Named, not just ringed: "also in 3" answers the question the double ring
+        // raises, which is "also in what?" — the trail answers the rest.
+        if (homes > 1 && r > 44) {
+            ctx.font = `${Math.max(8, Math.round(r * 0.13))}px system-ui, sans-serif`;
+            ctx.fillStyle = 'rgba(120,200,180,0.7)';
+            ctx.textAlign = 'center';
+            ctx.fillText(`also in ${homes - 1}`, x, y - r * 0.66);
         }
 
         ctx.restore();

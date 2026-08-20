@@ -580,6 +580,45 @@ export class NodeGraph {
     }
 
     /**
+     * Which convergent nodes would be left making an incomplete claim.
+     *
+     * "Consciousness cannot exist without all four operators" — so removing one of
+     * them does not leave a Consciousness that emerges from three. It leaves a node
+     * asserting something its own map no longer supports.
+     *
+     * Deleting it too would be faithful and awful: losing a concept you care about
+     * because you tidied up one of its inputs is not a tradeoff anyone would choose
+     * in an editor. So nothing cascades — this reports, and the caller warns.
+     *
+     * Takes the WHOLE set being removed, not one id, because a cascade delete takes
+     * a subtree with it and a node depending on two of the doomed is not two
+     * separate warnings. Anything inside the doomed set is itself going, so it is
+     * not worth warning about.
+     *
+     * @param {string[]|Set<string>} removedIds everything about to disappear
+     * @returns {{node: NodeData, losing: NodeData[]}[]} survivors, and what each loses
+     */
+    findIncompleteAfterRemoving(removedIds) {
+        const doomed = new Set(removedIds);
+        const affected = new Map();
+
+        for (const id of doomed) {
+            for (const dependentId of this.emergenceIndex.get(id) ?? []) {
+                if (doomed.has(dependentId)) continue;
+                const dependent = this.nodes.get(dependentId);
+                if (!dependent) continue;
+
+                if (!affected.has(dependentId)) affected.set(dependentId, []);
+                affected.get(dependentId).push(this.nodes.get(id));
+            }
+        }
+
+        return [...affected.entries()]
+            .map(([id, losing]) => ({ node: this.nodes.get(id), losing }))
+            .filter((entry) => Boolean(entry.node));
+    }
+
+    /**
      * How many streams converge into this node, counting its containing parent.
      *
      * The cone reads this as a radius: one parent sits at the rim, many parents sit

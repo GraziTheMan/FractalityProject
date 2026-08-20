@@ -488,6 +488,34 @@ Link to another node with [[its name]].
                     const descendants = graph.getDescendantIds(node.id);
                     const name = node.metadata.label;
 
+                    /**
+                     * What this deletion would leave asserting something untrue.
+                     *
+                     * Nothing cascades on account of it — deleting a concept because
+                     * you removed one of its inputs would be a horrible surprise —
+                     * but silently leaving a node claiming to arise from four things
+                     * when one is gone is worse than saying so. Named individually:
+                     * "3 nodes affected" is not something anyone can act on.
+                     */
+                    const warnAbout = (doomedIds) => {
+                        const incomplete = graph.findIncompleteAfterRemoving(doomedIds);
+                        if (incomplete.length === 0) return '';
+
+                        const lines = incomplete.slice(0, 4).map(({ node: dep, losing }) => {
+                            const remaining = graph.getAllParentIds(dep.id)
+                                .filter((id) => !new Set(doomedIds).has(id)).length;
+                            return `  • "${dep.metadata.label || dep.id}" loses `
+                                + `${losing.map((n) => `"${n.metadata.label || n.id}"`).join(', ')}`
+                                + ` (${remaining} stream${remaining === 1 ? '' : 's'} left)`;
+                        });
+                        if (incomplete.length > 4) {
+                            lines.push(`  • …and ${incomplete.length - 4} more`);
+                        }
+                        return `\n\nThese emerge from it and will be left incomplete:\n`
+                            + lines.join('\n')
+                            + '\n\nThey are NOT deleted.';
+                    };
+
                     // Deleting a node with children is two different intentions,
                     // and guessing wrong loses work either way.
                     if (descendants.length > 0) {
@@ -495,6 +523,10 @@ Link to another node with [[its name]].
                             `"${name}" contains ${descendants.length} node(s).\n\n`
                             + 'OK — keep them, moving them up a tier\n'
                             + 'Cancel — delete them too'
+                            // Warn about the CASCADE case, the larger of the two:
+                            // whatever survives promotion survives, so the promote
+                            // path can only affect fewer nodes than this lists.
+                            + warnAbout([node.id, ...descendants])
                         );
                         const removed = graph.removeNode(node.id, {
                             strategy: keep ? 'promote' : 'cascade'
@@ -505,7 +537,7 @@ Link to another node with [[its name]].
                             : `Deleted "${name}" and ${removed.length - 1} descendant(s)`;
                     }
 
-                    if (!confirm(`Delete "${name}"?`)) return null;
+                    if (!confirm(`Delete "${name}"?` + warnAbout([node.id]))) return null;
                     graph.removeNode(node.id);
                     this.selectedId = null;
                     return `Deleted "${name}"`;
@@ -666,7 +698,12 @@ Link to another node with [[its name]].
         where.className = 'nodemgr-ref-where';
         const container = node.parentId ? graph.getNode(node.parentId) : null;
         where.textContent = container
-            ? `emerges here · lives in ${container.metadata.label || container.id}`
+            // "filed under", not "lives in". The outline needs one row per node and
+            // the graph is not a tree, so one parent is picked to draw it beneath —
+            // that is a filing decision, not a claim that the node resides there.
+            // A concept arising from four things occupies their overlap and is
+            // inside all four; saying it "lives in" one of them states the opposite.
+            ? `emerges here · filed under ${container.metadata.label || container.id}`
             : 'emerges here';
 
         // Marked when it points at the selection, so the outline shows every place the

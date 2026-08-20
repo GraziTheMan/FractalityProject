@@ -2655,17 +2655,22 @@ if (run_emergence) {
         const ref = document.querySelector('.nodemgr-ref');
         return {
             isAlsoARow: ref.classList.contains('nodemgr-row'),
-            saysWhereItLives: /lives in/.test(ref.textContent),
+            // "filed under", not "lives in": a node arising from several things is
+            // inside all of them, so naming one as where it LIVES states the
+            // opposite of the model. The row still has to name the one it is drawn
+            // beneath, because a pointer that does not say where it points is just
+            // a duplicate.
+            saysWhereItIsFiled: /filed under/.test(ref.textContent),
             hasNodeIdDataset: Boolean(ref.dataset.nodeId),
         };
     });
 
     if (refShape.isAlsoARow || refShape.hasNodeIdDataset) {
         fail('a reference row is indistinguishable from a real row');
-    } else if (!refShape.saysWhereItLives) {
-        fail('a reference row does not say where the node actually lives');
+    } else if (!refShape.saysWhereItIsFiled) {
+        fail('a reference row does not say which parent it is filed under');
     } else {
-        pass('a reference row is marked as a pointer and names the real home');
+        pass('a reference row is marked as a pointer and names where it is filed');
     }
 
     // Clicking it goes to the real node, and takes the rest of the app along.
@@ -3834,6 +3839,15 @@ if (run_default_view) {
 // is inside the circle" is the entire reason this view draws flat circles and a
 // boolean saying so would not notice text hanging over the edge.
 
+/**
+ * How many bubbles the layout is checked against.
+ *
+ * Forty because the ring clamp only starts to matter past twelve — at twelve the
+ * overflow without it is three pixels, and by forty it is nearly three hundred. A
+ * bound set where a guard begins to bite does not test the guard.
+ */
+const MAX_BUBBLES_CHECKED = 40;
+
 const run_bubble = section('bubble view');
 
 if (run_bubble) {
@@ -3918,24 +3932,53 @@ if (run_bubble) {
             const bv = window.bubbleView;
             const g = window.fractalityEngine().nodeGraph;
             const rootId = bv._hits[0].id;
-            const expected = g.getChildren(rootId).map((n) => n.id).sort();
+            // Contained AND emergent — a node inside several things is inside each.
+            // Written as the union rather than as getChildren() because the old
+            // contract passed here by fixture accident: the root happens to have no
+            // emergent children, so "children only" and "children plus emergent"
+            // were the same list.
+            const expected = [...new Set([
+                ...g.getChildren(rootId).map((n) => n.id),
+                ...g.getEmergentChildren(rootId).map((n) => n.id),
+            ])].sort();
+
+            // Recurrence must NOT be contents. resetsTo may be circular — Stillness
+            // returns to the Fractiverse — so if it counted as "inside", the deepest
+            // tier would contain the first and descending would never end.
+            //
+            // The edge is CREATED here rather than looked for. The test graph has no
+            // recurrence, so reading an existing list would assert nothing, and the
+            // first draft of this reached for a g.recurrenceIndex that does not
+            // exist — optional chaining would have made it quietly vacuous. The
+            // target is deliberately not a child of the root, or its presence would
+            // be explained by containment and prove nothing.
+            const outsider = [...g.nodes.values()].find((n) =>
+                n.id !== rootId && n.parentId !== rootId);
+            const recurrence = [];
+            if (outsider && g.addReset(rootId, outsider.id)) recurrence.push(outsider.id);
             const rect = bv.canvas.getBoundingClientRect();
             const h = bv._hits[0];
             bv.canvas.dispatchEvent(new PointerEvent('pointerdown', {
                 clientX: rect.left + h.x, clientY: rect.top + h.y, bubbles: true }));
             const midway = { transitioning: Boolean(bv._transition) };
             await new Promise((r) => setTimeout(r, 800));
-            return { rootId, expected, midway, got: bv._hits.map((x) => x.id).sort() };
+            return { rootId, expected, midway, recurrence,
+                     got: bv._hits.map((x) => x.id).sort() };
         });
 
         if (!entered.midway.transitioning) {
             fail(`[${vp.name}] entering a bubble did not start a transition`);
         } else if (JSON.stringify(entered.got) !== JSON.stringify(entered.expected)) {
             fail(`[${vp.name}] entering showed ${JSON.stringify(entered.got)}, `
-                + `expected exactly the children ${JSON.stringify(entered.expected)}`);
+                + `expected what it contains: ${JSON.stringify(entered.expected)}`);
+        } else if (entered.recurrence.length === 0) {
+            fail(`[${vp.name}] no recurrence edge could be made, so descent was not tested`);
+        } else if (entered.recurrence.some((id) => entered.got.includes(id))) {
+            fail(`[${vp.name}] a recurrence target is being shown as contents, which `
+                + 'makes descent unbounded');
         } else {
-            pass(`[${vp.name}] going inside shows that bubble's children and nothing else `
-                + `(${entered.expected.length})`);
+            pass(`[${vp.name}] going inside shows what that bubble contains, and no `
+                + `recurrence (${entered.expected.length})`);
         }
 
         const inside = await state();
@@ -3977,6 +4020,96 @@ if (run_bubble) {
             fail(`[${vp.name}] refusing an empty bubble said: "${leaf.said}"`);
         } else {
             pass(`[${vp.name}] an empty bubble is refused, and says why`);
+        }
+
+        // A node inside more than one thing is reachable through EVERY one.
+        //
+        // Not a convenience: a concept that cannot exist without all four of its
+        // sources does not live in one of them with pointers from the others, it
+        // occupies their overlap, and an overlap is inside each. Entering any one
+        // has to find it there.
+        //
+        // Checked from every parent rather than from one, because "reachable from
+        // the container" was already true before this existed — the interesting
+        // claim is about the other three.
+        const overlap = await page.evaluate(async () => {
+            const g = window.fractalityEngine().nodeGraph;
+            const bv = window.bubbleView;
+            const root = g.getRootNodes()[0];
+            const ops = g.getChildren(root.id).slice(0, 4);
+            if (ops.length < 4) return { tooSmall: true };
+
+            const target = g.getChildren(ops[0].id)[0];
+            for (const op of ops) {
+                if (op.id !== target.parentId) g.addEmergence(target.id, op.id);
+            }
+
+            const parents = g.getAllParentIds(target.id);
+            const reach = parents.map((pid) => {
+                bv.path = [pid];
+                return {
+                    from: g.getNode(pid)?.metadata?.label ?? pid,
+                    found: bv._visible().some((n) => n.id === target.id),
+                };
+            });
+
+            // And it must be a real, enterable bubble when reached that way — not
+            // merely present in the list.
+            bv.path = [parents[parents.length - 1]];
+            bv._renderChrome();
+            await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+            const drawn = bv._hits.some((h) => h.id === target.id);
+
+            return { parents: parents.length, reach, drawn };
+        });
+
+        if (overlap.tooSmall) {
+            fail(`[${vp.name}] the test graph is too small to build a convergent node`);
+        } else {
+            const missed = overlap.reach.filter((r) => !r.found);
+            if (overlap.parents < 4) {
+                fail(`[${vp.name}] expected 4 parents, built ${overlap.parents}`);
+            } else if (missed.length > 0) {
+                fail(`[${vp.name}] a node inside 4 things is unreachable from `
+                    + missed.map((r) => `"${r.from}"`).join(', '));
+            } else if (!overlap.drawn) {
+                fail(`[${vp.name}] reached through an emergence parent it is listed but not drawn`);
+            } else {
+                pass(`[${vp.name}] a node inside 4 things is reachable through every one`);
+            }
+        }
+
+        // Every bubble fits on screen at every count, decoration ring included. The
+        // ring radius is set BY the bubble radius, so an off-by-one in that solve
+        // pushes circles off the edge rather than shrinking them.
+        const fits = await page.evaluate((max) => {
+            const bv = window.bubbleView;
+            const w = bv.canvas.clientWidth;
+            const h = bv.canvas.clientHeight;
+            const bad = [];
+            // Up to MAX_BUBBLES_CHECKED, not 12. The ring radius is clamped to `usable - r`, and that
+            // clamp only BINDS once MIN_RADIUS stops bubbles shrinking any further —
+            // which starts at 12, where the overflow without it is 3px, and reaches
+            // 298px by 40. A range ending exactly where a guard begins to matter is
+            // a range that does not test it: deleting the clamp passed this check.
+            // Forty children on one node is an ordinary mind map, not an extreme.
+            for (let n = 1; n <= max; n++) {
+                for (const s of bv._layout(n, w, h)) {
+                    // +5 is the outer ring drawn on a node with several homes.
+                    const over = Math.max(-(s.x - s.r - 5), -(s.y - s.r - 5),
+                                          (s.x + s.r + 5) - w, (s.y + s.r + 5) - h);
+                    if (over > 0) { bad.push(`${n} bubbles overflow by ${Math.round(over)}px`); break; }
+                }
+            }
+            return bad;
+        }, MAX_BUBBLES_CHECKED);
+        if (fits.length > 0) {
+            fail(`[${vp.name}] bubbles leave the canvas: ${fits.slice(0, 3).join('; ')}`);
+        } else {
+            // The bound is stated from the constant, not typed twice: the loop was
+            // widened from 12 to 40 and this message still read "1 to 12", which is
+            // a check reporting a smaller claim than it makes.
+            pass(`[${vp.name}] bubbles stay on screen from 1 to ${MAX_BUBBLES_CHECKED} of them`);
         }
 
         // Reachability, the lesson from the cone view's × being buried under the
