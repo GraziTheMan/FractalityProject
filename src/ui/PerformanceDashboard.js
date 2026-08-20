@@ -121,6 +121,7 @@ export class PerformanceDashboard {
         if (!this.config.visible) {
             this.container.classList.add('hidden');
         }
+        this._applyInset();
 
         
         // Add to UI overlay or body
@@ -539,6 +540,46 @@ export class PerformanceDashboard {
         if (this.container) {
             this.container.classList.toggle('hidden', !this.config.visible);
         }
+        this._applyInset();
+    }
+
+    /**
+     * Tell the rest of the app how much of the top-right corner this occupies.
+     *
+     * This panel is `position: fixed` in the top-right, which is also where the
+     * cone and bubble views keep their × and their toggles. Raising those views'
+     * z-index above this one was tried and was worse — it put them over every
+     * panel, so opening Maps did nothing visible.
+     *
+     * The overlap is a layout problem, so it is solved with layout: the views
+     * offset their top-right controls by --hud-inset, which is a real measurement
+     * of this element rather than a guessed constant, and reverts to nothing the
+     * moment the dashboard is dismissed. A view that has no idea this panel exists
+     * still gets out of its way.
+     */
+    _applyInset() {
+        const root = document.documentElement;
+        if (!root) return;
+
+        if (!this.config.visible || !this.container) {
+            root.style.removeProperty('--hud-inset');
+            return;
+        }
+        // WIDTH, not height, and the axis matters. Offsetting by the height
+        // pushed the cone's Labels button to y=466 on a 900px screen — reachable,
+        // and halfway down the view for no reason, because this panel is about
+        // 220px wide and 364px tall. Sideways keeps the controls where the eye
+        // expects them, just inboard of the panel.
+        //
+        // Measured rather than guessed: offsetWidth is 0 while hidden, so reading
+        // it before the class change lands would leave the inset at zero and the
+        // collision back.
+        const width = this.container.offsetWidth || 0;
+        if (width > 0) {
+            root.style.setProperty('--hud-inset', `${width + 12}px`);
+        } else {
+            root.style.removeProperty('--hud-inset');
+        }
     }
     
     /**
@@ -555,6 +596,10 @@ export class PerformanceDashboard {
      * Destroy dashboard
      */
     destroy() {
+        // Or a destroyed dashboard leaves every view's controls pushed down the
+        // screen for a panel that no longer exists.
+        document.documentElement?.style.removeProperty('--hud-inset');
+
         if (this.container) {
             this.container.remove();
             this.container = null;

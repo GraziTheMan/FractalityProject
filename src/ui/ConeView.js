@@ -193,7 +193,8 @@ export class ConeView {
             </div>
             <button class="cone-labels" type="button" aria-pressed="false"
                 title="Show every node's name">Labels</button>
-            <button class="cone-close" type="button" title="Close the cone view">×</button>
+            <button class="cone-close" type="button" hidden
+                title="Come back out of this cone">×</button>
         `;
         document.body.appendChild(this.container);
 
@@ -216,13 +217,9 @@ export class ConeView {
         });
         this._syncLabelsButton();
 
-        this.container.querySelector('.cone-close')
-            .addEventListener('click', () => {
-                // Step up out of a nested cone rather than closing the view outright.
-                // Closing from three levels down and reopening at the whole map loses
-                // the reader's place for no reason.
-                if (!this.exitCone()) this.hide();
-            });
+        this.closeButton = this.container.querySelector('.cone-close');
+        this.closeButton.addEventListener('click', () => this.exitCone());
+        this._syncCloseButton();
 
         this._bindGestures();
         this._injectStyles();
@@ -336,6 +333,11 @@ export class ConeView {
 
     /** The chain of apexes from the whole map down to the current one. */
     _renderBreadcrumb() {
+        // Hung off the breadcrumb because it runs on exactly the same events:
+        // every descent and every ascent. Chasing individual call sites is how the
+        // inflow bar ended up wired to the wrong one.
+        this._syncCloseButton();
+
         if (!this.breadcrumbEl) return;
         this.breadcrumbEl.replaceChildren();
 
@@ -881,6 +883,19 @@ export class ConeView {
         return this.setZoom(maxTier / tier);
     }
 
+    /**
+     * The × only exists when there is somewhere to come back out to.
+     *
+     * This view is the default screen now, so "close" has no meaning at the top
+     * level: there is nothing behind it. Descend into a node and the button
+     * appears, because then it undoes something. A button that would have closed
+     * the only thing on screen is worse than no button.
+     */
+    _syncCloseButton() {
+        if (!this.closeButton) return;
+        this.closeButton.hidden = this.apexId === null;
+    }
+
     _syncZoom() {
         if (!this.zoomReadout) return;
         this.zoomReadout.textContent = `${Math.round(this.zoom * 100)}%`;
@@ -1179,19 +1194,24 @@ export class ConeView {
                    bottom-anchored, and vice versa. */
                 top: var(--dock-top-height, 0px);
                 bottom: var(--dock-height, 0px);
-                /* Above the performance dashboard, below the dock.
-                   #perf-dashboard is position:fixed at z-index 1000, top-right —
-                   the same corner as this view's own × and Labels buttons. At 900
-                   it painted OVER them, so on a wide screen both were rendered,
-                   visible and completely unreachable: elementFromPoint at the
-                   centre of × returned span#perf-drawCalls. Nobody had coordinated
-                   the two numbers; 900 was chosen against the dock alone.
-                   The dock stays at 1200 for the reason below — navigation must
-                   outrank what it navigates to — so this sits between them.
-                   A full-screen overlay covering a HUD is also correct on its own
-                   terms: this view pauses the 3D engine, so that readout is
-                   reporting on something that has stopped rendering. */
-                z-index: 1100;
+                /* THE STACKING ORDER, in one place, because getting it wrong
+                   twice cost a working button each time:
+
+                     1     the 3D canvas
+                     900   full-screen views (this, and the bubble view)
+                     1000  #perf-dashboard
+                     1001  panels: Maps, Find, Node Manager, Feed, Account
+                     1200  the dock
+
+                   This view is CONTENT, not an overlay — it is the default screen
+                   — so it belongs under both the panels and the HUD. It was
+                   briefly 1100, to escape the HUD covering its × and Labels
+                   buttons, and that put it over all five panels instead: opening
+                   Maps from the dock did nothing visible. Fixing a collision by
+                   moving up the stack just picks a different thing to cover.
+                   The HUD overlap is a LAYOUT problem — both want the top-right —
+                   and is solved by --hud-inset below, not by a z-index. */
+                z-index: 900;
                 background: #000;
             }
             .cone-view.hidden { display: none; }
@@ -1245,7 +1265,8 @@ export class ConeView {
                 position: absolute;
                 top: 12px;
                 left: 12px;
-                right: 60px;
+                /* Clears the buttons, and the HUD when it is showing. */
+                right: calc(var(--hud-inset, 0px) + 60px);
                 display: flex;
                 flex-direction: column;
                 gap: 2px;
@@ -1263,7 +1284,7 @@ export class ConeView {
             .cone-close {
                 position: absolute;
                 top: 10px;
-                right: 10px;
+                right: calc(var(--hud-inset, 0px) + 10px);
                 min-width: 40px;
                 min-height: 40px;
                 background: rgba(0,0,0,0.7);
@@ -1280,8 +1301,12 @@ export class ConeView {
                the corner where it has always been. */
             .cone-labels {
                 position: absolute;
+                /* Both this and the HUD want the top-right corner. --hud-inset is
+                   the dashboard's measured WIDTH, set on <html> while it is
+                   visible, so these slide inboard of it rather than under it.
+                   Default 0: the HUD is off unless someone asks for it. */
                 top: 10px;
-                right: 58px;
+                right: calc(var(--hud-inset, 0px) + 58px);
                 min-height: 40px;
                 padding: 0 12px;
                 background: rgba(0,0,0,0.7);
@@ -1341,7 +1366,7 @@ export class ConeView {
                 .cone-hint { font-size: 10px; }
                 /* Under the close button rather than beside it: at 320px wide the
                    two side by side crowd out the tier readout. */
-                .cone-labels { top: 58px; right: 10px; }
+                .cone-labels { top: 58px; right: calc(var(--hud-inset, 0px) + 10px); }
             }
         `;
         document.head.appendChild(style);

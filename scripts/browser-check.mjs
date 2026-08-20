@@ -3651,6 +3651,151 @@ if (run_cone_labels) {
     await ctx.close();
 }
 
+// --- the default screen ----------------------------------------------------
+//
+// The cone view is the app's base view, not an overlay. The three things that
+// makes true are each a separate claim, and each has been wrong at some point.
+
+const run_default_view = section('default screen');
+
+if (run_default_view) {
+    const { ctx, page } = await openApp(VIEWPORTS[2]);   // desktop
+
+    const onLoad = await page.evaluate(() => ({
+        cone: window.coneView.isOpen,
+        bubble: window.bubbleView.isOpen,
+        paused: Boolean(window.fractalityEngine()?.paused),
+        closeHidden: document.querySelector('.cone-close')?.hidden,
+    }));
+
+    if (!onLoad.cone) {
+        fail('the cone view is not open on load, so the app opens on the old 3D scene');
+    } else if (onLoad.bubble) {
+        fail('both views are open on load');
+    } else {
+        pass('the app opens straight into the cone view');
+    }
+
+    // The old default view drew shaded spheres nobody was looking at. update()
+    // returns early when paused, so this is the check that no Three.js work is
+    // happening behind the view that replaced it.
+    if (!onLoad.paused) {
+        fail('the 3D engine is still rendering behind the default view');
+    } else {
+        pass('the 3D scene is not being drawn behind it');
+    }
+
+    // A × on the default screen would close the only thing on screen.
+    if (onLoad.closeHidden !== true) {
+        fail('the cone view offers a close button at the top level, where there is '
+            + 'nothing behind it');
+    } else {
+        pass('no close button at the top level, where closing would leave nothing');
+    }
+
+    const nested = await page.evaluate(async () => {
+        const g = window.fractalityEngine().nodeGraph;
+        const inner = [...g.nodes.values()].find((n) => g.getChildren(n.id).length > 1);
+        window.coneView.enterCone(inner.id);
+        await new Promise((r) => setTimeout(r, 300));
+        const shown = document.querySelector('.cone-close')?.hidden === false;
+        document.querySelector('.cone-close').click();
+        await new Promise((r) => setTimeout(r, 300));
+        return { shown, stillOpen: window.coneView.isOpen,
+                 hiddenAgain: document.querySelector('.cone-close')?.hidden };
+    });
+    if (!nested.shown) {
+        fail('descending into a cone does not offer a way back out');
+    } else if (!nested.stillOpen || nested.hiddenAgain !== true) {
+        fail(`pressing it closed the view instead of the cone `
+            + `(open:${nested.stillOpen} hidden:${nested.hiddenAgain})`);
+    } else {
+        pass('descending offers a way out that exits the cone, not the view');
+    }
+
+    // THE REGRESSION: panels must sit above the views. Raising the views to 1100
+    // to escape the HUD put them over all five panels, so opening Maps from the
+    // dock did nothing visible — the panel was there, underneath.
+    const panels = await page.evaluate(async () => {
+        const describe = (el) => {
+            if (!el) return 'nothing';
+            const cls = typeof el.className === 'string' && el.className.trim()
+                ? '.' + el.className.trim().split(/\s+/).join('.') : '';
+            return `${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''}${cls}`;
+        };
+        const out = [];
+        for (const [name, panel] of [['maps', window.mapsPanel],
+                                     ['node manager', window.nodeManagerPanel],
+                                     ['feed', window.feedPanel]]) {
+            panel.show();
+            await new Promise((r) => setTimeout(r, 400));
+            const box = panel.container?.getBoundingClientRect();
+            const probe = box && box.width > 0
+                ? document.elementFromPoint(box.left + box.width / 2, box.top + 30)
+                : null;
+            out.push({
+                name,
+                visible: Boolean(box && box.width > 0),
+                // The panel is on top if the topmost element at its own coordinates
+                // belongs to it.
+                onTop: Boolean(probe && panel.container.contains(probe)),
+                covering: describe(probe),
+            });
+            panel.hide?.();
+            await new Promise((r) => setTimeout(r, 200));
+        }
+        return out;
+    });
+    const buried = panels.filter((x) => !x.visible || !x.onTop);
+    if (buried.length > 0) {
+        fail('panels hidden behind the default view: ' + buried
+            .map((x) => x.visible ? `${x.name} covered by ${x.covering}` : `${x.name} did not open`)
+            .join('; '));
+    } else {
+        pass(`every panel opens above the default view (${panels.length} checked)`);
+    }
+
+    // The performance HUD shares the top-right corner with the view's controls.
+    // Offsetting them is what replaced the z-index fight that caused the above.
+    const hud = await page.evaluate(async () => {
+        const read = () => getComputedStyle(document.documentElement)
+            .getPropertyValue('--hud-inset').trim();
+        const labels = document.querySelector('.cone-labels');
+        const reachable = () => {
+            const r = labels.getBoundingClientRect();
+            const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+            return el === labels || labels.contains(el);
+        };
+        const before = { inset: read(), reachable: reachable() };
+        window.fractalityEngine().togglePerformanceMonitor();
+        await new Promise((r) => setTimeout(r, 350));
+        const on = { inset: read(), reachable: reachable(),
+                     top: Math.round(labels.getBoundingClientRect().top) };
+        window.fractalityEngine().togglePerformanceMonitor();
+        await new Promise((r) => setTimeout(r, 350));
+        const after = { inset: read(), reachable: reachable() };
+        return { before, on, after };
+    });
+
+    if (!hud.before.reachable || !hud.on.reachable || !hud.after.reachable) {
+        fail(`the Labels button is unreachable at some point: ${JSON.stringify(hud)}`);
+    } else if (!hud.on.inset || hud.on.inset === '0px') {
+        fail('showing the performance HUD set no inset, so the controls are under it');
+    } else if (hud.after.inset) {
+        fail(`dismissing the HUD left --hud-inset at ${hud.after.inset}`);
+    } else if (hud.on.top > 200) {
+        // Offsetting by the HUD's HEIGHT rather than its width put this button at
+        // y=466 on a 900px screen: reachable, and halfway down the view.
+        fail(`the HUD pushed the controls to y=${hud.on.top}; it should move them `
+            + 'sideways, not down the screen');
+    } else {
+        pass(`the HUD moves the view's controls aside and back (${hud.on.inset}, `
+            + `still at y=${hud.on.top})`);
+    }
+
+    await ctx.close();
+}
+
 // --- bubble view -----------------------------------------------------------
 //
 // The view that replaced five 3D layouts. Its claims: one level at a time, the

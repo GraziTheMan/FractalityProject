@@ -188,8 +188,43 @@ export class MapsPanel {
      * Everything that changes the current map goes through here, so the button
      * cannot drift out of sync with what it would act on.
      */
+    /**
+     * Where the reader was, remembered locally.
+     *
+     * Deliberately localStorage rather than the profile. The profile's
+     * default_map_id is a *choice* — the star in this panel, meaning "this is what
+     * I want on sign-in". This is a *fact*: the last map actually opened. Storing
+     * the fact in the choice's field would overwrite a stated preference every
+     * time someone glanced at another map.
+     *
+     * Local also means it is available instantly, before any request completes, and
+     * per-device — which matches how it reads: where I left off on THIS machine.
+     */
+    static LAST_MAP_KEY = 'fractality.lastMapId';
+
+    static readLastMapId() {
+        try {
+            return globalThis.localStorage?.getItem(MapsPanel.LAST_MAP_KEY) || null;
+        } catch {
+            return null;
+        }
+    }
+
+    static rememberLastMapId(mapId) {
+        try {
+            if (mapId) globalThis.localStorage?.setItem(MapsPanel.LAST_MAP_KEY, mapId);
+            else globalThis.localStorage?.removeItem(MapsPanel.LAST_MAP_KEY);
+        } catch {
+            /* a preference is never worth failing a load for */
+        }
+    }
+
     _setCurrentMap(map) {
         this.currentMap = map ?? null;
+        // Only a map opened by its own id. A shared map belongs to someone else and
+        // may stop being reachable, so reopening it silently on the next visit would
+        // be both wrong and confusing.
+        if (map?.id && !map.__viaShareToken) MapsPanel.rememberLastMapId(map.id);
         if (!this.shareBtn) return;
         this.shareBtn.disabled = !this.currentMap;
         this.shareBtn.title = this.currentMap
@@ -420,6 +455,7 @@ export class MapsPanel {
 
         try {
             const apiMap = await this.client.getMap(mapId, { shareToken });
+            if (shareToken) apiMap.__viaShareToken = true;
             const graph = apiMapToNodeGraph(apiMap);
 
             await this.onLoadMap(graph, apiMap);

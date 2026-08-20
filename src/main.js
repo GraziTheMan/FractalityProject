@@ -18,7 +18,7 @@ import { BubbleView } from './ui/BubbleView.js';
 import { FeedPanel } from './ui/FeedPanel.js';
 import { feedClient } from './api/feedClient.js';
 import { AccountPanel } from './ui/AccountPanel.js';
-import { onAuthChange, getAuthState } from './auth/clerkClient.js';
+import { onAuthChange, getAuthState, loadAuth } from './auth/clerkClient.js';
 import { mindMapClient, MindMapClient } from './api/mindMapClient.js';
 import { hasCliBridge } from './config/deploy.js';
 import { getToken, hasAuth } from './auth/clerkClient.js';
@@ -222,6 +222,10 @@ const bubbleView = new BubbleView({
   getFocusedNode: () => fractalityEngine?.state?.focusNode ?? null,
   onFocusNode: (nodeId) => fractalityEngine?.setFocus(nodeId),
   notify: (message, type) => showNotification(message, type),
+  // Leaving this view goes back to the default screen, not to a blank one. There
+  // is nothing behind these views any more — the 3D scene they used to sit on top
+  // of is exactly what was replaced.
+  onClose: () => coneView.show(),
   onVisibilityChange: (open) => {
     if (!fractalityEngine) return;
     open ? fractalityEngine.pause() : fractalityEngine.resume();
@@ -282,7 +286,9 @@ function buildDockItems() {
           description: "One level at a time; tap a bubble to go inside it",
           isActive: () => bubbleView.isOpen,
           disabledReason: needsEngine,
-          onSelect: () => bubbleView.toggle()
+          // show(), not toggle(). Exactly one view is on screen at all times, so
+          // toggling the open one off would leave nothing behind it.
+          onSelect: () => bubbleView.show()
         },
         {
           id: 'cone',
@@ -291,7 +297,7 @@ function buildDockItems() {
           description: 'Side-on view of every tier; spin and travel by dragging',
           isActive: () => coneView.isOpen,
           disabledReason: needsEngine,
-          onSelect: () => coneView.toggle()
+          onSelect: () => coneView.show()
         },
         { separator: true },
         {
@@ -707,9 +713,43 @@ function setupSearchListeners() {
  *
  * @returns {Promise<boolean>} true when a map was loaded
  */
+/**
+ * How long boot will wait for Clerk to say whether there is a session.
+ *
+ * Long enough for a cold third-party script on a slow connection, short enough
+ * that a blocked one does not read as a broken app.
+ */
+const AUTH_BOOT_TIMEOUT_MS = 4000;
+
 async function openStartingMap() {
   if (!mindMapClient.available) return false;
-  if (hasAuth() && !getAuthState().signedIn) return false;
+
+  // WAIT for Clerk before concluding anybody is signed out.
+  //
+  // This is why signing in never seemed to stick. Clerk was only ever loaded
+  // lazily — by getToken(), or by opening the Account panel — so at boot
+  // getAuthState() reported signedIn:false for the perfectly ordinary reason
+  // that nothing had asked yet. This function read that as "not signed in",
+  // returned early, and the demo pattern loaded over a session that was still
+  // valid. The user then signed in again and reopened their map by hand, every
+  // single refresh, because the app never asked the question it was answering.
+  //
+  // Bounded, because boot must not hang on it: the same lesson as the API's
+  // startup_db_timeout_seconds, where a promise that never settles turned a
+  // slow dependency into a dead app. A Clerk that is slow or blocked costs a
+  // few seconds and then falls through to the same place it used to reach
+  // immediately.
+  if (hasAuth()) {
+    try {
+      await Promise.race([
+        loadAuth(),
+        new Promise((resolve) => setTimeout(resolve, AUTH_BOOT_TIMEOUT_MS)),
+      ]);
+    } catch {
+      // A failed load is a signed-out session, which the next line handles.
+    }
+    if (!getAuthState().signedIn) return false;
+  }
 
   try {
     // The map the user chose, if they chose one. The API returns the pointer only while
@@ -730,6 +770,20 @@ async function openStartingMap() {
       }
       // Fall through rather than giving up: whatever went wrong with the default, the
       // most recently edited map is a better outcome than the generated demo.
+    }
+
+    // Then where they actually were. After the starred default, not before: a star
+    // is a stated preference for what opens, and glancing at another map should not
+    // quietly replace it. Without a star, "where I left off" is the right answer.
+    const last = MapsPanel.readLastMapId();
+    if (last && last !== chosen) {
+      const opened = await mapsPanel.loadMap(last);
+      if (opened) {
+        showNotification(`Reopened "${opened.title}"`);
+        return true;
+      }
+      // Deleted, or no longer yours. Forget it rather than trying again next time.
+      MapsPanel.rememberLastMapId(null);
     }
 
     const maps = await mindMapClient.listMyMaps({ limit: 1 });
@@ -1157,7 +1211,19 @@ AppState.on('viewChanged', async (view) => {
     
     // Start engine
     fractalityEngine.start();
-    
+
+    // The cone is the DEFAULT SCREEN, not an overlay you summon.
+    //
+    // Opened here, after the map is in the graph, so the first frame shows the
+    // map rather than an empty cone that fills in a moment later.
+    //
+    // This also stops the 3D scene rendering — the cone's onVisibilityChange
+    // pauses the engine, and engine.update() returns immediately while paused, so
+    // no Three.js work happens at all. The shaded spheres behind everything were
+    // the old default view, still drawing frames for a picture nobody was looking
+    // at. The engine stays alive because it owns the graph, the focus and the
+    // CACE state; what stops is the rendering.
+    coneView.show();
   }
 
   // The engine boots lazily, so most of the dock is unavailable until this

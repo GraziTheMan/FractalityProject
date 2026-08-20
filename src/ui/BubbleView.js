@@ -60,6 +60,14 @@ export class BubbleView {
         this.onFocusNode = options.onFocusNode ?? (() => {});
         this.notify = options.notify ?? ((m) => console.log(m));
         this.onVisibilityChange = options.onVisibilityChange ?? (() => {});
+        /**
+         * What "leave this view" means.
+         *
+         * Not hide(): there is nothing behind these views to fall back to, so a
+         * bare hide leaves a black screen with a dock floating on it. The host
+         * decides where leaving goes — today, back to the default screen.
+         */
+        this.onClose = options.onClose ?? (() => this.hide());
 
         this.container = null;
         this.canvas = null;
@@ -103,7 +111,8 @@ export class BubbleView {
             </div>
             <button class="bubble-up" type="button" hidden
                 title="Come back out one level">↑ Out</button>
-            <button class="bubble-close" type="button" title="Close the bubble view">×</button>
+            <button class="bubble-close" type="button"
+                title="Back to the cone view">×</button>
         `;
         document.body.appendChild(this.container);
 
@@ -115,7 +124,7 @@ export class BubbleView {
 
         this.upButton.addEventListener('click', () => this.exitBubble());
         this.container.querySelector('.bubble-close')
-            .addEventListener('click', () => this.hide());
+            .addEventListener('click', () => this.onClose());
 
         this._bindGestures();
         this._injectStyles();
@@ -613,7 +622,8 @@ export class BubbleView {
         this._onKeyDown = (event) => {
             if (!this.isOpen) return;
             if (event.key === 'Escape') {
-                if (!this.exitBubble()) this.hide();
+                // Come out one level; at the top, leave the view entirely.
+                if (!this.exitBubble()) this.onClose();
             }
         };
         document.addEventListener('keydown', this._onKeyDown);
@@ -653,12 +663,12 @@ export class BubbleView {
                 inset: 0;
                 top: var(--dock-top-height, 0px);
                 bottom: var(--dock-height, 0px);
-                /* 1100, matching the cone view: above #perf-dashboard (fixed,
-                   z-index 1000, top-right) and below the dock (1200). At 900 this
-                   view's own × would be rendered, visible and unreachable on a wide
-                   screen — see the cone view for the same lesson learned the hard
-                   way. */
-                z-index: 1100;
+                /* 900, matching the cone view: these two are CONTENT, so they sit
+                   under the panels (1001) and the HUD (1000). The full order is
+                   written out in ConeView's stylesheet. Overlap with the HUD in the
+                   top-right is handled by --hud-inset, not by climbing the stack —
+                   1100 put both views over every panel. */
+                z-index: 900;
                 background: #070a10;
             }
             .bubble-view.hidden { display: none; }
@@ -669,7 +679,7 @@ export class BubbleView {
                 position: absolute;
                 top: 10px;
                 left: 12px;
-                right: 110px;
+                right: calc(var(--hud-inset, 0px) + 110px);
                 display: flex;
                 flex-wrap: wrap;
                 align-items: center;
@@ -717,8 +727,16 @@ export class BubbleView {
                 line-height: 1;
                 cursor: pointer;
             }
-            .bubble-up { right: 58px; padding: 0 12px; font-size: 12px; color: #9fb; }
-            .bubble-close { right: 10px; min-width: 40px; font-size: 20px; }
+            /* --hud-inset is the performance dashboard's width while it shows, so
+               these slide inboard of it instead of under it. */
+            .bubble-up {
+                right: calc(var(--hud-inset, 0px) + 58px);
+                padding: 0 12px; font-size: 12px; color: #9fb;
+            }
+            .bubble-close {
+                right: calc(var(--hud-inset, 0px) + 10px);
+                min-width: 40px; font-size: 20px;
+            }
             .bubble-up:hover, .bubble-close:hover { border-color: #0ff; }
 
             @media (max-width: 720px), (max-height: 500px) {
