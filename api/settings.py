@@ -86,6 +86,11 @@ class Settings(BaseSettings):
     # per-process counter would give each of them its own allowance.
     max_pulses_per_hour: int = Field(default=20)
 
+    #: More generous than posting, because a conversation is many short turns and
+    #: a limit tuned for broadcasting would throttle a discussion. Still a limit:
+    #: the failure it guards against is a script, not an enthusiastic person.
+    max_comments_per_hour: int = Field(default=120)
+
     #: How long startup waits for Neo4j before booting without it.
     #:
     #: Bounded because an unreachable host does not raise, it blocks — so the

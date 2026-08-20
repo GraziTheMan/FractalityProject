@@ -43,11 +43,13 @@ the one large enough to be worth projecting away.
 import json
 import logging
 import secrets
+from uuid import uuid4
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from . import db
 from .models import (
+    Comment,
     MapNode,
     MindMap,
     MindMapSummary,
@@ -685,6 +687,20 @@ async def count_maps_for_owner(settings: Settings, subject: str) -> int:
 # properties must be primitives or arrays of primitives.
 
 
+def _author_name(row: Dict[str, Any]) -> str:
+    """How an author is named, in one place because two things now ask.
+
+    display_name first: it is the one the user chose. `username` next — it is
+    always present for accounts made since the provider began requiring one, and
+    absent for older ones, which is why posts used to be attributed to "Anonymous".
+    """
+    return (
+        row.get("author_display_name")
+        or row.get("author_name")
+        or "Anonymous"
+    )
+
+
 def _row_to_pulse(row: Dict[str, Any], viewer_subject: Optional[str] = None) -> Pulse:
     """Build a Pulse from a query row.
 
@@ -708,13 +724,8 @@ def _row_to_pulse(row: Dict[str, Any], viewer_subject: Optional[str] = None) -> 
         title=row.get("title") or "",
         preview=row.get("preview") or "",
         author=PulseAuthor(
-            # display_name first: it is the one the user chose. `username` comes
-            # from the auth provider and is usually absent, which is why posts
-            # were attributed to "Anonymous".
             id=row.get("author_id") or "unknown",
-            name=row.get("author_display_name")
-                 or row.get("author_name")
-                 or "Anonymous",
+            name=_author_name(row),
             avatar=row.get("author_avatar"),
         ),
         tags=list(row.get("tags") or []),
@@ -768,6 +779,253 @@ async def create_pulse(
     if not rows:
         return None
     return _row_to_pulse(rows[0], subject)
+
+
+# --- comments ---------------------------------------------------------------
+#
+#   (:User)-[:WROTE]->(:Comment)-[:ON]->(:Pulse)
+#   (:User)-[:RESONATED_WITH]->(:Comment)
+#
+# The same relationship type as a pulse rating, deliberately: it is the same act,
+# and the reader model reads both through one traversal rather than a union of two
+# that could drift apart.
+#
+# Comments are FLAT. No parent_comment_id, and that is a decision rather than an
+# omission — nested replies are where pile-ons live, and with no visible score
+# there is nothing to rank a reply by. One level can be added later without moving
+# anything that exists.
+
+CREATE_COMMENT = """
+MATCH (u:User {subject: $subject}), (p:Pulse {id: $pulse_id})
+CREATE (c:Comment {
+    id: $id,
+    text: $text,
+    created_at: $now,
+    reports: 0
+})
+CREATE (u)-[:WROTE]->(c)
+CREATE (c)-[:ON]->(p)
+RETURN c.id AS id, p.id AS pulse_id, c.text AS text,
+       c.created_at AS created_at, c.edited_at AS edited_at,
+       0 AS my_rating,
+       u.id AS author_id, u.username AS author_name, u.subject AS author_subject,
+       u.display_name AS author_display_name, u.avatar_url AS author_avatar
+"""
+
+
+async def create_comment(
+    settings: Settings,
+    subject: str,
+    pulse_id: str,
+    text: str,
+) -> Optional[Comment]:
+    rows = await db.run_write(
+        settings,
+        CREATE_COMMENT,
+        subject=subject,
+        pulse_id=pulse_id,
+        id=f"comment-{uuid4().hex[:12]}",
+        text=text,
+        now=now_ms(),
+    )
+    return _row_to_comment(rows[0], subject) if rows else None
+
+
+# Oldest first: a conversation reads forward. Blocked authors are excluded in the
+# query for the same reason as the feed — filtering afterwards would make `limit`
+# mean "up to N, minus however many were hidden".
+LIST_COMMENTS = """
+MATCH (author:User)-[:WROTE]->(c:Comment)-[:ON]->(p:Pulse {id: $pulse_id})
+WHERE $viewer IS NULL OR NOT EXISTS {
+    MATCH (v:User {subject: $viewer})-[:BLOCKED]->(author)
+}
+OPTIONAL MATCH (c)<-[mine:RESONATED_WITH]-(:User {subject: $viewer})
+RETURN c.id AS id, p.id AS pulse_id, c.text AS text,
+       c.created_at AS created_at, c.edited_at AS edited_at,
+       coalesce(mine.value, 0) AS my_rating,
+       author.id AS author_id, author.username AS author_name,
+       author.subject AS author_subject,
+       author.display_name AS author_display_name, author.avatar_url AS author_avatar
+ORDER BY c.created_at ASC
+SKIP $skip LIMIT $limit
+"""
+
+
+async def list_comments(
+    settings: Settings,
+    pulse_id: str,
+    viewer_subject: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 100,
+) -> List[Comment]:
+    rows = await db.run_read(
+        settings,
+        LIST_COMMENTS,
+        pulse_id=pulse_id,
+        viewer=viewer_subject,
+        skip=skip,
+        limit=limit,
+    )
+    return [_row_to_comment(row, viewer_subject) for row in rows]
+
+
+UPDATE_COMMENT = """
+MATCH (u:User {subject: $subject})-[:WROTE]->(c:Comment {id: $comment_id})-[:ON]->(p:Pulse)
+SET c.text = $text, c.edited_at = $now
+RETURN c.id AS id, p.id AS pulse_id, c.text AS text,
+       c.created_at AS created_at, c.edited_at AS edited_at,
+       0 AS my_rating,
+       u.id AS author_id, u.username AS author_name, u.subject AS author_subject,
+       u.display_name AS author_display_name, u.avatar_url AS author_avatar
+"""
+
+
+async def update_comment(
+    settings: Settings, subject: str, comment_id: str, text: str
+) -> Optional[Comment]:
+    """Edit your own comment. Ownership is part of the MATCH, not a check after it."""
+    rows = await db.run_write(
+        settings,
+        UPDATE_COMMENT,
+        subject=subject,
+        comment_id=comment_id,
+        text=text,
+        now=now_ms(),
+    )
+    return _row_to_comment(rows[0], subject) if rows else None
+
+
+DELETE_COMMENT = """
+MATCH (:User {subject: $subject})-[:WROTE]->(c:Comment {id: $comment_id})
+DETACH DELETE c
+RETURN count(*) AS removed
+"""
+
+
+async def delete_comment(settings: Settings, subject: str, comment_id: str) -> bool:
+    rows = await db.run_write(
+        settings, DELETE_COMMENT, subject=subject, comment_id=comment_id
+    )
+    return bool(rows and rows[0]["removed"])
+
+
+SET_COMMENT_RESONANCE = """
+MATCH (u:User {subject: $subject}), (c:Comment {id: $comment_id})
+MERGE (u)-[r:RESONATED_WITH]->(c)
+SET r.value = $value, r.at = $now
+RETURN c.id AS id
+"""
+
+CLEAR_COMMENT_RESONANCE = """
+MATCH (:User {subject: $subject})-[r:RESONATED_WITH]->(:Comment {id: $comment_id})
+DELETE r
+RETURN count(*) AS removed
+"""
+
+
+async def set_comment_resonance(
+    settings: Settings, subject: str, comment_id: str, value: int
+) -> bool:
+    """Rate a comment, or clear the rating when value is 0.
+
+    0 removes rather than storing a neutral, so the reader model can tell "said
+    nothing" from "said this is neutral" — the same distinction pulses make.
+    """
+    if value == 0:
+        rows = await db.run_write(
+            settings, CLEAR_COMMENT_RESONANCE, subject=subject, comment_id=comment_id
+        )
+        return bool(rows)
+
+    rows = await db.run_write(
+        settings,
+        SET_COMMENT_RESONANCE,
+        subject=subject,
+        comment_id=comment_id,
+        value=value,
+        now=now_ms(),
+    )
+    return bool(rows)
+
+
+GET_COMMENT = """
+MATCH (author:User)-[:WROTE]->(c:Comment {id: $comment_id})-[:ON]->(p:Pulse)
+OPTIONAL MATCH (c)<-[mine:RESONATED_WITH]-(:User {subject: $viewer})
+RETURN c.id AS id, p.id AS pulse_id, c.text AS text,
+       c.created_at AS created_at, c.edited_at AS edited_at,
+       coalesce(mine.value, 0) AS my_rating,
+       author.id AS author_id, author.username AS author_name,
+       author.subject AS author_subject,
+       author.display_name AS author_display_name, author.avatar_url AS author_avatar
+"""
+
+
+async def get_comment(
+    settings: Settings, comment_id: str, viewer_subject: Optional[str] = None
+) -> Optional[Comment]:
+    rows = await db.run_read(
+        settings, GET_COMMENT, comment_id=comment_id, viewer=viewer_subject
+    )
+    return _row_to_comment(rows[0], viewer_subject) if rows else None
+
+
+REPORT_COMMENT = """
+MATCH (c:Comment {id: $comment_id})
+MERGE (u:User {subject: $subject})-[r:REPORTED]->(c)
+ON CREATE SET r.at = $now, c.reports = coalesce(c.reports, 0) + 1
+RETURN c.reports AS reports
+"""
+
+
+async def report_comment(settings: Settings, subject: str, comment_id: str) -> Optional[int]:
+    """Counted once per reporter, like a pulse report.
+
+    MERGE on the relationship is what makes it once: reporting twice is the same
+    person still objecting, not two people.
+    """
+    rows = await db.run_write(
+        settings, REPORT_COMMENT, subject=subject, comment_id=comment_id, now=now_ms()
+    )
+    return rows[0]["reports"] if rows else None
+
+
+COUNT_RECENT_COMMENTS = """
+MATCH (:User {subject: $subject})-[:WROTE]->(c:Comment)
+WHERE c.created_at >= $since
+RETURN count(c) AS recent
+"""
+
+
+async def count_recent_comments(settings: Settings, subject: str, window_ms: int) -> int:
+    """How many comments the caller wrote inside the window.
+
+    Takes a window rather than an instant, matching count_recent_pulses beside it:
+    two rate-limit counters with different argument meanings is how a caller ends
+    up passing one to the other.
+    """
+    rows = await db.run_read(
+        settings,
+        COUNT_RECENT_COMMENTS,
+        subject=subject,
+        since=now_ms() - window_ms,
+    )
+    return int(rows[0]["recent"]) if rows else 0
+
+
+def _row_to_comment(row: Dict[str, Any], viewer_subject: Optional[str]) -> Comment:
+    return Comment(
+        id=row["id"],
+        pulse_id=row["pulse_id"],
+        text=row["text"] or "",
+        timestamp=row["created_at"],
+        edited_at=row.get("edited_at"),
+        my_rating=row.get("my_rating") or 0,
+        author=PulseAuthor(
+            id=row["author_id"],
+            name=_author_name(row),
+            avatar=row.get("author_avatar"),
+        ),
+    )
 
 
 # Newest first, skipping anything from a blocked author.
@@ -1009,17 +1267,23 @@ async def load_reader_model(
     )
 
 
-def apply_predictions(pulses: List[Pulse], model: ReaderModel) -> List[Pulse]:
-    """Fill in each pulse's predicted resonance for this reader, in place.
+def apply_predictions(items: List[Any], model: ReaderModel) -> List[Any]:
+    """Fill in predicted resonance for this reader, in place.
 
-    Mutates rather than rebuilding: a Pulse is a plain model and the caller
-    already owns this list.
+    Mutates rather than rebuilding: these are plain models and the caller already
+    owns the list.
+
+    Takes pulses OR comments. A comment has an author and no tags, and that is not
+    a gap to paper over — predict() renormalises over the components it has, so an
+    empty tag list means a comment is scored on author affinity alone. Which is the
+    truth about a comment: it tells you about a person, where a post tells you
+    about a topic.
     """
-    for pulse in pulses:
-        prediction = model.predict(pulse.tags, pulse.author.id)
-        pulse.predicted = prediction.value
-        pulse.prediction_confidence = prediction.confidence
-    return pulses
+    for item in items:
+        prediction = model.predict(getattr(item, "tags", ()), item.author.id)
+        item.predicted = prediction.value
+        item.prediction_confidence = prediction.confidence
+    return items
 
 
 # --- moderation ------------------------------------------------------------

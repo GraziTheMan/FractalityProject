@@ -32,6 +32,9 @@ from ..auth import Principal, current_user, optional_user
 from ..models import (
     MAX_RATING,
     MIN_RATING,
+    Comment,
+    CommentCreate,
+    CommentUpdate,
     ImpressionBatch,
     Pulse,
     PulseCreate,
@@ -258,6 +261,183 @@ async def resonate(
     # part of the reader's history now, and the gauge it produces should reflect it.
     model = await repo.load_reader_model(settings, principal.subject)
     return repo.apply_predictions([pulse], model)[0]
+
+
+# --- comments ---------------------------------------------------------------
+#
+# Flat, oldest first. See the note above CREATE_COMMENT in repository.py for why
+# there is no threading.
+
+
+async def _enforce_comment_rate_limit(settings: Settings, subject: str) -> None:
+    """Refuse a comment once the caller has hit their hourly allowance.
+
+    Separate from the posting limit and far more generous: a conversation is many
+    short turns, and a limit tuned for broadcasting would throttle a discussion.
+    """
+    window_ms = 60 * 60 * 1000
+    recent = await repo.count_recent_comments(settings, subject, window_ms)
+    if recent >= settings.max_comments_per_hour:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                f"Comment limit reached ({settings.max_comments_per_hour} per hour). "
+                "Try again later."
+            ),
+            headers={"Retry-After": "3600"},
+        )
+
+
+@router.get("/{pulse_id}/comments", response_model=List[Comment])
+async def list_comments(
+    pulse_id: str,
+    skip: int = 0,
+    limit: int = 100,
+    principal: Optional[Principal] = Depends(optional_user),
+    settings: Settings = Depends(get_settings),
+):
+    """The conversation on a pulse, oldest first.
+
+    Readable without signing in, like the feed itself. Signed in, three things
+    change: comments from blocked authors disappear, my_rating carries what you
+    said, and a prediction appears once your history can support one.
+    """
+    _require_db(settings)
+    subject = principal.subject if principal else None
+
+    comments = await repo.list_comments(
+        settings, pulse_id, viewer_subject=subject, skip=skip, limit=limit
+    )
+    if subject:
+        model = await repo.load_reader_model(settings, subject)
+        comments = repo.apply_predictions(comments, model)
+    return comments
+
+
+@router.post(
+    "/{pulse_id}/comments",
+    response_model=Comment,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_comment(
+    pulse_id: str,
+    payload: CommentCreate,
+    principal: Principal = Depends(current_user),
+    settings: Settings = Depends(get_settings),
+):
+    _require_db(settings)
+    await repo.upsert_user(settings, principal.subject, principal.username, principal.email)
+    await _enforce_comment_rate_limit(settings, principal.subject)
+
+    comment = await repo.create_comment(
+        settings, principal.subject, pulse_id, payload.text
+    )
+    if comment is None:
+        # The MATCH needs both the user and the pulse, so a missing pulse comes
+        # back as no rows rather than as an error. 404 is the honest answer.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Post not found"
+        )
+    return comment
+
+
+@router.patch("/comments/{comment_id}", response_model=Comment)
+async def update_comment(
+    comment_id: str,
+    payload: CommentUpdate,
+    principal: Principal = Depends(current_user),
+    settings: Settings = Depends(get_settings),
+):
+    """Edit your own comment.
+
+    Ownership is part of the Cypher MATCH rather than a check afterwards, so there
+    is no window where the wrong caller's edit is applied and then rejected. The
+    edit stamps edited_at, which clients show: a conversation where replies are
+    silently rewritten after people have answered them is worse than one with no
+    editing at all.
+    """
+    _require_db(settings)
+    comment = await repo.update_comment(
+        settings, principal.subject, comment_id, payload.text
+    )
+    if comment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Comment not found, or not yours",
+        )
+    return comment
+
+
+@router.delete("/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_comment(
+    comment_id: str,
+    principal: Principal = Depends(current_user),
+    settings: Settings = Depends(get_settings),
+):
+    _require_db(settings)
+    removed = await repo.delete_comment(settings, principal.subject, comment_id)
+    if not removed:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Comment not found, or not yours",
+        )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.put("/comments/{comment_id}/resonance", response_model=Comment)
+async def set_comment_resonance(
+    comment_id: str,
+    value: int = Query(default=0, ge=MIN_RATING, le=MAX_RATING),
+    principal: Principal = Depends(current_user),
+    settings: Settings = Depends(get_settings),
+):
+    """Rate a comment, -2..+2, 0 to clear.
+
+    The same act as rating a pulse and stored on the same relationship type, so
+    the reader model reads both in one traversal. What it TEACHES is different: a
+    pulse carries tags, so rating one says something about a topic, while a comment
+    has an author and no tags, so rating one says something about a person. The
+    second is the thinner half of the model and the half that finding people you
+    resonate with depends on.
+    """
+    _require_db(settings)
+    await repo.upsert_user(settings, principal.subject, principal.username, principal.email)
+
+    await repo.set_comment_resonance(
+        settings, principal.subject, comment_id, value
+    )
+
+    # Re-read rather than returning the pre-write model: this rating is part of the
+    # history the prediction is computed from, so the two would disagree.
+    comment = await repo.get_comment(settings, comment_id, viewer_subject=principal.subject)
+    if comment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Comment not found"
+        )
+    model = await repo.load_reader_model(settings, principal.subject)
+    return repo.apply_predictions([comment], model)[0]
+
+
+@router.post("/comments/{comment_id}/report", status_code=status.HTTP_202_ACCEPTED)
+async def report_comment(
+    comment_id: str,
+    principal: Principal = Depends(current_user),
+    settings: Settings = Depends(get_settings),
+):
+    """Flag a comment. Counted once per reporter.
+
+    202 rather than 200: the report is recorded, and what happens next is a human
+    decision that has not happened yet. Saying "accepted" is true; saying "done"
+    would not be.
+    """
+    _require_db(settings)
+    await repo.upsert_user(settings, principal.subject, principal.username, principal.email)
+    reports = await repo.report_comment(settings, principal.subject, comment_id)
+    if reports is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Comment not found"
+        )
+    return {"status": "accepted"}
 
 
 @router.post("/impressions", status_code=status.HTTP_204_NO_CONTENT)

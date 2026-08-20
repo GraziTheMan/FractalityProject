@@ -363,6 +363,65 @@ class PulseAuthor(BaseModel):
     avatar: Optional[str] = None
 
 
+#: A comment is a contribution to a conversation, not an essay. Long enough for a
+#: real thought, short enough that a thread stays readable.
+MAX_COMMENT_TEXT = 2_000
+
+
+class Comment(BaseModel):
+    """A reply on a pulse, as returned to clients."""
+
+    id: str
+    pulse_id: str
+    author: PulseAuthor
+    text: str
+
+    #: Epoch milliseconds, matching the rest of the feed.
+    timestamp: int
+    edited_at: Optional[int] = None
+
+    #: The caller's own rating, -2..+2. Same rule as a pulse and for the same
+    #: reason: this is the ONLY resonance figure on the wire. No count of who
+    #: rated a comment, no aggregate, not for readers and not for the author.
+    #:
+    #: Rating a comment answers a different question from rating a post, which is
+    #: why it is worth collecting separately. A post carries tags, so rating one
+    #: says something about a TOPIC. A comment has an author and no tags, so
+    #: rating one says something about a PERSON — which is the signal the model
+    #: is thinnest on, and the one that finding people you resonate with needs.
+    my_rating: int = Field(default=0, ge=MIN_RATING, le=MAX_RATING)
+
+    #: What this reader is predicted to make of it, -1..+1, or None when their
+    #: history is too thin to say anything honest.
+    predicted: Optional[float] = None
+    prediction_confidence: Optional[float] = None
+
+
+class CommentCreate(BaseModel):
+    text: str = Field(min_length=1, max_length=MAX_COMMENT_TEXT)
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def _clean_text(cls, value: Any) -> Any:
+        """Trim the ends, keep the paragraphs.
+
+        The same treatment a bio gets, and for the same reason: internal newlines
+        are something the writer put there. min_length=1 then rejects a comment
+        that was only whitespace, rather than storing an empty one.
+        """
+        if not isinstance(value, str):
+            return value
+        return value.strip()
+
+
+class CommentUpdate(BaseModel):
+    text: str = Field(min_length=1, max_length=MAX_COMMENT_TEXT)
+
+    _clean_text = field_validator("text", mode="before")(
+        CommentCreate._clean_text.__func__
+    )
+
+
 class PulseMedia(BaseModel):
     kind: str = Field(default="link")
     url: str
